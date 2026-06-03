@@ -1,0 +1,16 @@
+[
+  {
+    "question": "What is the refund period?",
+    "expected_answer": "Customers can request a refund within 14 days of purchase.",
+    "ground_truth_doc_ids": ["sample_policy.md"],
+    "ground_truth_chunk_ids": [],
+    "expected_citations": ["sample_policy.md"]
+  },
+  {
+    "question": "How long does standard shipping take?",
+    "expected_answer": "Standard shipping takes 3 to 5 business days.",
+    "ground_truth_doc_ids": ["sample_policy.md"],
+    "ground_truth_chunk_ids": [],
+    "expected_citations": ["sample_policy.md"]
+  }
+]

@@ -1,0 +1,9 @@
+[project]
+name = "rag-benchmark-platform"
+version = "0.1.0"
+description = "Advanced modular RAG benchmarking platform"
+requires-python = ">=3.11"
+
+[tool.pytest.ini_options]
+pythonpath = ["packages", "."]
+testpaths = ["tests"]

@@ -1,0 +1,10 @@
+.env
+__pycache__/
+*.pyc
+artifacts/
+.postgres/
+.qdrant/
+.opensearch/
+.minio/
+.venv/
+.pytest_cache/
