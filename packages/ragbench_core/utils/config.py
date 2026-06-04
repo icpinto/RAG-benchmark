@@ -16,7 +16,15 @@ def _substitute_env(value):
         return {k: _substitute_env(v) for k, v in value.items()}
     return value
 
+def parse_yaml_text(text: str) -> dict:
+    raw = yaml.safe_load(text)
+    if raw is None:
+        return {}
+    if not isinstance(raw, dict):
+        raise ValueError("Config YAML must contain a mapping at the document root")
+    return raw
+
 def load_yaml(path: str | Path) -> dict:
     with open(path, "r", encoding="utf-8") as f:
-        raw = yaml.safe_load(f)
+        raw = parse_yaml_text(f.read())
     return _substitute_env(raw)
