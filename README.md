@@ -78,15 +78,14 @@ The core package does not depend on LangChain or LlamaIndex. Those should be add
 docker compose up --build
 ```
 
-Services:
+Host-accessible services:
 
 | Service | URL |
 |---|---|
 | Streamlit UI | http://localhost:8501 |
 | FastAPI docs | http://localhost:8000/docs |
-| Qdrant | http://localhost:6333/dashboard |
-| OpenSearch | http://localhost:9200 |
-| MinIO console | http://localhost:9001 |
+
+Supporting services such as Postgres, Redis, Qdrant, OpenSearch, MinIO, and Ollama are available only on the Docker Compose network and are not published to the host by default.
 
 Ollama is included as a service. Pull the model after containers start:
 
