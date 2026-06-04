@@ -6,4 +6,5 @@ RUN pip install --no-cache-dir -r /app/requirements.txt
 COPY packages /app/packages
 COPY services /app/services
 ENV PYTHONPATH=/app/packages:/app
-CMD ["streamlit", "run", "services/ui/app.py", "--server.address=0.0.0.0", "--server.port=8501"]
+ENV STREAMLIT_BROWSER_GATHER_USAGE_STATS=false
+CMD ["streamlit", "run", "services/ui/app.py", "--server.address=0.0.0.0", "--server.port=8501", "--browser.gatherUsageStats=false"]
