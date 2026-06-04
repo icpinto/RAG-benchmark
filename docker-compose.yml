@@ -5,7 +5,7 @@ services:
       dockerfile: services/api/Dockerfile
     env_file: .env
     ports:
-      - "8000:8000"
+      - "7800:8000"
     volumes:
       - ./configs:/app/configs
       - ./data:/app/data
@@ -40,7 +40,7 @@ services:
       dockerfile: services/ui/Dockerfile
     env_file: .env
     ports:
-      - "8501:8501"
+      - "8499:8501"
     volumes:
       - ./configs:/app/configs
       - ./data:/app/data
