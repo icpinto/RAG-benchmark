@@ -32,7 +32,7 @@ services:
       - qdrant
       - opensearch
       - ollama
-    command: celery -A services.worker.app.celery_app worker --loglevel=INFO --concurrency=1
+    command: celery -A services.worker.app.celery_app worker --loglevel=INFO --concurrency=1 -Q ragbench
 
   ui:
     build:
