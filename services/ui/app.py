@@ -50,6 +50,8 @@ try:
                     st.dataframe(pd.DataFrame(rows), use_container_width=True)
                     with st.expander("Raw results"):
                         st.json(results)
+                else:
+                    st.info("No results for this run yet. If the run stays queued, check that the Celery worker is running and consuming the ragbench queue.")
     else:
         st.info("No benchmark runs yet.")
 except Exception as e:

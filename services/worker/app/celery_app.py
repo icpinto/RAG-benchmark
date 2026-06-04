@@ -7,4 +7,5 @@ celery_app = Celery(
     backend=settings.redis_url,
     include=["services.worker.app.tasks"],
 )
+celery_app.conf.task_default_queue = "ragbench"
 celery_app.conf.task_routes = {"services.worker.app.tasks.*": {"queue": "ragbench"}}

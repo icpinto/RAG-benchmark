@@ -3,7 +3,7 @@ from pathlib import Path
 import shutil, uuid
 from fastapi import FastAPI, UploadFile, File, HTTPException
 from pydantic import BaseModel
-from ragbench_core.engine.database import init_db, get_run, list_runs, list_results
+from ragbench_core.engine.database import init_db, get_run, list_runs, list_results, upsert_run
 from ragbench_core.utils.config import load_yaml
 from services.worker.app.tasks import run_benchmark_task
 
@@ -24,7 +24,9 @@ def health():
 def run_benchmark(req: RunRequest):
     if not Path(req.config_path).exists():
         raise HTTPException(status_code=404, detail=f"Config not found: {req.config_path}")
+    config=load_yaml(req.config_path)
     run_id=str(uuid.uuid4())
+    upsert_run(run_id, config.get("experiment",{}).get("name","benchmark"), "queued", config)
     run_benchmark_task.delay(run_id, req.config_path)
     return {"run_id":run_id,"status":"queued"}
 
