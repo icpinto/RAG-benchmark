@@ -71,7 +71,7 @@ services:
     environment:
       discovery.type: single-node
       plugins.security.disabled: "true"
-      OPENSEARCH_INITIAL_ADMIN_PASSWORD: Admin!1qwre
+      OPENSEARCH_INITIAL_ADMIN_PASSWORD: Alopnn!1qwre
       bootstrap.memory_lock: "true"
       OPENSEARCH_JAVA_OPTS: "-Xms512m -Xmx512m"
     ulimits:
