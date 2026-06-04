@@ -1,6 +1,5 @@
 from __future__ import annotations
-import os, json, time
-from pathlib import Path
+import os
 import requests
 import pandas as pd
 import streamlit as st
@@ -22,9 +21,83 @@ with st.sidebar:
         st.write(r.json())
 
 st.header("Run Benchmark")
-config_path=st.text_input("Config path inside container", "/app/configs/default.yaml")
+
+if "config_path" not in st.session_state:
+    st.session_state.config_path="/app/configs/default.yaml"
+if "config_editor_content" not in st.session_state:
+    st.session_state.config_editor_content=""
+if "config_dirty" not in st.session_state:
+    st.session_state.config_dirty=False
+if "config_editor_text" not in st.session_state:
+    st.session_state.config_editor_text=st.session_state.config_editor_content
+
+def load_config(path: str):
+    r=requests.get(f"{API}/configs/content", params={"config_path":path}, timeout=30)
+    r.raise_for_status()
+    payload=r.json()
+    st.session_state.config_path=payload["config_path"]
+    st.session_state.config_editor_content=payload["content"]
+    st.session_state.config_editor_text=payload["content"]
+    st.session_state.config_dirty=False
+
+try:
+    config_listing=requests.get(f"{API}/configs", timeout=30).json()
+except Exception:
+    config_listing={"config_root":"/app/configs","files":[]}
+
+config_files=config_listing.get("files",[])
+if config_files:
+    selected_config=st.selectbox("Saved configs", config_files, index=0)
+    if st.button("Load selected config"):
+        try:
+            load_config(selected_config)
+            st.success(f"Loaded {st.session_state.config_path}")
+        except Exception as e:
+            st.error(f"Could not load config: {e}")
+
+config_path=st.text_input("Config path inside container", key="config_path")
+
+with st.expander("Edit config YAML", expanded=True):
+    st.caption("Load a YAML file, edit it, save it to the shared configs volume, then start a benchmark with that path.")
+    col_load,col_save=st.columns([1,1])
+    with col_load:
+        if st.button("Load config from path"):
+            try:
+                load_config(st.session_state.config_path)
+                st.success(f"Loaded {st.session_state.config_path}")
+            except Exception as e:
+                st.error(f"Could not load config: {e}")
+    edited_content=st.text_area(
+        "YAML content",
+        value=st.session_state.config_editor_content,
+        height=520,
+        key="config_editor_text",
+    )
+    st.session_state.config_dirty=edited_content != st.session_state.config_editor_content
+    with col_save:
+        if st.button("Save YAML"):
+            try:
+                r=requests.put(
+                    f"{API}/configs/content",
+                    json={"config_path":st.session_state.config_path,"content":edited_content},
+                    timeout=30,
+                )
+                r.raise_for_status()
+                payload=r.json()
+                st.session_state.config_path=payload["config_path"]
+                st.session_state.config_editor_content=edited_content
+                st.session_state.config_dirty=False
+                st.success(f"Saved {payload['config_path']}")
+            except Exception as e:
+                detail=getattr(getattr(e, "response", None), "text", None)
+                st.error(f"Could not save config: {detail or e}")
+    if st.session_state.config_dirty:
+        st.warning("You have unsaved YAML edits. Save before starting a benchmark if you want those edits to be used.")
+
 if st.button("Start benchmark"):
-    r=requests.post(f"{API}/benchmarks/run", json={"config_path":config_path}, timeout=30)
+    if st.session_state.config_dirty:
+        st.warning("Unsaved YAML edits were not used. Click Save YAML first to benchmark the edited config.")
+    r=requests.post(f"{API}/benchmarks/run", json={"config_path":st.session_state.config_path}, timeout=30)
     st.success(r.json())
 
 st.header("Runs")

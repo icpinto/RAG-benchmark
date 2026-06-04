@@ -102,12 +102,24 @@ cp .env.example .env
 docker compose up --build
 ```
 
-Then upload files and a ground-truth JSON from the Streamlit UI, or call the API:
+Then upload files and a ground-truth JSON from the Streamlit UI. The UI also includes an **Edit config YAML** panel where you can load `/app/configs/default.yaml`, edit the YAML, save it back to the shared `configs/` volume, and start a benchmark using the saved config path.
+
+You can also call the API directly:
 
 ```bash
 curl -X POST http://localhost:8000/benchmarks/run \
   -H 'Content-Type: application/json' \
   -d '{"config_path":"/app/configs/default.yaml"}'
+```
+
+Config files can be listed, loaded, and saved through the API:
+
+```bash
+curl http://localhost:8000/configs
+curl 'http://localhost:8000/configs/content?config_path=/app/configs/default.yaml'
+curl -X PUT http://localhost:8000/configs/content \
+  -H 'Content-Type: application/json' \
+  -d '{"config_path":"/app/configs/default.yaml","content":"experiment:\n  name: edited_benchmark\n"}'
 ```
 
 Check job status:
