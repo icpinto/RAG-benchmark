@@ -24,6 +24,8 @@ st.header("Run Benchmark")
 
 if "config_path" not in st.session_state:
     st.session_state.config_path="/app/configs/default.yaml"
+if "config_path_input" not in st.session_state:
+    st.session_state.config_path_input=st.session_state.config_path
 if "config_editor_content" not in st.session_state:
     st.session_state.config_editor_content=""
 if "config_dirty" not in st.session_state:
@@ -31,11 +33,13 @@ if "config_dirty" not in st.session_state:
 if "config_editor_text" not in st.session_state:
     st.session_state.config_editor_text=st.session_state.config_editor_content
 
-def load_config(path: str):
+def load_config(path: str, *, sync_path_input: bool = False):
     r=requests.get(f"{API}/configs/content", params={"config_path":path}, timeout=30)
     r.raise_for_status()
     payload=r.json()
     st.session_state.config_path=payload["config_path"]
+    if sync_path_input:
+        st.session_state.config_path_input=payload["config_path"]
     st.session_state.config_editor_content=payload["content"]
     st.session_state.config_editor_text=payload["content"]
     st.session_state.config_dirty=False
@@ -50,12 +54,13 @@ if config_files:
     selected_config=st.selectbox("Saved configs", config_files, index=0)
     if st.button("Load selected config"):
         try:
-            load_config(selected_config)
+            load_config(selected_config, sync_path_input=True)
             st.success(f"Loaded {st.session_state.config_path}")
         except Exception as e:
             st.error(f"Could not load config: {e}")
 
-config_path=st.text_input("Config path inside container", key="config_path")
+config_path=st.text_input("Config path inside container", key="config_path_input")
+st.session_state.config_path=config_path
 
 with st.expander("Edit config YAML", expanded=True):
     st.caption("Load a YAML file, edit it, save it to the shared configs volume, then start a benchmark with that path.")
