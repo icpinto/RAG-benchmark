@@ -42,6 +42,12 @@ pipeline:
         model: "sentence-transformers/all-MiniLM-L6-v2"
       - provider: "sentence_transformers"
         model: "BAAI/bge-small-en-v1.5"
+      # E5 models are also supported. Use the short aliases below or the full
+      # Hugging Face IDs (for example, "intfloat/e5-large-v2").
+      # - provider: "sentence_transformers"
+      #   model: "e5-base-v2"
+      # - provider: "sentence_transformers"
+      #   model: "e5-large-v2"
     indexers:
       dense:
         type: "qdrant"
