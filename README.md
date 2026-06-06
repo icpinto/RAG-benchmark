@@ -128,6 +128,70 @@ Check job status:
 curl http://localhost:8000/benchmarks/<job_id>
 ```
 
+
+## Component configuration parameters
+
+The benchmark YAML is organized around top-level experiment, data, pipeline, LLM, metrics, and runtime sections. Component entries use a `type` key for registry-backed pipeline stages, except embedders and generators, which use `provider`.
+
+### Top-level sections
+
+| Section | Parameter | Required | Default | Restrictions / notes |
+|---|---|---:|---|---|
+| `experiment` | `name` | No | `benchmark` when persisted; `exp` for case IDs | String used for run labels and stable case IDs. |
+| `experiment` | `description` | No | None | Free-form string. |
+| `data` | `input_dir` | Yes | None | Directory containing local source files. Local extractors currently process `.txt`, `.md`, `.markdown`, and `.pdf` files. |
+| `data` | `remote_urls_file` | No | None | Text file containing one URL per line. URLs are only handled by the `html_url` extractor and must start with `http://` or `https://`. |
+| `data` | `ground_truth_file` | Yes | None | JSON file in the ground-truth QA format shown below. |
+| `llm` | `provider` | Yes | None | Must match a registered generator. Built-in value: `ollama`. |
+| `llm` | `model` | No | `gpt-oss:20b` in the Ollama generator | Ollama model name; the model must already be pulled or available to the configured Ollama server. Supports `${ENV_VAR:default}` substitution. |
+| `llm` | `base_url` | No | `http://ollama:11434` | Ollama API base URL. Trailing slashes are stripped. Supports `${ENV_VAR:default}` substitution. |
+| `llm` | `temperature` | No | `0` | Passed directly to Ollama under `options.temperature`; use a numeric value supported by Ollama. |
+| `llm` | `timeout` | No | `240` | Request timeout in seconds; must be convertible to an integer. |
+| `metrics` | `retrieval_k` | No | `[3, 5, 10]` for metrics, `[10]` for retrieval limit fallback | List of positive integers. The runner retrieves up to `max(retrieval_k)`, so this list must not be empty. |
+| `metrics` | `enabled` | No | Informational in v1 | Listed metric names are documented intent; v1 computes all registered metrics regardless of this list. |
+| `runtime` | `max_combinations` | No | `32` | Positive integer cap on expanded benchmark cases. The expander stops when this limit is reached. |
+| `runtime` | `collection_prefix` | No | `ragbench` | Prefix for Qdrant/OpenSearch index names; final names are lowercased and hyphens are converted to underscores. |
+| `runtime` | `artifact_dir` | No | `/app/artifacts` in default config/settings | Reserved for artifacts; keep it writable if future components emit files. |
+
+### Ingestion components
+
+| Component | Built-in variants | Parameters | Restrictions / notes |
+|---|---|---|---|
+| Extractors | `txt`, `markdown`, `pdf`, `html_url` | In YAML, `pipeline.ingestion.extractors` is a list of extractor names, not objects. | `txt` only accepts `.txt`; `markdown` accepts `.md` and `.markdown`; `pdf` accepts `.pdf`; `html_url` only accepts sources beginning with `http://` or `https://`. Unknown names cause registry lookup failures. |
+| Cleaners | `basic` | `type: basic` | No additional parameters. The basic cleaner removes NUL characters, collapses spaces/tabs, limits repeated blank lines, and strips leading/trailing whitespace. |
+| Chunkers | `fixed`, `recursive` | `type`, `chunk_size`, `overlap` | `chunk_size` defaults to `512` and must be convertible to an integer greater than `0`. `overlap` defaults to `0`; if it is a float, it is treated as a fraction of `chunk_size`; otherwise it is treated as an absolute character count. Use `0 <= overlap < 1` for fractional overlap, or an integer `0 <= overlap < chunk_size`; values that make `overlap_chars >= chunk_size` can create tiny steps or excessive duplicated context. `chunk_size` and `overlap` may be scalar values or lists; lists are expanded into combinations. |
+| Metadata enrichers | `basic` | `type: basic` | No additional parameters. Adds `char_length` and `word_count` to every chunk. |
+| Embeddings | `sentence_transformers` | `provider`, `model`, `batch_size` | `provider` must be `sentence_transformers`. `model` is required and must be a local or downloadable SentenceTransformers-compatible model. `batch_size` defaults to `32` and must be convertible to a positive integer. All configured embedding models should produce vectors suitable for the same Qdrant dense-index workflow. |
+| Indexers | `qdrant`, `opensearch` | `pipeline.ingestion.indexers.dense.type`, `pipeline.ingestion.indexers.sparse.type` | v1 always invokes the built-in `qdrant` dense indexer and `opensearch` sparse indexer in the runner. The `type` fields document the intended backend but are not used to dispatch alternate indexers yet. Qdrant requires non-empty embeddings and uses cosine distance; OpenSearch creates a text/BM25 mapping. |
+
+### Query components
+
+| Component | Built-in variants | Parameters | Restrictions / notes |
+|---|---|---|---|
+| Query rewriters | `none`, `hyde` | `type` | `none` returns the original question. `hyde` uses the top-level `llm.base_url` and `llm.model` to call Ollama and returns the original question plus a hypothetical passage when generation succeeds. HyDE has a fixed 120-second request timeout and fixed generation temperature `0`. |
+| Retrievers | `dense`, `bm25`, `hybrid` | `type`, `rrf_k` for `hybrid` | `dense` requires Qdrant and a query embedding. `bm25` requires OpenSearch. `hybrid` calls both retrievers and merges results with reciprocal-rank fusion; `rrf_k` defaults to `60` and must be convertible to a positive integer. Retrieval depth comes from `max(metrics.retrieval_k)`. |
+| Filters | `none` | `type: none` | No additional parameters. Metadata filtering is not implemented in v1. |
+| Rerankers | `none`, `cross_encoder` | `type`, `model` for `cross_encoder` | `cross_encoder.model` defaults to `cross-encoder/ms-marco-MiniLM-L-6-v2` and must be a local or downloadable SentenceTransformers CrossEncoder-compatible model. Reranking scores replace retriever scores and results are sorted descending. |
+| Context compressors | `none`, `top_n` | `type`, `max_chunks` for `top_n` | `top_n.max_chunks` defaults to `5` and must be convertible to a non-negative integer. It keeps the first `max_chunks` ranked results after retrieval, filtering, and reranking. |
+| Context assemblers | `default` | `type`, `max_context_chars` | `max_context_chars` defaults to `12000` and must be convertible to a non-negative integer. The assembler adds citation markers in the form `[doc_id::chunk_id]` and stops before adding a block that would exceed the limit. Only the first configured assembler is used. |
+| Prompt builders | `default` | `type: default` | No additional parameters. The prompt requires answers to use the exact context citation markers and to say when the answer is unavailable in context. Only the first configured prompt builder is used. |
+| Citation validators | `simple` | `type: simple` | No additional parameters. The simple validator counts an expected citation as found only when its string appears verbatim in the generated answer. Only the first configured citation validator is used. |
+| Generation | `ollama` | Configured in top-level `llm` | The runner dispatches by `llm.provider`. Built-in generation requires Ollama's `/api/generate` endpoint and a non-streaming response with a `response` field. |
+
+### Metrics components
+
+| Metric component | Parameters | Restrictions / notes |
+|---|---|---|
+| Retrieval metrics | `metrics.retrieval_k` | Computes `recall@k`, `precision@k`, `mrr@k`, and `ndcg@k` for every `k`. It uses `ground_truth_chunk_ids` when present; otherwise it falls back to `ground_truth_doc_ids`. |
+| Operational metrics | None | Always reports `answer_chars`, `context_chunks`, and `estimated_answer_tokens`. |
+| Citation coverage | Ground-truth `expected_citations` | Returns `1.0` when no expected citations are provided; otherwise checks for verbatim citation strings in the answer. |
+| Placeholder answer correctness | Ground-truth `expected_answer` | Lexical-overlap placeholder only; not a semantic answer judge. |
+| Placeholder faithfulness | Generated answer and assembled context | Lexical support heuristic over answer words longer than four characters; not an LLM-based faithfulness metric. |
+
+### Combination expansion behavior
+
+Only chunkers, embeddings, rewriters, retrievers, rerankers, and compressors participate in Cartesian-product case expansion. Cleaner, extractor, metadata enricher, indexer, filter, context assembler, prompt builder, citation validator, LLM, metric, and runtime settings are reused across expanded cases. For `context_assemblers`, `prompt_builders`, and `citation_validators`, v1 uses only the first item in each list.
+
 ## Ground-truth QA format
 
 ```json
