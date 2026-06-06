@@ -44,7 +44,7 @@ REGISTRY = ComponentRegistry()
 def register_builtin_components() -> ComponentRegistry:
     from ragbench_core.components.extractors import TxtExtractor, MarkdownExtractor, PdfExtractor, HtmlUrlExtractor
     from ragbench_core.components.cleaners import BasicCleaner
-    from ragbench_core.components.chunkers import FixedSizeChunker, RecursiveChunker
+    from ragbench_core.components.chunkers import FixedSizeChunker, RecursiveChunker, LlamaIndexFixedSizeChunker, LlamaIndexSentenceChunker
     from ragbench_core.components.metadata import BasicMetadataEnricher
     from ragbench_core.components.embedders import SentenceTransformerEmbedder
     from ragbench_core.components.indexers import QdrantIndexer, OpenSearchIndexer
@@ -60,7 +60,7 @@ def register_builtin_components() -> ComponentRegistry:
 
     for c in [TxtExtractor(), MarkdownExtractor(), PdfExtractor(), HtmlUrlExtractor()]: REGISTRY.register_extractor(c)
     REGISTRY.register_cleaner(BasicCleaner())
-    for c in [FixedSizeChunker(), RecursiveChunker()]: REGISTRY.register_chunker(c)
+    for c in [FixedSizeChunker(), RecursiveChunker(), LlamaIndexFixedSizeChunker(), LlamaIndexSentenceChunker()]: REGISTRY.register_chunker(c)
     REGISTRY.register_metadata_enricher(BasicMetadataEnricher())
     REGISTRY.register_embedder(SentenceTransformerEmbedder())
     for c in [QdrantIndexer(), OpenSearchIndexer()]: REGISTRY.register_indexer(c)

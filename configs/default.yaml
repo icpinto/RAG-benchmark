@@ -19,6 +19,12 @@ pipeline:
       - type: "recursive"
         chunk_size: [256, 512]
         overlap: [0, 0.2]
+      - type: "llamaindex_fixed"
+        chunk_size: [256, 512]
+        overlap: [0, 0.2]
+      - type: "llamaindex_sentence"
+        chunk_size: [256, 512]
+        overlap: [0, 0.2]
     metadata_enrichers:
       - type: "basic"
     embeddings:
