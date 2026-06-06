@@ -5,6 +5,58 @@ import pandas as pd
 import streamlit as st
 
 API=os.getenv("API_BASE_URL", "http://api:8000")
+
+
+def _result_label(item: dict, index: int) -> str:
+    question=item.get("question", "")
+    case_id=item.get("case_id", "unknown case")
+    question_preview=question[:80] + ("…" if len(question)>80 else "")
+    return f"{index + 1}. {case_id} — {question_preview}"
+
+def _evaluation_step(item: dict) -> dict:
+    return item.get("case_config", {}).get("evaluation_step", {}) or {}
+
+def show_evaluation_step_details(results: list[dict]):
+    st.subheader("Evaluation step details")
+    detail_index=st.selectbox(
+        "Select evaluation step",
+        range(len(results)),
+        format_func=lambda index: _result_label(results[index], index),
+    )
+    selected=results[detail_index]
+    widget_key=f"{selected.get('case_id')}_{detail_index}"
+    evaluation_step=_evaluation_step(selected)
+    if not evaluation_step:
+        st.info("This result does not include saved context or query-build details. Re-run the benchmark to capture evaluation-step traces.")
+        return
+
+    st.caption("Inspect the exact context and prompt/query build used to generate this result.")
+    context_tab,query_tab,chunks_tab,config_tab=st.tabs(["Context", "Query build", "Retrieved chunks", "Case config"])
+    with context_tab:
+        st.text_area("Assembled context", value=evaluation_step.get("context", ""), height=360, disabled=True, key=f"context_{widget_key}")
+    with query_tab:
+        rewritten=evaluation_step.get("rewritten_queries", [])
+        if rewritten:
+            st.write("Rewritten queries")
+            for query in rewritten:
+                st.code(query, language="text")
+        st.write("Prompt / query build")
+        st.text_area("Query build", value=evaluation_step.get("query_build", ""), height=420, disabled=True, key=f"query_build_{widget_key}")
+    with chunks_tab:
+        chunks=evaluation_step.get("retrieved_context", [])
+        if chunks:
+            chunk_rows=[{key:chunk.get(key) for key in ["rank","score","retriever","doc_id","chunk_id"]} for chunk in chunks]
+            st.dataframe(pd.DataFrame(chunk_rows), use_container_width=True)
+            for chunk in chunks:
+                label=f"Rank {chunk.get('rank')} · {chunk.get('doc_id')}::{chunk.get('chunk_id')}"
+                with st.expander(label):
+                    st.write({"score":chunk.get("score"),"retriever":chunk.get("retriever"),"metadata":chunk.get("metadata", {})})
+                    st.text_area("Chunk text", value=chunk.get("text", ""), height=220, disabled=True, key=f"chunk_text_{selected.get('case_id')}_{chunk.get('chunk_id')}_{chunk.get('rank')}")
+        else:
+            st.info("No retrieved chunks were saved for this evaluation step.")
+    with config_tab:
+        st.json(selected.get("case_config", {}))
+
 st.set_page_config(page_title="RAG Benchmark Platform", layout="wide")
 st.title("RAG Benchmark Platform")
 
@@ -126,6 +178,7 @@ try:
                         row.update(item.get("metrics",{}))
                         rows.append(row)
                     st.dataframe(pd.DataFrame(rows), use_container_width=True)
+                    show_evaluation_step_details(results)
                     with st.expander("Raw results"):
                         st.json(results)
                 else:

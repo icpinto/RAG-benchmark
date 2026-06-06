@@ -1,10 +1,11 @@
 from __future__ import annotations
-import json, statistics, time
+import statistics, time
 from pathlib import Path
 from ragbench_core.registry import register_builtin_components
 from ragbench_core.engine.config_expander import expand_cases
 from ragbench_core.engine.data_loader import list_sources, load_ground_truth
 from ragbench_core.engine.database import upsert_run, insert_result
+from ragbench_core.engine.evaluation_trace import build_evaluation_step
 from ragbench_core.models.schema import GeneratedAnswer
 from ragbench_core.utils.ids import stable_id
 from ragbench_core.utils.timing import timer
@@ -72,6 +73,7 @@ class BenchmarkRunner:
                 prompt=self.registry.prompt_builders[qry["prompt_builder"]["type"]].build(example.question, context, qry["prompt_builder"])
                 answer_text=self.registry.generators[case.llm_config["provider"]].generate(prompt, case.llm_config)
                 gen=GeneratedAnswer(answer_text, prompt, [r.chunk for r in combined], {"rewritten_queries":rewritten_queries})
+                evaluation_step=build_evaluation_step(example.question, rewritten_queries, combined, context, prompt)
             metrics={"ingestion_latency_seconds":ingest_timer["seconds"],"query_latency_seconds":query_timer["seconds"],"chunk_count":len(chunks)}
             for metric in self.registry.metrics.values():
                 metrics.update(metric.compute(example, combined, gen, case.metric_config))
@@ -80,7 +82,15 @@ class BenchmarkRunner:
             row={"case_id":case.case_id,"question":example.question,"metrics":metrics}
             metric_rows.append(row)
             result_id=stable_id(run_id,case.case_id,example.question)
-            insert_result(result_id, run_id, case.case_id, example.question, metrics, answer_text, {"ingestion":ing,"query":qry,"llm":case.llm_config})
+            insert_result(
+                result_id,
+                run_id,
+                case.case_id,
+                example.question,
+                metrics,
+                answer_text,
+                {"ingestion":ing,"query":qry,"llm":case.llm_config,"evaluation_step":evaluation_step},
+            )
         return {"questions":len(examples),"metric_rows":metric_rows}
 
     def _dedupe(self, results):
