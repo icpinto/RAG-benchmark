@@ -208,6 +208,8 @@ Only chunkers, embeddings, rewriters, retrievers, rerankers, and compressors par
 
 For v1, retrieval metrics can use `ground_truth_doc_ids`; exact `ground_truth_chunk_ids` are optional.
 
+The checked-in sample evaluation set includes both a simple policy document and a more adversarial `tricky_policy.md` addendum. The addendum adds archived-but-invalid policy wording, exception-heavy answers, table-only facts, negation, abbreviation disambiguation, and retention/warranty edge cases so pipeline variants can be evaluated on more than direct fact lookup.
+
 ## Add a new component
 
 Create a class implementing the relevant interface, then register it.
