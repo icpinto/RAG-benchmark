@@ -38,7 +38,7 @@ User question
 |---|---|
 | Extraction | TXT, Markdown, PDF, HTML/URL |
 | Cleaning | Basic cleaner |
-| Chunking | Fixed-size, recursive character chunker, LlamaIndex fixed-size, LlamaIndex sentence splitter |
+| Chunking | Fixed-size, recursive character chunker, LlamaIndex fixed-size, sentence, hierarchical/parent-child, semantic, and document-structure splitters |
 | Embeddings | SentenceTransformers: MiniLM, BGE small, configurable local HF model |
 | Indexing | Qdrant dense index, OpenSearch BM25 index |
 | Retrieval | Dense, BM25, hybrid reciprocal-rank-fusion |
@@ -159,7 +159,7 @@ The benchmark YAML is organized around top-level experiment, data, pipeline, LLM
 |---|---|---|---|
 | Extractors | `txt`, `markdown`, `pdf`, `html_url` | In YAML, `pipeline.ingestion.extractors` is a list of extractor names, not objects. | `txt` only accepts `.txt`; `markdown` accepts `.md` and `.markdown`; `pdf` accepts `.pdf`; `html_url` only accepts sources beginning with `http://` or `https://`. Unknown names cause registry lookup failures. |
 | Cleaners | `basic` | `type: basic` | No additional parameters. The basic cleaner removes NUL characters, collapses spaces/tabs, limits repeated blank lines, and strips leading/trailing whitespace. |
-| Chunkers | `fixed`, `recursive`, `llamaindex_fixed`, `llamaindex_sentence` | `type`, `chunk_size`, `overlap` | `chunk_size` defaults to `512` and must be convertible to an integer greater than `0`. `overlap` defaults to `0`; if it is a float, it is treated as a fraction of `chunk_size`; otherwise it is treated as an absolute character count. `llamaindex_fixed` uses LlamaIndex `TokenTextSplitter` for fixed token-style chunks. `llamaindex_sentence` uses LlamaIndex `SentenceSplitter` to prefer sentence boundaries. Both LlamaIndex adapters fall back to local deterministic splitting when `llama-index-core` is not installed, but Docker installs `llama-index-core` from `requirements/base.txt`. Use `0 <= overlap < 1` for fractional overlap, or an integer `0 <= overlap < chunk_size`; values that make `overlap_chars >= chunk_size` can create tiny steps or excessive duplicated context. `chunk_size` and `overlap` may be scalar values or lists; lists are expanded into combinations. |
+| Chunkers | `fixed`, `recursive`, `llamaindex_fixed`, `llamaindex_sentence`, `llamaindex_hierarchical`, `llamaindex_semantic`, `llamaindex_structure` | `type`, `chunk_size`, `overlap`; `llamaindex_hierarchical` also accepts `parent_chunk_size`; `llamaindex_semantic` also accepts `breakpoint_percentile_threshold`, `buffer_size`, and `embed_dim` | `chunk_size` defaults to `512` and must be convertible to an integer greater than `0`. `overlap` defaults to `0`; if it is a float, it is treated as a fraction of `chunk_size`; otherwise it is treated as an absolute character count. `llamaindex_fixed` uses LlamaIndex `TokenTextSplitter` for fixed token-style chunks. `llamaindex_sentence` uses LlamaIndex `SentenceSplitter` to prefer sentence boundaries. `llamaindex_hierarchical` uses LlamaIndex `HierarchicalNodeParser` and stores child chunks with `parent_chunk_id`, `parent_chunk_index`, `parent_text`, and `chunk_role` metadata for parent-child retrieval experiments. `llamaindex_semantic` uses LlamaIndex `SemanticSplitterNodeParser` with a mock embedding model so benchmark embedders remain independently configurable. `llamaindex_structure` uses LlamaIndex `MarkdownNodeParser` to preserve document sections and heading metadata. LlamaIndex adapters fall back to local deterministic splitting when the needed `llama-index-core` parser is not installed, but Docker installs `llama-index-core` from `requirements/base.txt`. Use `0 <= overlap < 1` for fractional overlap, or an integer `0 <= overlap < chunk_size`; values that make `overlap_chars >= chunk_size` can create tiny steps or excessive duplicated context. `chunk_size`, `overlap`, and `parent_chunk_size` may be scalar values or lists; lists are expanded into combinations. |
 | Metadata enrichers | `basic` | `type: basic` | No additional parameters. Adds `char_length` and `word_count` to every chunk. |
 | Embeddings | `sentence_transformers` | `provider`, `model`, `batch_size` | `provider` must be `sentence_transformers`. `model` is required and must be a local or downloadable SentenceTransformers-compatible model. `batch_size` defaults to `32` and must be convertible to a positive integer. All configured embedding models should produce vectors suitable for the same Qdrant dense-index workflow. |
 | Indexers | `qdrant`, `opensearch` | `pipeline.ingestion.indexers.dense.type`, `pipeline.ingestion.indexers.sparse.type` | v1 always invokes the built-in `qdrant` dense indexer and `opensearch` sparse indexer in the runner. The `type` fields document the intended backend but are not used to dispatch alternate indexers yet. Qdrant requires non-empty embeddings and uses cosine distance; OpenSearch creates a text/BM25 mapping. |
@@ -190,7 +190,7 @@ The benchmark YAML is organized around top-level experiment, data, pipeline, LLM
 
 ### Combination expansion behavior
 
-Only chunkers, embeddings, rewriters, retrievers, rerankers, and compressors participate in Cartesian-product case expansion. Chunker variants are cycled before the later query-grid variants so capped runs still compare configured chunking strategies early. The default config includes both native chunkers and the LlamaIndex fixed-size and sentence chunkers. Cleaner, extractor, metadata enricher, indexer, filter, context assembler, prompt builder, citation validator, LLM, metric, and runtime settings are reused across expanded cases. For `context_assemblers`, `prompt_builders`, and `citation_validators`, v1 uses only the first item in each list.
+Only chunkers, embeddings, rewriters, retrievers, rerankers, and compressors participate in Cartesian-product case expansion. Chunker variants are cycled before the later query-grid variants so capped runs still compare configured chunking strategies early. The default config includes both native chunkers and the LlamaIndex fixed-size, sentence, hierarchical, semantic, and document-structure chunkers. Cleaner, extractor, metadata enricher, indexer, filter, context assembler, prompt builder, citation validator, LLM, metric, and runtime settings are reused across expanded cases. For `context_assemblers`, `prompt_builders`, and `citation_validators`, v1 uses only the first item in each list.
 
 ## Ground-truth QA format
 
@@ -246,9 +246,8 @@ This repo deliberately avoids a blind Cartesian product explosion. The runner ex
 
 Recommended extension roadmap:
 
-1. Semantic chunker
-2. Parent-child chunking and parent-document retriever
-3. Metadata filters
+1. Parent-document retriever that expands `llamaindex_hierarchical` child hits with stored parent context
+2. Metadata filters
 4. LLM-based citation validator
 5. RAGAS and DeepEval adapters
 6. Additional LangChain and LlamaIndex adapter components
