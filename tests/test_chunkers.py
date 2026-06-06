@@ -1,7 +1,10 @@
 import ragbench_core.components.chunkers as chunkers_module
 from ragbench_core.components.chunkers import (
     FixedSizeChunker,
+    LlamaIndexDocumentStructureChunker,
     LlamaIndexFixedSizeChunker,
+    LlamaIndexHierarchicalChunker,
+    LlamaIndexSemanticChunker,
     LlamaIndexSentenceChunker,
 )
 from ragbench_core.models.schema import Document
@@ -30,6 +33,45 @@ def test_llamaindex_sentence_chunker_preserves_sentence_boundaries(monkeypatch):
     chunks=LlamaIndexSentenceChunker().chunk(docs,{"chunk_size":30,"overlap":0})
     assert [c.text for c in chunks] == ["First sentence.", "Second sentence.", "Third sentence."]
     assert all(c.metadata["chunker"] == "llamaindex_sentence" for c in chunks)
+
+
+def test_llamaindex_hierarchical_chunker_adds_parent_metadata(monkeypatch):
+    monkeypatch.setattr(chunkers_module.importlib.util, "find_spec", lambda name: None)
+    text = "Alpha one. Alpha two. Beta one. Beta two."
+    docs = [Document("d1", "src", text, {})]
+
+    chunks = LlamaIndexHierarchicalChunker().chunk(
+        docs,
+        {"chunk_size": 22, "parent_chunk_size": 45, "overlap": 0},
+    )
+
+    assert [c.metadata["chunker"] for c in chunks] == ["llamaindex_hierarchical", "llamaindex_hierarchical"]
+    assert all(c.metadata["parent_chunk_id"] for c in chunks)
+    assert all(c.metadata["parent_text"] for c in chunks)
+    assert all(c.metadata["chunk_role"] == "child" for c in chunks)
+
+
+def test_llamaindex_semantic_chunker_groups_paragraphs(monkeypatch):
+    monkeypatch.setattr(chunkers_module.importlib.util, "find_spec", lambda name: None)
+    text = "Cats purr softly.\n\nDogs bark loudly.\n\nBirds sing brightly."
+    docs = [Document("d1", "src", text, {})]
+
+    chunks = LlamaIndexSemanticChunker().chunk(docs, {"chunk_size": 40, "overlap": 0})
+
+    assert [c.text for c in chunks] == ["Cats purr softly.\n\nDogs bark loudly.", "Birds sing brightly."]
+    assert all(c.metadata["chunker"] == "llamaindex_semantic" for c in chunks)
+
+
+def test_llamaindex_structure_chunker_preserves_markdown_sections(monkeypatch):
+    monkeypatch.setattr(chunkers_module.importlib.util, "find_spec", lambda name: None)
+    text = "# Intro\nWelcome text.\n\n## Details\nMore detail text."
+    docs = [Document("d1", "src", text, {})]
+
+    chunks = LlamaIndexDocumentStructureChunker().chunk(docs, {"chunk_size": 80, "overlap": 0})
+
+    assert [c.metadata["section_heading"] for c in chunks] == ["Intro", "Details"]
+    assert [c.metadata["heading_level"] for c in chunks] == [1, 2]
+    assert all(c.metadata["chunker"] == "llamaindex_structure" for c in chunks)
 
 
 def test_case_expansion_prioritizes_chunker_variants_under_cap():
