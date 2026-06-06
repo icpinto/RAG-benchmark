@@ -26,7 +26,7 @@ def expand_cases(config: dict) -> list[BenchmarkCase]:
     compressors=qry.get("compressors", [{"type":"none"}])
     max_combos=int(config.get("runtime",{}).get("max_combinations", 32))
     cases=[]
-    for chunker, embedder, rewriter, retriever, reranker, compressor in product(chunkers, embeddings, rewriters, retrievers, rerankers, compressors):
+    for embedder, rewriter, retriever, reranker, compressor, chunker in product(embeddings, rewriters, retrievers, rerankers, compressors, chunkers):
         ing_conf={"chunker":chunker,"embedder":embedder,"cleaners":ing.get("cleaners",[]),"extractors":ing.get("extractors",[]),"metadata_enrichers":ing.get("metadata_enrichers",[]),"indexers":ing.get("indexers",{})}
         qry_conf={"rewriter":rewriter,"retriever":retriever,"filters":qry.get("filters", [{"type":"none"}]),"reranker":reranker,"compressor":compressor,"context_assembler":qry.get("context_assemblers", [{"type":"default"}])[0],"prompt_builder":qry.get("prompt_builders", [{"type":"default"}])[0],"citation_validator":qry.get("citation_validators", [{"type":"simple"}])[0]}
         cid=stable_id(ing_conf,qry_conf,config.get("experiment",{}).get("name","exp"))
