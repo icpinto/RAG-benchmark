@@ -53,9 +53,37 @@ class BM25Retriever(BaseRetriever):
     ) -> list[RetrievalResult]:
         client = OpenSearch(settings.opensearch_url, verify_certs=False, ssl_show_warn=False)
         try:
+            fields, phrase_fields = self._search_fields(client, index_name)
+            should = [
+                {
+                    "multi_match": {
+                        "query": question,
+                        "fields": fields,
+                        "type": "best_fields",
+                    }
+                }
+            ]
+            if phrase_fields:
+                should.append(
+                    {
+                        "multi_match": {
+                            "query": question,
+                            "fields": phrase_fields,
+                            "type": "phrase",
+                        }
+                    }
+                )
             res = client.search(
                 index=index_name,
-                body={"query": {"match": {"text": question}}, "size": top_k},
+                body={
+                    "query": {
+                        "bool": {
+                            "should": should,
+                            "minimum_should_match": 1,
+                        }
+                    },
+                    "size": top_k,
+                },
             )
             out = []
             for i, h in enumerate(res["hits"]["hits"]):
@@ -71,6 +99,19 @@ class BM25Retriever(BaseRetriever):
             return out
         finally:
             close_client(client)
+
+    def _search_fields(self, client: OpenSearch, index_name: str) -> tuple[list[str], list[str]]:
+        mappings = client.indices.get_mapping(index=index_name)
+        properties = next(iter(mappings.values()))["mappings"].get("properties", {})
+        boosts = {"title": "^3", "heading": "^2", "body": "", "text": ""}
+        phrase_boosts = {"title": "^4", "heading": "^3", "body": "^2", "text": "^2"}
+        fields = [f"{field}{boost}" for field, boost in boosts.items() if field in properties]
+        phrase_fields = [
+            f"{field}.phrase{phrase_boosts[field]}"
+            for field in phrase_boosts
+            if "phrase" in properties.get(field, {}).get("fields", {})
+        ]
+        return fields or ["text"], phrase_fields
 
 
 class HybridRetriever(BaseRetriever):

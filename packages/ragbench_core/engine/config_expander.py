@@ -15,16 +15,16 @@ def _expand_chunkers(chunkers):
             out.append(cc)
     return out
 
-def _expand_dense_indexers(indexer_config):
-    dense = indexer_config.get("dense", {"type": "qdrant", "strategy": "dense_hnsw"})
-    if isinstance(dense, list):
-        return dense
-    strategies = dense.get("strategies")
+def _expand_indexer_variants(indexer_config, key, default):
+    indexer = indexer_config.get(key, default)
+    if isinstance(indexer, list):
+        return indexer
+    strategies = indexer.get("strategies")
     if not strategies:
-        return [dense]
+        return [indexer]
     out = []
     for strategy in strategies:
-        cc = dict(dense)
+        cc = dict(indexer)
         cc.pop("strategies", None)
         if isinstance(strategy, dict):
             cc.update(strategy)
@@ -32,6 +32,14 @@ def _expand_dense_indexers(indexer_config):
             cc["strategy"] = strategy
         out.append(cc)
     return out
+
+
+def _expand_dense_indexers(indexer_config):
+    return _expand_indexer_variants(indexer_config, "dense", {"type": "qdrant", "strategy": "dense_hnsw"})
+
+
+def _expand_sparse_indexers(indexer_config):
+    return _expand_indexer_variants(indexer_config, "sparse", {"type": "opensearch", "strategy": "bm25_standard"})
 
 
 def expand_cases(config: dict) -> list[BenchmarkCase]:
@@ -43,11 +51,13 @@ def expand_cases(config: dict) -> list[BenchmarkCase]:
     retrievers=qry.get("retrievers", [{"type":"dense"}])
     rerankers=qry.get("rerankers", [{"type":"none"}])
     compressors=qry.get("compressors", [{"type":"none"}])
-    dense_indexers=_expand_dense_indexers(ing.get("indexers",{}))
+    indexer_config=ing.get("indexers",{})
+    dense_indexers=_expand_dense_indexers(indexer_config)
+    sparse_indexers=_expand_sparse_indexers(indexer_config)
     max_combos=int(config.get("runtime",{}).get("max_combinations", 32))
     cases=[]
-    for embedder, rewriter, retriever, reranker, compressor, chunker, dense_indexer in product(embeddings, rewriters, retrievers, rerankers, compressors, chunkers, dense_indexers):
-        indexers=dict(ing.get("indexers",{})); indexers["dense"]=dense_indexer
+    for embedder, rewriter, retriever, reranker, compressor, chunker, dense_indexer, sparse_indexer in product(embeddings, rewriters, retrievers, rerankers, compressors, chunkers, dense_indexers, sparse_indexers):
+        indexers=dict(indexer_config); indexers["dense"]=dense_indexer; indexers["sparse"]=sparse_indexer
         ing_conf={"chunker":chunker,"embedder":embedder,"cleaners":ing.get("cleaners",[]),"extractors":ing.get("extractors",[]),"metadata_enrichers":ing.get("metadata_enrichers",[]),"indexers":indexers}
         qry_conf={"rewriter":rewriter,"retriever":retriever,"filters":qry.get("filters", [{"type":"none"}]),"reranker":reranker,"compressor":compressor,"context_assembler":qry.get("context_assemblers", [{"type":"default"}])[0],"prompt_builder":qry.get("prompt_builders", [{"type":"default"}])[0],"citation_validator":qry.get("citation_validators", [{"type":"simple"}])[0]}
         cid=stable_id(ing_conf,qry_conf,config.get("experiment",{}).get("name","exp"))
