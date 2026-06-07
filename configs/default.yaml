@@ -51,6 +51,13 @@ pipeline:
     indexers:
       dense:
         type: "qdrant"
+        strategies:
+          - "dense_hnsw"
+          - "dense_hnsw_tuned"
+          - "dense_exact"
+          - "dense_quantized"
+          - "dense_on_disk"
+          - "dense_payload_indexed"
       sparse:
         type: "opensearch"
 
