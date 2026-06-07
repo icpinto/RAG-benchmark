@@ -55,6 +55,54 @@ QDRANT_DENSE_STRATEGIES: dict[str, dict[str, Any]] = {
     },
 }
 
+OPENSEARCH_BM25_STRATEGIES: dict[str, dict[str, Any]] = {
+    # Plain text baseline using OpenSearch defaults for BM25 over the chunk text.
+    "bm25_standard": {
+        "fields": ["text"],
+        "mappings": {
+            "text": {"type": "text"},
+        },
+    },
+    # Split each chunk into lightweight title / heading / body fields for boosted retrieval.
+    "bm25_field_weighted": {
+        "fields": ["title^3", "heading^2", "body"],
+        "mappings": {
+            "text": {"type": "text"},
+            "title": {"type": "text"},
+            "heading": {"type": "text"},
+            "body": {"type": "text"},
+        },
+    },
+    # Analyzer variant that normalizes case, removes stopwords, stems English words, and expands synonyms.
+    "bm25_custom_analyzer": {
+        "analyzer": "ragbench_bm25_custom",
+        "synonyms": [
+            "ai, artificial intelligence",
+            "usa, united states, united states of america",
+            "faq, frequently asked questions",
+        ],
+        "fields": ["title^3", "heading^2", "body", "text"],
+        "mappings": {
+            "text": {"type": "text", "analyzer": "ragbench_bm25_custom", "search_analyzer": "ragbench_bm25_custom"},
+            "title": {"type": "text", "analyzer": "ragbench_bm25_custom", "search_analyzer": "ragbench_bm25_custom"},
+            "heading": {"type": "text", "analyzer": "ragbench_bm25_custom", "search_analyzer": "ragbench_bm25_custom"},
+            "body": {"type": "text", "analyzer": "ragbench_bm25_custom", "search_analyzer": "ragbench_bm25_custom"},
+        },
+    },
+    # Shingle subfields keep the regular text query available while adding phrase-oriented matching.
+    "bm25_phrase": {
+        "analyzer": "ragbench_shingle",
+        "fields": ["title^3", "heading^2", "body", "text", "title.phrase^4", "heading.phrase^3", "body.phrase^2", "text.phrase^2"],
+        "phrase_fields": ["title.phrase^4", "heading.phrase^3", "body.phrase^2", "text.phrase^2"],
+        "mappings": {
+            "text": {"type": "text", "fields": {"phrase": {"type": "text", "analyzer": "ragbench_shingle"}}},
+            "title": {"type": "text", "fields": {"phrase": {"type": "text", "analyzer": "ragbench_shingle"}}},
+            "heading": {"type": "text", "fields": {"phrase": {"type": "text", "analyzer": "ragbench_shingle"}}},
+            "body": {"type": "text", "fields": {"phrase": {"type": "text", "analyzer": "ragbench_shingle"}}},
+        },
+    },
+}
+
 
 class QdrantIndexer(BaseIndexer):
     name = "qdrant"
@@ -150,34 +198,102 @@ class OpenSearchIndexer(BaseIndexer):
     def index(self, chunks: list[Chunk], index_name: str, config: dict) -> dict:
         client = OpenSearch(settings.opensearch_url, verify_certs=False, ssl_show_warn=False)
         try:
+            strategy_name = config.get("strategy", "bm25_standard")
+            strategy = self._strategy_config(strategy_name, config)
             if client.indices.exists(index=index_name):
                 client.indices.delete(index=index_name)
-            client.indices.create(
-                index=index_name,
-                body={
-                    "mappings": {
-                        "properties": {
-                            "text": {"type": "text"},
-                            "doc_id": {"type": "keyword"},
-                            "chunk_id": {"type": "keyword"},
-                            "metadata": {"type": "object", "enabled": True},
-                        }
-                    }
-                },
-            )
+            client.indices.create(index=index_name, body=self._index_body(strategy))
             for c in chunks:
                 client.index(
                     index=index_name,
                     id=c.chunk_id,
-                    body={
-                        "text": c.text,
-                        "doc_id": c.doc_id,
-                        "chunk_id": c.chunk_id,
-                        "metadata": c.metadata,
-                    },
+                    body=self._document_body(c, strategy),
                     refresh=False,
                 )
             client.indices.refresh(index=index_name)
-            return {"documents": len(chunks), "backend": "opensearch"}
+            return {"documents": len(chunks), "backend": "opensearch", "strategy": strategy_name}
         finally:
             close_client(client)
+
+    def _strategy_config(self, strategy_name: str, config: dict) -> dict:
+        if strategy_name not in OPENSEARCH_BM25_STRATEGIES:
+            supported = ", ".join(sorted(OPENSEARCH_BM25_STRATEGIES))
+            raise ValueError(f"Unsupported OpenSearch BM25 strategy '{strategy_name}'. Supported: {supported}")
+        strategy = dict(OPENSEARCH_BM25_STRATEGIES[strategy_name])
+        if "synonyms" in config:
+            strategy["synonyms"] = config["synonyms"]
+        return strategy
+
+    def _index_body(self, strategy: dict) -> dict:
+        properties = {
+            **strategy["mappings"],
+            "doc_id": {"type": "keyword"},
+            "chunk_id": {"type": "keyword"},
+            "metadata": {"type": "object", "enabled": True},
+        }
+        body: dict[str, Any] = {"mappings": {"properties": properties}}
+        analyzer = strategy.get("analyzer")
+        if analyzer == "ragbench_bm25_custom":
+            body["settings"] = {
+                "analysis": {
+                    "filter": {
+                        "ragbench_synonyms": {
+                            "type": "synonym",
+                            "synonyms": strategy["synonyms"],
+                        },
+                        "ragbench_english_stop": {"type": "stop", "stopwords": "_english_"},
+                        "ragbench_english_stemmer": {"type": "stemmer", "language": "english"},
+                    },
+                    "analyzer": {
+                        "ragbench_bm25_custom": {
+                            "type": "custom",
+                            "tokenizer": "standard",
+                            "filter": [
+                                "lowercase",
+                                "ragbench_english_stop",
+                                "ragbench_english_stemmer",
+                                "ragbench_synonyms",
+                            ],
+                        }
+                    },
+                }
+            }
+        elif analyzer == "ragbench_shingle":
+            body["settings"] = {
+                "analysis": {
+                    "filter": {
+                        "ragbench_shingle_filter": {
+                            "type": "shingle",
+                            "min_shingle_size": 2,
+                            "max_shingle_size": 3,
+                            "output_unigrams": True,
+                        }
+                    },
+                    "analyzer": {
+                        "ragbench_shingle": {
+                            "type": "custom",
+                            "tokenizer": "standard",
+                            "filter": ["lowercase", "ragbench_shingle_filter"],
+                        }
+                    },
+                }
+            }
+        return body
+
+    def _document_body(self, chunk: Chunk, strategy: dict) -> dict:
+        metadata = chunk.metadata or {}
+        body = {
+            "text": chunk.text,
+            "doc_id": chunk.doc_id,
+            "chunk_id": chunk.chunk_id,
+            "metadata": metadata,
+        }
+        if any(field in strategy["mappings"] for field in ("title", "heading", "body")):
+            body.update(
+                {
+                    "title": metadata.get("title") or metadata.get("file_name") or chunk.doc_id,
+                    "heading": metadata.get("section_heading") or metadata.get("heading") or "",
+                    "body": chunk.text,
+                }
+            )
+        return body

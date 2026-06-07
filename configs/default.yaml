@@ -60,6 +60,11 @@ pipeline:
           - "dense_payload_indexed"
       sparse:
         type: "opensearch"
+        strategies:
+          - "bm25_standard"
+          - "bm25_field_weighted"
+          - "bm25_custom_analyzer"
+          - "bm25_phrase"
 
   query:
     rewriters:
