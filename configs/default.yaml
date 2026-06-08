@@ -72,6 +72,14 @@ pipeline:
       - type: "hyde"
     retrievers:
       - type: "dense"
+      - type: "dense_filtered"
+        # Filters are applied inside Qdrant before vector ranking. Keys without
+        # a prefix are matched against the chunk metadata payload; doc_id and
+        # chunk_id target top-level payload fields. Example:
+        # metadata_filters:
+        #   source: "sample_policy.md"
+        #   word_count: {gte: 20}
+        metadata_filters: {}
       - type: "bm25"
       - type: "hybrid"
     filters:

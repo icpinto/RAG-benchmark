@@ -41,7 +41,7 @@ User question
 | Chunking | Fixed-size, recursive character chunker, LlamaIndex fixed-size, sentence, hierarchical/parent-child, semantic, and document-structure splitters |
 | Embeddings | SentenceTransformers: MiniLM, BGE small, configurable local HF model |
 | Indexing | Qdrant dense strategies (`dense_hnsw`, `dense_hnsw_tuned`, `dense_exact`, `dense_quantized`, `dense_on_disk`, `dense_payload_indexed`), OpenSearch BM25 strategies (`bm25_standard`, `bm25_field_weighted`, `bm25_custom_analyzer`, `bm25_phrase`) |
-| Retrieval | Dense, BM25, hybrid reciprocal-rank-fusion |
+| Retrieval | Dense, metadata-filtered dense, BM25, hybrid reciprocal-rank-fusion |
 | Query rewriting | None, HyDE via Ollama |
 | Reranking | None, CrossEncoder reranker |
 | Context compression | None, top-N trimming |
@@ -169,8 +169,8 @@ The benchmark YAML is organized around top-level experiment, data, pipeline, LLM
 | Component | Built-in variants | Parameters | Restrictions / notes |
 |---|---|---|---|
 | Query rewriters | `none`, `hyde` | `type` | `none` returns the original question. `hyde` uses the top-level `llm.base_url` and `llm.model` to call Ollama and returns the original question plus a hypothetical passage when generation succeeds. HyDE has a fixed 120-second request timeout and fixed generation temperature `0`. |
-| Retrievers | `dense`, `bm25`, `hybrid` | `type`, `rrf_k` for `hybrid` | `dense` requires Qdrant and a query embedding. `bm25` requires OpenSearch. `hybrid` calls both retrievers and merges results with reciprocal-rank fusion; `rrf_k` defaults to `60` and must be convertible to a positive integer. Retrieval depth comes from `max(metrics.retrieval_k)`. |
-| Filters | `none` | `type: none` | No additional parameters. Metadata filtering is not implemented in v1. |
+| Retrievers | `dense`, `dense_filtered`, `bm25`, `hybrid` | `type`, `metadata_filters` / `metadata_filter`, `payload_filter`, `doc_id`, `doc_ids`, `rrf_k` for `hybrid` | `dense` requires Qdrant and a query embedding. `dense_filtered` applies a Qdrant payload filter before vector ranking; metadata filter keys without a prefix target `metadata.<key>`, while `doc_id` and `chunk_id` target top-level payload fields. `payload_filter` can pass a raw Qdrant filter object. `bm25` requires OpenSearch. `hybrid` calls both retrievers and merges results with reciprocal-rank fusion; `rrf_k` defaults to `60` and must be convertible to a positive integer. Retrieval depth comes from `max(metrics.retrieval_k)`. |
+| Filters | `none` | `type: none` | No additional parameters. Use the `dense_filtered` retriever when metadata constraints should be pushed into Qdrant retrieval instead of applied after retrieval. |
 | Rerankers | `none`, `cross_encoder` | `type`, `model` for `cross_encoder` | `cross_encoder.model` defaults to `cross-encoder/ms-marco-MiniLM-L-6-v2` and must be a local or downloadable SentenceTransformers CrossEncoder-compatible model. Reranking scores replace retriever scores and results are sorted descending. |
 | Context compressors | `none`, `top_n` | `type`, `max_chunks` for `top_n` | `top_n.max_chunks` defaults to `5` and must be convertible to a non-negative integer. It keeps the first `max_chunks` ranked results after retrieval, filtering, and reranking. |
 | Context assemblers | `default` | `type`, `max_context_chars` | `max_context_chars` defaults to `12000` and must be convertible to a non-negative integer. The assembler adds citation markers in the form `[doc_id::chunk_id]` and stops before adding a block that would exceed the limit. Only the first configured assembler is used. |
