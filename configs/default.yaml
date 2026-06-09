@@ -80,6 +80,12 @@ pipeline:
         #   source: "sample_policy.md"
         #   word_count: {gte: 20}
         metadata_filters: {}
+      - type: "parent_document"
+        # Retrieves hierarchical child chunks from Qdrant, dedupes by parent_chunk_id,
+        # and returns the stored parent_text as context. Use dense_filtered here
+        # when metadata filters should be pushed down to child retrieval.
+        base_retriever: "dense"
+        child_top_k_multiplier: 4
       - type: "bm25"
       - type: "hybrid"
     filters:

@@ -2,12 +2,9 @@ from __future__ import annotations
 from collections import defaultdict
 from typing import Any
 
-from qdrant_client import QdrantClient
-from opensearchpy import OpenSearch
 from ragbench_core.utils.clients import close_client
 from ragbench_core.interfaces import BaseRetriever
 from ragbench_core.models.schema import Chunk, RetrievalResult
-from ragbench_core.settings import settings
 
 
 class DenseRetriever(BaseRetriever):
@@ -21,6 +18,9 @@ class DenseRetriever(BaseRetriever):
         config: dict,
         top_k: int,
     ) -> list[RetrievalResult]:
+        from qdrant_client import QdrantClient
+        from ragbench_core.settings import settings
+
         client = QdrantClient(url=settings.qdrant_url)
         try:
             hits = client.search(
@@ -56,6 +56,9 @@ class DenseFilteredRetriever(DenseRetriever):
         config: dict,
         top_k: int,
     ) -> list[RetrievalResult]:
+        from qdrant_client import QdrantClient
+        from ragbench_core.settings import settings
+
         client = QdrantClient(url=settings.qdrant_url)
         try:
             hits = client.search(
@@ -118,6 +121,97 @@ class DenseFilteredRetriever(DenseRetriever):
         return {"key": field_name, "match": {"value": value}}
 
 
+class ParentDocumentRetriever(BaseRetriever):
+    name = "parent_document"
+
+    def retrieve(
+        self,
+        question: str,
+        query_embedding: list[float] | None,
+        index_name: str,
+        config: dict,
+        top_k: int,
+    ) -> list[RetrievalResult]:
+        child_top_k = self._child_top_k(config, top_k)
+        child_results = self._child_retriever(config).retrieve(
+            question,
+            query_embedding,
+            index_name,
+            config,
+            child_top_k,
+        )
+        return self._expand_parent_context(child_results, top_k)
+
+    def _child_retriever(self, config: dict[str, Any]) -> BaseRetriever:
+        base_retriever = config.get("base_retriever", "dense")
+        if base_retriever == "dense":
+            return DenseRetriever()
+        if base_retriever == "dense_filtered":
+            return DenseFilteredRetriever()
+        supported = "dense, dense_filtered"
+        raise ValueError(
+            f"Unsupported parent_document base_retriever '{base_retriever}'. Supported: {supported}"
+        )
+
+    def _child_top_k(self, config: dict[str, Any], top_k: int) -> int:
+        multiplier = int(config.get("child_top_k_multiplier", 4))
+        configured_child_top_k = config.get("child_top_k")
+        if configured_child_top_k is not None:
+            return max(top_k, int(configured_child_top_k))
+        return max(top_k, top_k * max(1, multiplier))
+
+    def _expand_parent_context(
+        self,
+        child_results: list[RetrievalResult],
+        top_k: int,
+    ) -> list[RetrievalResult]:
+        expanded: list[RetrievalResult] = []
+        seen: set[str] = set()
+        for child_result in child_results:
+            parent_result = self._parent_result_from_child(child_result)
+            dedupe_key = parent_result.chunk.chunk_id
+            if dedupe_key in seen:
+                continue
+            seen.add(dedupe_key)
+            expanded.append(parent_result)
+            if len(expanded) >= top_k:
+                break
+
+        for rank, result in enumerate(expanded, start=1):
+            result.rank = rank
+        return expanded
+
+    def _parent_result_from_child(self, child_result: RetrievalResult) -> RetrievalResult:
+        child = child_result.chunk
+        metadata = dict(child.metadata or {})
+        parent_text = metadata.get("parent_text")
+        parent_chunk_id = metadata.get("parent_chunk_id")
+        if parent_text and parent_chunk_id:
+            metadata.update(
+                {
+                    "child_chunk_id": child.chunk_id,
+                    "child_text": child.text,
+                    "retrieved_chunk_id": child.chunk_id,
+                    "retrieved_chunk_text": child.text,
+                    "chunk_role": "parent",
+                    "expanded_from_retriever": child_result.retriever,
+                }
+            )
+            chunk = Chunk(str(parent_chunk_id), child.doc_id, str(parent_text), metadata)
+        else:
+            metadata.update(
+                {
+                    "retrieved_chunk_id": child.chunk_id,
+                    "retrieved_chunk_text": child.text,
+                    "chunk_role": metadata.get("chunk_role", "child"),
+                    "parent_expansion_missing": True,
+                    "expanded_from_retriever": child_result.retriever,
+                }
+            )
+            chunk = Chunk(child.chunk_id, child.doc_id, child.text, metadata, child.embedding)
+        return RetrievalResult(chunk, child_result.score, child_result.rank, self.name)
+
+
 class BM25Retriever(BaseRetriever):
     name = "bm25"
 
@@ -129,6 +223,9 @@ class BM25Retriever(BaseRetriever):
         config: dict,
         top_k: int,
     ) -> list[RetrievalResult]:
+        from opensearchpy import OpenSearch
+        from ragbench_core.settings import settings
+
         client = OpenSearch(settings.opensearch_url, verify_certs=False, ssl_show_warn=False)
         try:
             fields, phrase_fields = self._search_fields(client, index_name)
@@ -178,7 +275,7 @@ class BM25Retriever(BaseRetriever):
         finally:
             close_client(client)
 
-    def _search_fields(self, client: OpenSearch, index_name: str) -> tuple[list[str], list[str]]:
+    def _search_fields(self, client: Any, index_name: str) -> tuple[list[str], list[str]]:
         mappings = client.indices.get_mapping(index=index_name)
         properties = next(iter(mappings.values()))["mappings"].get("properties", {})
         boosts = {"title": "^3", "heading": "^2", "body": "", "text": ""}
