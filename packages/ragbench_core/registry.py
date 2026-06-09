@@ -57,7 +57,7 @@ def register_builtin_components() -> ComponentRegistry:
     from ragbench_core.components.embedders import SentenceTransformerEmbedder
     from ragbench_core.components.indexers import QdrantIndexer, OpenSearchIndexer
     from ragbench_core.components.rewriters import NoRewrite, HyDERewrite
-    from ragbench_core.components.retrievers import DenseRetriever, DenseFilteredRetriever, BM25Retriever, HybridRetriever
+    from ragbench_core.components.retrievers import DenseRetriever, DenseFilteredRetriever, ParentDocumentRetriever, BM25Retriever, HybridRetriever
     from ragbench_core.components.filters import NoFilter
     from ragbench_core.components.rerankers import NoReranker, CrossEncoderReranker
     from ragbench_core.components.compressors import NoCompressor, TopNCompressor
@@ -81,7 +81,7 @@ def register_builtin_components() -> ComponentRegistry:
     REGISTRY.register_embedder(SentenceTransformerEmbedder())
     for c in [QdrantIndexer(), OpenSearchIndexer()]: REGISTRY.register_indexer(c)
     for c in [NoRewrite(), HyDERewrite()]: REGISTRY.register_rewriter(c)
-    for c in [DenseRetriever(), DenseFilteredRetriever(), BM25Retriever(), HybridRetriever()]: REGISTRY.register_retriever(c)
+    for c in [DenseRetriever(), DenseFilteredRetriever(), ParentDocumentRetriever(), BM25Retriever(), HybridRetriever()]: REGISTRY.register_retriever(c)
     REGISTRY.register_filter(NoFilter())
     for c in [NoReranker(), CrossEncoderReranker()]: REGISTRY.register_reranker(c)
     for c in [NoCompressor(), TopNCompressor()]: REGISTRY.register_compressor(c)

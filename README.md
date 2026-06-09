@@ -169,7 +169,7 @@ The benchmark YAML is organized around top-level experiment, data, pipeline, LLM
 | Component | Built-in variants | Parameters | Restrictions / notes |
 |---|---|---|---|
 | Query rewriters | `none`, `hyde` | `type` | `none` returns the original question. `hyde` uses the top-level `llm.base_url` and `llm.model` to call Ollama and returns the original question plus a hypothetical passage when generation succeeds. HyDE has a fixed 120-second request timeout and fixed generation temperature `0`. |
-| Retrievers | `dense`, `dense_filtered`, `bm25`, `hybrid` | `type`, `metadata_filters` / `metadata_filter`, `payload_filter`, `doc_id`, `doc_ids`, `rrf_k` for `hybrid` | `dense` requires Qdrant and a query embedding. `dense_filtered` applies a Qdrant payload filter before vector ranking; metadata filter keys without a prefix target `metadata.<key>`, while `doc_id` and `chunk_id` target top-level payload fields. `payload_filter` can pass a raw Qdrant filter object. `bm25` requires OpenSearch. `hybrid` calls both retrievers and merges results with reciprocal-rank fusion; `rrf_k` defaults to `60` and must be convertible to a positive integer. Retrieval depth comes from `max(metrics.retrieval_k)`. |
+| Retrievers | `dense`, `dense_filtered`, `parent_document`, `bm25`, `hybrid` | `type`, `metadata_filters` / `metadata_filter`, `payload_filter`, `doc_id`, `doc_ids`, `base_retriever`, `child_top_k`, `child_top_k_multiplier`, `rrf_k` for `hybrid` | `dense` requires Qdrant and a query embedding. `dense_filtered` applies a Qdrant payload filter before vector ranking; metadata filter keys without a prefix target `metadata.<key>`, while `doc_id` and `chunk_id` target top-level payload fields. `payload_filter` can pass a raw Qdrant filter object. `parent_document` retrieves `llamaindex_hierarchical` child chunks with `dense` or `dense_filtered`, deduplicates by stored `parent_chunk_id`, and returns the stored `parent_text` as the context chunk while retaining child hit details in metadata. `bm25` requires OpenSearch. `hybrid` calls both retrievers and merges results with reciprocal-rank fusion; `rrf_k` defaults to `60` and must be convertible to a positive integer. Retrieval depth comes from `max(metrics.retrieval_k)`. |
 | Filters | `none` | `type: none` | No additional parameters. Use the `dense_filtered` retriever when metadata constraints should be pushed into Qdrant retrieval instead of applied after retrieval. |
 | Rerankers | `none`, `cross_encoder` | `type`, `model` for `cross_encoder` | `cross_encoder.model` defaults to `cross-encoder/ms-marco-MiniLM-L-6-v2` and must be a local or downloadable SentenceTransformers CrossEncoder-compatible model. Reranking scores replace retriever scores and results are sorted descending. |
 | Context compressors | `none`, `top_n` | `type`, `max_chunks` for `top_n` | `top_n.max_chunks` defaults to `5` and must be convertible to a non-negative integer. It keeps the first `max_chunks` ranked results after retrieval, filtering, and reranking. |
@@ -248,12 +248,10 @@ This repo deliberately avoids a blind Cartesian product explosion. The runner ex
 
 Recommended extension roadmap:
 
-1. Parent-document retriever that expands `llamaindex_hierarchical` child hits with stored parent context
-2. Metadata filters
-4. LLM-based citation validator
-5. RAGAS and DeepEval adapters
-6. Additional LangChain and LlamaIndex adapter components
-7. Synthetic QA generation
-8. Experiment comparison dashboard
-9. Distributed worker scaling
-10. Dataset versioning and artifact lineage
+1. LLM-based citation validator
+2. RAGAS and DeepEval adapters
+3. Additional LangChain and LlamaIndex adapter components
+4. Synthetic QA generation
+5. Experiment comparison dashboard
+6. Distributed worker scaling
+7. Dataset versioning and artifact lineage

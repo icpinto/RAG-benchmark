@@ -2,22 +2,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from opensearchpy import OpenSearch
-from qdrant_client import QdrantClient
-from qdrant_client.http.models import (
-    Distance,
-    HnswConfigDiff,
-    PayloadSchemaType,
-    PointStruct,
-    ScalarQuantization,
-    ScalarQuantizationConfig,
-    ScalarType,
-    VectorParams,
-)
-
 from ragbench_core.interfaces import BaseIndexer
 from ragbench_core.models.schema import Chunk
-from ragbench_core.settings import settings
 from ragbench_core.utils.clients import close_client
 
 
@@ -46,11 +32,11 @@ QDRANT_DENSE_STRATEGIES: dict[str, dict[str, Any]] = {
     # Baseline HNSW plus payload indexes used by filtered retrieval experiments.
     "dense_payload_indexed": {
         "payload_indexes": [
-            {"field_name": "doc_id", "field_schema": PayloadSchemaType.KEYWORD},
-            {"field_name": "chunk_id", "field_schema": PayloadSchemaType.KEYWORD},
-            {"field_name": "metadata.source", "field_schema": PayloadSchemaType.KEYWORD},
-            {"field_name": "metadata.char_length", "field_schema": PayloadSchemaType.INTEGER},
-            {"field_name": "metadata.word_count", "field_schema": PayloadSchemaType.INTEGER},
+            {"field_name": "doc_id", "field_schema": "keyword"},
+            {"field_name": "chunk_id", "field_schema": "keyword"},
+            {"field_name": "metadata.source", "field_schema": "keyword"},
+            {"field_name": "metadata.char_length", "field_schema": "integer"},
+            {"field_name": "metadata.word_count", "field_schema": "integer"},
         ]
     },
 }
@@ -110,6 +96,10 @@ class QdrantIndexer(BaseIndexer):
     def index(self, chunks: list[Chunk], index_name: str, config: dict) -> dict:
         if not chunks:
             return {"points": 0}
+        from qdrant_client import QdrantClient
+        from qdrant_client.http.models import PointStruct
+        from ragbench_core.settings import settings
+
         client = QdrantClient(url=settings.qdrant_url)
         try:
             dim = len(chunks[0].embedding or [])
@@ -154,7 +144,8 @@ class QdrantIndexer(BaseIndexer):
                 strategy[key] = config[key]
         return strategy
 
-    def _vector_params(self, dim: int, strategy: dict) -> VectorParams:
+    def _vector_params(self, dim: int, strategy: dict) -> Any:
+        from qdrant_client.http.models import Distance, VectorParams
         return VectorParams(
             size=dim,
             distance=Distance.COSINE,
@@ -163,14 +154,18 @@ class QdrantIndexer(BaseIndexer):
             on_disk=strategy.get("on_disk"),
         )
 
-    def _hnsw_config(self, config: dict | None) -> HnswConfigDiff | None:
+    def _hnsw_config(self, config: dict | None) -> Any | None:
         if not config:
             return None
+        from qdrant_client.http.models import HnswConfigDiff
+
         return HnswConfigDiff(**config)
 
-    def _quantization_config(self, config: dict | None) -> ScalarQuantization | None:
+    def _quantization_config(self, config: dict | None) -> Any | None:
         if not config:
             return None
+        from qdrant_client.http.models import ScalarQuantization, ScalarQuantizationConfig, ScalarType
+
         quantization_type = config.get("type", ScalarType.INT8)
         if quantization_type == "int8":
             quantization_type = ScalarType.INT8
@@ -182,7 +177,7 @@ class QdrantIndexer(BaseIndexer):
             )
         )
 
-    def _create_payload_indexes(self, client: QdrantClient, index_name: str, strategy: dict) -> None:
+    def _create_payload_indexes(self, client: Any, index_name: str, strategy: dict) -> None:
         for payload_index in strategy.get("payload_indexes", []):
             client.create_payload_index(
                 collection_name=index_name,
@@ -196,6 +191,9 @@ class OpenSearchIndexer(BaseIndexer):
     name = "opensearch"
 
     def index(self, chunks: list[Chunk], index_name: str, config: dict) -> dict:
+        from opensearchpy import OpenSearch
+        from ragbench_core.settings import settings
+
         client = OpenSearch(settings.opensearch_url, verify_certs=False, ssl_show_warn=False)
         try:
             strategy_name = config.get("strategy", "bm25_standard")
