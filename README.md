@@ -182,7 +182,7 @@ The benchmark YAML is organized around top-level experiment, data, pipeline, LLM
 
 | Metric component | Parameters | Restrictions / notes |
 |---|---|---|
-| Retrieval metrics | `metrics.retrieval_k` | Computes `recall@k`, `precision@k`, `mrr@k`, and `ndcg@k` for every `k`. It uses `ground_truth_chunk_ids` when present; otherwise it falls back to `ground_truth_doc_ids`. |
+| Retrieval metrics | `metrics.retrieval_k` | Must be a non-empty list of positive integers. Computes `recall@k`, `precision@k`, `mrr@k`, and `ndcg@k` for every `k`. It uses `ground_truth_chunk_ids` when present; otherwise it falls back to `ground_truth_doc_ids`. When no retrieval ground truth is available, metric values are reported as `null`; when ground truth exists but no retrieval results are returned, metric values are `0.0` and `retrieval_failed` is `true`. |
 | Operational metrics | None | Always reports `answer_chars`, `context_chunks`, and `estimated_answer_tokens`. |
 | Citation coverage | Ground-truth `expected_citations` | Returns `1.0` when no expected citations are provided; otherwise checks for verbatim citation strings in the answer. |
 | Placeholder answer correctness | Ground-truth `expected_answer` | Lexical-overlap placeholder only; not a semantic answer judge. |

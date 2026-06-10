@@ -7,6 +7,7 @@ from ragbench_core.engine.data_loader import list_sources, load_ground_truth
 from ragbench_core.engine.database import upsert_run, insert_result
 from ragbench_core.engine.evaluation_trace import build_evaluation_step
 from ragbench_core.models.schema import GeneratedAnswer
+from ragbench_core.components.metrics import RetrievalMetrics
 from ragbench_core.utils.ids import stable_id
 from ragbench_core.utils.timing import timer
 
@@ -58,7 +59,7 @@ class BenchmarkRunner:
             self.registry.indexers[dense_indexer_conf.get("type","qdrant")].index(chunks, index_name, dense_indexer_conf)
             self.registry.indexers[sparse_indexer_conf.get("type","opensearch")].index(chunks, index_name, sparse_indexer_conf)
         metric_rows=[]
-        max_k=max(case.metric_config.get("retrieval_k", [10]))
+        max_k = max(RetrievalMetrics._validate_retrieval_k(case.metric_config))
         for example in examples:
             with timer() as query_timer:
                 rewritten_queries=self.registry.rewriters[qry["rewriter"]["type"]].rewrite(example.question, qry["rewriter"], case.llm_config)
