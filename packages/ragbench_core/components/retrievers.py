@@ -314,3 +314,62 @@ class HybridRetriever(BaseRetriever):
             RetrievalResult(chunks[cid], score, i + 1, self.name)
             for i, (cid, score) in enumerate(ranked)
         ]
+
+
+class AdaptiveHybridRetriever(BaseRetriever):
+    name = "adaptive_hybrid"
+    supported_modes = {"dense", "bm25", "hybrid"}
+
+    def retrieve(
+        self,
+        question: str,
+        query_embedding: list[float] | None,
+        index_name: str,
+        config: dict,
+        top_k: int,
+    ) -> list[RetrievalResult]:
+        mode = self._select_mode(question, config)
+        results = self._retriever_for_mode(mode).retrieve(
+            question, query_embedding, index_name, config, top_k
+        )
+        return [
+            RetrievalResult(result.chunk, result.score, result.rank, f"{self.name}:{mode}")
+            for result in results
+        ]
+
+    def _select_mode(self, question: str, config: dict[str, Any]) -> str:
+        token_count = len(self._query_terms(question))
+        short_query_max_terms = int(config.get("short_query_max_terms", 4))
+        long_query_min_terms = int(config.get("long_query_min_terms", 12))
+
+        if token_count <= short_query_max_terms:
+            return self._validated_mode(config.get("short_query_mode", "bm25"), "short_query_mode")
+        if token_count >= long_query_min_terms:
+            return self._validated_mode(config.get("long_query_mode", "hybrid"), "long_query_mode")
+        return self._validated_mode(config.get("default_mode", "dense"), "default_mode")
+
+    def _query_terms(self, question: str) -> list[str]:
+        import re
+
+        return re.findall(r"[\w']+", question.lower())
+
+    def _validated_mode(self, mode: str, config_key: str) -> str:
+        if mode not in self.supported_modes:
+            supported = ", ".join(sorted(self.supported_modes))
+            raise ValueError(
+                f"Unsupported adaptive_hybrid {config_key} '{mode}'. Supported: {supported}"
+            )
+        return mode
+
+    def _retriever_for_mode(self, mode: str) -> BaseRetriever:
+        if mode == "dense":
+            return DenseRetriever()
+        if mode == "bm25":
+            return BM25Retriever()
+        if mode == "hybrid":
+            return HybridRetriever()
+        return self._raise_unsupported_mode(mode)
+
+    def _raise_unsupported_mode(self, mode: str) -> BaseRetriever:
+        supported = ", ".join(sorted(self.supported_modes))
+        raise ValueError(f"Unsupported adaptive_hybrid mode '{mode}'. Supported: {supported}")
