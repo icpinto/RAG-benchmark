@@ -2,9 +2,11 @@ import sys
 from types import SimpleNamespace
 
 from ragbench_core.components.rerankers import (
+    CohereReranker,
     ColBERTReranker,
     DiversityMMRReranker,
     FlashRankReranker,
+    JinaReranker,
     RankLLMReranker,
 )
 from ragbench_core.models.schema import Chunk, RetrievalResult
@@ -74,6 +76,71 @@ def test_flashrank_reranker_maps_ranked_passages_back_to_results(monkeypatch):
 
     assert [result.chunk.chunk_id for result in reranked] == ["b", "c", "a"]
     assert [result.score for result in reranked] == [0.9, 0.4, 0.1]
+    assert [result.rank for result in reranked] == [1, 2, 3]
+
+
+def test_cohere_reranker_calls_hosted_api_and_maps_results(monkeypatch):
+    results = [_result("a", 1.0, "first"), _result("b", 2.0, "second"), _result("c", 3.0, "third")]
+    calls = []
+
+    def fake_post(url, payload, headers, timeout):
+        calls.append((url, payload, headers, timeout))
+        return {
+            "results": [
+                {"index": 2, "relevance_score": 0.91},
+                {"index": 0, "relevance_score": 0.42},
+                {"index": 1, "relevance_score": 0.11},
+            ]
+        }
+
+    monkeypatch.setattr("ragbench_core.components.rerankers._post_rerank_request", fake_post)
+
+    reranked = CohereReranker().rerank(
+        "query",
+        results,
+        {"api_key": "co-key", "model": "rerank-v3.5", "top_n": 2, "timeout": 12},
+    )
+
+    assert calls == [
+        (
+            "https://api.cohere.com/v2/rerank",
+            {"model": "rerank-v3.5", "query": "query", "documents": ["first", "second", "third"], "top_n": 2},
+            {"Authorization": "Bearer co-key"},
+            12.0,
+        )
+    ]
+    assert [result.chunk.chunk_id for result in reranked] == ["c", "a", "b"]
+    assert [result.score for result in reranked] == [0.91, 0.42, 0.11]
+    assert [result.rank for result in reranked] == [1, 2, 3]
+
+
+def test_jina_reranker_calls_hosted_api_and_preserves_missing_results(monkeypatch):
+    results = [_result("a", 1.0, "first"), _result("b", 2.0, "second"), _result("c", 3.0, "third")]
+    calls = []
+
+    def fake_post(url, payload, headers, timeout):
+        calls.append((url, payload, headers, timeout))
+        return {
+            "results": [
+                {"index": 1, "relevance_score": 0.88},
+                {"index": 0, "relevance_score": 0.33},
+            ]
+        }
+
+    monkeypatch.setattr("ragbench_core.components.rerankers._post_rerank_request", fake_post)
+
+    reranked = JinaReranker().rerank("query", results, {"api_key": "jina-key", "url": "https://example.test/rerank"})
+
+    assert calls == [
+        (
+            "https://example.test/rerank",
+            {"model": "jina-reranker-v3", "query": "query", "documents": ["first", "second", "third"], "top_n": 3},
+            {"Authorization": "Bearer jina-key"},
+            30.0,
+        )
+    ]
+    assert [result.chunk.chunk_id for result in reranked] == ["b", "a", "c"]
+    assert [result.score for result in reranked] == [0.88, 0.33, 3.0]
     assert [result.rank for result in reranked] == [1, 2, 3]
 
 

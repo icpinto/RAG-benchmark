@@ -59,7 +59,7 @@ def register_builtin_components() -> ComponentRegistry:
     from ragbench_core.components.rewriters import NoRewrite, HyDERewrite
     from ragbench_core.components.retrievers import DenseRetriever, DenseFilteredRetriever, ParentDocumentRetriever, BM25Retriever, HybridRetriever, MultiQueryFusionRetriever, AdaptiveHybridRetriever
     from ragbench_core.components.filters import NoFilter
-    from ragbench_core.components.rerankers import NoReranker, CrossEncoderReranker, FlashRankReranker, RankLLMReranker, ColBERTReranker, DiversityMMRReranker
+    from ragbench_core.components.rerankers import NoReranker, CrossEncoderReranker, FlashRankReranker, RankLLMReranker, ColBERTReranker, CohereReranker, JinaReranker, DiversityMMRReranker
     from ragbench_core.components.compressors import NoCompressor, TopNCompressor
     from ragbench_core.components.context import DefaultContextAssembler, DefaultPromptBuilder
     from ragbench_core.components.generators import OllamaGenerator
@@ -83,7 +83,7 @@ def register_builtin_components() -> ComponentRegistry:
     for c in [NoRewrite(), HyDERewrite()]: REGISTRY.register_rewriter(c)
     for c in [DenseRetriever(), DenseFilteredRetriever(), ParentDocumentRetriever(), BM25Retriever(), HybridRetriever(), MultiQueryFusionRetriever(), AdaptiveHybridRetriever()]: REGISTRY.register_retriever(c)
     REGISTRY.register_filter(NoFilter())
-    for c in [NoReranker(), CrossEncoderReranker(), FlashRankReranker(), RankLLMReranker(), ColBERTReranker(), DiversityMMRReranker()]: REGISTRY.register_reranker(c)
+    for c in [NoReranker(), CrossEncoderReranker(), FlashRankReranker(), RankLLMReranker(), ColBERTReranker(), CohereReranker(), JinaReranker(), DiversityMMRReranker()]: REGISTRY.register_reranker(c)
     for c in [NoCompressor(), TopNCompressor()]: REGISTRY.register_compressor(c)
     REGISTRY.register_assembler(DefaultContextAssembler())
     REGISTRY.register_prompt_builder(DefaultPromptBuilder())

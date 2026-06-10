@@ -1,5 +1,6 @@
 from functools import lru_cache
 import importlib.util
+import os
 import sys
 import math
 from collections import Counter
@@ -151,6 +152,70 @@ def _rerank_with_unified_ranker(
     return _apply_ranked_indices(results, ranked_items, score_key="score")
 
 
+class CohereReranker(BaseReranker):
+    """Rerank candidates with Cohere's hosted rerank API."""
+
+    name = "cohere"
+
+    def rerank(self, question: str, results: list[RetrievalResult], config: dict) -> list[RetrievalResult]:
+        if not results:
+            return results
+
+        api_key = config.get("api_key") or os.getenv("COHERE_API_KEY")
+        if not api_key:
+            raise ValueError("CohereReranker requires `api_key` or the COHERE_API_KEY environment variable.")
+
+        payload: dict[str, Any] = {
+            "model": config.get("model", "rerank-v3.5"),
+            "query": question,
+            "documents": [result.chunk.text for result in results],
+            "top_n": _coerce_optional_int(config.get("top_n")) or len(results),
+        }
+        if config.get("max_chunks_per_doc") is not None:
+            payload["max_chunks_per_doc"] = _coerce_optional_int(config.get("max_chunks_per_doc"))
+        if config.get("return_documents") is not None:
+            payload["return_documents"] = bool(config.get("return_documents"))
+
+        data = _post_rerank_request(
+            url=_resolve_rerank_url(config, "https://api.cohere.com/v2/rerank"),
+            payload=payload,
+            headers={"Authorization": f"Bearer {api_key}"},
+            timeout=_coerce_float(config.get("timeout"), default=30.0),
+        )
+        return _apply_ranked_indices(results, data.get("results", []), score_key="relevance_score")
+
+
+class JinaReranker(BaseReranker):
+    """Rerank candidates with Jina AI's hosted reranker API."""
+
+    name = "jina"
+
+    def rerank(self, question: str, results: list[RetrievalResult], config: dict) -> list[RetrievalResult]:
+        if not results:
+            return results
+
+        api_key = config.get("api_key") or os.getenv("JINA_API_KEY")
+        if not api_key:
+            raise ValueError("JinaReranker requires `api_key` or the JINA_API_KEY environment variable.")
+
+        payload: dict[str, Any] = {
+            "model": config.get("model", "jina-reranker-v3"),
+            "query": question,
+            "documents": [result.chunk.text for result in results],
+            "top_n": _coerce_optional_int(config.get("top_n")) or len(results),
+        }
+        if config.get("return_documents") is not None:
+            payload["return_documents"] = bool(config.get("return_documents"))
+
+        data = _post_rerank_request(
+            url=_resolve_rerank_url(config, "https://api.jina.ai/v1/rerank"),
+            payload=payload,
+            headers={"Authorization": f"Bearer {api_key}"},
+            timeout=_coerce_float(config.get("timeout"), default=30.0),
+        )
+        return _apply_ranked_indices(results, data.get("results", []), score_key="relevance_score")
+
+
 class DiversityMMRReranker(BaseReranker):
     """Rerank results with Maximum Marginal Relevance (MMR).
 
@@ -219,6 +284,33 @@ class DiversityMMRReranker(BaseReranker):
         return (lambda_mult * relevance_scores[candidate_index]) - ((1.0 - lambda_mult) * diversity_penalty)
 
 
+def _resolve_rerank_url(config: dict, default_url: str) -> str:
+    if config.get("url"):
+        return str(config["url"])
+    if not config.get("base_url"):
+        return default_url
+    base_url = str(config["base_url"]).rstrip("/")
+    if base_url.endswith("/rerank"):
+        return base_url
+    return f"{base_url}/rerank"
+
+
+def _post_rerank_request(url: str, payload: dict[str, Any], headers: dict[str, str], timeout: float) -> dict[str, Any]:
+    import requests
+
+    response = requests.post(
+        url,
+        json=payload,
+        headers={"Content-Type": "application/json", **headers},
+        timeout=timeout,
+    )
+    response.raise_for_status()
+    data = response.json()
+    if not isinstance(data, dict):
+        raise ValueError("Reranker API response must be a JSON object.")
+    return data
+
+
 def _apply_score_order(results: list[RetrievalResult], scores) -> list[RetrievalResult]:
     reranked = []
     for result, score in zip(results, scores, strict=True):
@@ -255,8 +347,12 @@ def _extract_ranked_index(item) -> int | None:
     if isinstance(item, dict):
         if isinstance(item.get("meta"), dict) and "index" in item["meta"]:
             return _coerce_optional_int(item["meta"]["index"])
+        if "index" in item:
+            return _coerce_optional_int(item.get("index"))
         return _coerce_optional_int(item.get("id"))
 
+    if hasattr(item, "index"):
+        return _coerce_optional_int(getattr(item, "index"))
     document = getattr(item, "document", None)
     if document is not None:
         return _coerce_optional_int(getattr(document, "doc_id", None))
