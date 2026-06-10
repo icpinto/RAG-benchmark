@@ -289,6 +289,41 @@ class BM25Retriever(BaseRetriever):
         return fields or ["text"], phrase_fields
 
 
+def reciprocal_rank_fusion(
+    result_sets: list[list[RetrievalResult]],
+    *,
+    rrf_k: int = 60,
+    top_k: int,
+    retriever_name: str,
+) -> list[RetrievalResult]:
+    scores = defaultdict(float)
+    chunks = {}
+    source_retrievers = defaultdict(list)
+    for result_set in result_sets:
+        for result in result_set:
+            chunk_id = result.chunk.chunk_id
+            scores[chunk_id] += 1.0 / (rrf_k + result.rank)
+            chunks.setdefault(chunk_id, result.chunk)
+            if result.retriever not in source_retrievers[chunk_id]:
+                source_retrievers[chunk_id].append(result.retriever)
+
+    ranked = sorted(scores.items(), key=lambda x: x[1], reverse=True)[:top_k]
+    fused = []
+    for rank, (chunk_id, score) in enumerate(ranked, start=1):
+        chunk = chunks[chunk_id]
+        metadata = dict(chunk.metadata or {})
+        metadata["fusion_source_retrievers"] = source_retrievers[chunk_id]
+        fused.append(
+            RetrievalResult(
+                Chunk(chunk.chunk_id, chunk.doc_id, chunk.text, metadata, chunk.embedding),
+                score,
+                rank,
+                retriever_name,
+            )
+        )
+    return fused
+
+
 class HybridRetriever(BaseRetriever):
     name = "hybrid"
 
@@ -302,18 +337,84 @@ class HybridRetriever(BaseRetriever):
     ) -> list[RetrievalResult]:
         dense = DenseRetriever().retrieve(question, query_embedding, index_name, config, top_k)
         bm25 = BM25Retriever().retrieve(question, query_embedding, index_name, config, top_k)
-        k = int(config.get("rrf_k", 60))
-        scores = defaultdict(float)
-        chunks = {}
-        for result_set in [dense, bm25]:
-            for r in result_set:
-                scores[r.chunk.chunk_id] += 1.0 / (k + r.rank)
-                chunks[r.chunk.chunk_id] = r.chunk
-        ranked = sorted(scores.items(), key=lambda x: x[1], reverse=True)[:top_k]
+        return reciprocal_rank_fusion(
+            [dense, bm25],
+            rrf_k=int(config.get("rrf_k", 60)),
+            top_k=top_k,
+            retriever_name=self.name,
+        )
+
+
+class MultiQueryFusionRetriever(BaseRetriever):
+    name = "multi_query_fusion"
+    supported_base_retrievers = {"dense", "dense_filtered", "bm25", "hybrid"}
+    supported_fusions = {"rrf"}
+
+    def retrieve(
+        self,
+        question: str,
+        query_embedding: list[float] | None,
+        index_name: str,
+        config: dict,
+        top_k: int,
+    ) -> list[RetrievalResult]:
+        base_retriever_name = self._base_retriever_name(config)
+        results = self._base_retriever(base_retriever_name).retrieve(
+            question, query_embedding, index_name, config, top_k
+        )
         return [
-            RetrievalResult(chunks[cid], score, i + 1, self.name)
-            for i, (cid, score) in enumerate(ranked)
+            RetrievalResult(
+                result.chunk,
+                result.score,
+                result.rank,
+                f"{self.name}:{base_retriever_name}",
+            )
+            for result in results
         ]
+
+    def fuse(
+        self,
+        result_sets: list[list[RetrievalResult]],
+        config: dict[str, Any],
+        top_k: int,
+    ) -> list[RetrievalResult]:
+        fusion = config.get("fusion", "rrf")
+        if fusion not in self.supported_fusions:
+            supported = ", ".join(sorted(self.supported_fusions))
+            raise ValueError(
+                f"Unsupported multi_query_fusion fusion '{fusion}'. Supported: {supported}"
+            )
+        base_retriever_name = self._base_retriever_name(config)
+        return reciprocal_rank_fusion(
+            result_sets,
+            rrf_k=int(config.get("rrf_k", 60)),
+            top_k=top_k,
+            retriever_name=f"{self.name}:{base_retriever_name}:{fusion}",
+        )
+
+    def _base_retriever_name(self, config: dict[str, Any]) -> str:
+        base_retriever_name = config.get("base_retriever", "dense")
+        if base_retriever_name not in self.supported_base_retrievers:
+            supported = ", ".join(sorted(self.supported_base_retrievers))
+            raise ValueError(
+                f"Unsupported multi_query_fusion base_retriever '{base_retriever_name}'. "
+                f"Supported: {supported}"
+            )
+        return base_retriever_name
+
+    def _base_retriever(self, base_retriever_name: str) -> BaseRetriever:
+        if base_retriever_name == "dense":
+            return DenseRetriever()
+        if base_retriever_name == "dense_filtered":
+            return DenseFilteredRetriever()
+        if base_retriever_name == "bm25":
+            return BM25Retriever()
+        if base_retriever_name == "hybrid":
+            return HybridRetriever()
+        supported = ", ".join(sorted(self.supported_base_retrievers))
+        raise ValueError(
+            f"Unsupported multi_query_fusion base_retriever '{base_retriever_name}'. Supported: {supported}"
+        )
 
 
 class AdaptiveHybridRetriever(BaseRetriever):
