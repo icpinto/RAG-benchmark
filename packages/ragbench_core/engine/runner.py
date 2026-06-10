@@ -62,11 +62,15 @@ class BenchmarkRunner:
         for example in examples:
             with timer() as query_timer:
                 rewritten_queries=self.registry.rewriters[qry["rewriter"]["type"]].rewrite(example.question, qry["rewriter"], case.llm_config)
-                combined=[]
+                retriever=self.registry.retrievers[qry["retriever"]["type"]]
+                result_sets=[]
                 for q in rewritten_queries:
                     q_emb=embedder.embed_query(q, ing["embedder"])
-                    combined.extend(self.registry.retrievers[qry["retriever"]["type"]].retrieve(q, q_emb, index_name, qry["retriever"], max_k))
-                combined=self._dedupe(combined)[:max_k]
+                    result_sets.append(retriever.retrieve(q, q_emb, index_name, qry["retriever"], max_k))
+                if qry["retriever"]["type"] == "multi_query_fusion":
+                    combined=retriever.fuse(result_sets, qry["retriever"], max_k)
+                else:
+                    combined=self._dedupe([result for result_set in result_sets for result in result_set])[:max_k]
                 for f_conf in qry.get("filters", []):
                     combined=self.registry.filters[f_conf["type"]].filter(combined, f_conf)
                 combined=self.registry.rerankers[qry["reranker"]["type"]].rerank(example.question, combined, qry["reranker"])

@@ -88,6 +88,12 @@ pipeline:
         child_top_k_multiplier: 4
       - type: "bm25"
       - type: "hybrid"
+      - type: "multi_query_fusion"
+        # Runs the configured base retriever for each rewritten query (for
+        # example, the original question plus HyDE's hypothetical passage)
+        # and fuses those per-query rankings with reciprocal rank fusion.
+        base_retriever: "dense"
+        fusion: "rrf"
       - type: "adaptive_hybrid"
         # Query-length adaptive routing: short queries use BM25, long
         # descriptive queries use hybrid RRF, and medium-length queries

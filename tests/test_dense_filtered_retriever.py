@@ -1,4 +1,4 @@
-from ragbench_core.components.retrievers import AdaptiveHybridRetriever, DenseFilteredRetriever, ParentDocumentRetriever
+from ragbench_core.components.retrievers import AdaptiveHybridRetriever, DenseFilteredRetriever, MultiQueryFusionRetriever, ParentDocumentRetriever
 from ragbench_core.registry import ComponentRegistry, register_builtin_components
 from ragbench_core.models.schema import Chunk, RetrievalResult
 
@@ -50,6 +50,7 @@ def test_builtin_registry_includes_dense_filtered_retriever():
     assert "dense_filtered" in registry.retrievers
     assert "parent_document" in registry.retrievers
     assert "adaptive_hybrid" in registry.retrievers
+    assert "multi_query_fusion" in registry.retrievers
 
 
 def test_parent_document_expands_hierarchical_child_hits_to_parent_context():
@@ -198,3 +199,66 @@ def test_adaptive_hybrid_dispatches_and_labels_selected_mode(monkeypatch):
     assert calls == [("bm25", "refund policy", [0.1], "idx", {}, 3)]
     assert results[0].retriever == "adaptive_hybrid:bm25"
     assert results[0].chunk.chunk_id == "chunk-1"
+
+
+def test_multi_query_fusion_fuses_result_sets_with_rrf():
+    retriever = MultiQueryFusionRetriever()
+    result_sets = [
+        [
+            RetrievalResult(Chunk("chunk-a", "doc-1", "first"), 0.9, 1, "multi_query_fusion:dense"),
+            RetrievalResult(Chunk("chunk-b", "doc-1", "second"), 0.8, 2, "multi_query_fusion:dense"),
+        ],
+        [
+            RetrievalResult(Chunk("chunk-c", "doc-2", "third"), 0.95, 1, "multi_query_fusion:dense"),
+            RetrievalResult(Chunk("chunk-a", "doc-1", "first variant"), 0.7, 2, "multi_query_fusion:dense"),
+        ],
+    ]
+
+    results = retriever.fuse(
+        result_sets,
+        {"base_retriever": "dense", "fusion": "rrf", "rrf_k": 60},
+        top_k=3,
+    )
+
+    assert [result.chunk.chunk_id for result in results] == ["chunk-a", "chunk-c", "chunk-b"]
+    assert [result.rank for result in results] == [1, 2, 3]
+    assert all(result.retriever == "multi_query_fusion:dense:rrf" for result in results)
+    assert results[0].chunk.metadata["fusion_source_retrievers"] == ["multi_query_fusion:dense"]
+
+
+def test_multi_query_fusion_rejects_unsupported_options():
+    retriever = MultiQueryFusionRetriever()
+
+    try:
+        retriever.fuse([], {"base_retriever": "dense", "fusion": "comb_sum"}, top_k=3)
+    except ValueError as exc:
+        assert "Unsupported multi_query_fusion fusion" in str(exc)
+        assert "rrf" in str(exc)
+    else:
+        raise AssertionError("Expected unsupported fusion to raise ValueError")
+
+    try:
+        retriever.retrieve("q", [0.1], "idx", {"base_retriever": "unknown"}, top_k=3)
+    except ValueError as exc:
+        assert "Unsupported multi_query_fusion base_retriever" in str(exc)
+        assert "dense" in str(exc)
+    else:
+        raise AssertionError("Expected unsupported base retriever to raise ValueError")
+
+
+def test_multi_query_fusion_delegates_to_configured_base_retriever(monkeypatch):
+    calls = []
+
+    class StubBaseRetriever:
+        def retrieve(self, question, query_embedding, index_name, config, top_k):
+            calls.append((question, query_embedding, index_name, config, top_k))
+            return [RetrievalResult(Chunk("chunk-1", "doc-1", "text"), 0.5, 1, "dense")]
+
+    retriever = MultiQueryFusionRetriever()
+    monkeypatch.setattr(retriever, "_base_retriever", lambda base_name: StubBaseRetriever())
+
+    config = {"base_retriever": "dense", "fusion": "rrf"}
+    results = retriever.retrieve("query", [0.2], "idx", config, 5)
+
+    assert calls == [("query", [0.2], "idx", config, 5)]
+    assert results[0].retriever == "multi_query_fusion:dense"
