@@ -12,26 +12,27 @@ class RetrievalMetrics(BaseMetric):
         metrics={}
         for k in ks:
             top=results[:k]
-            if truth_chunks:
-                hits=sum(1 for r in top if r.chunk.chunk_id in truth_chunks)
-                denom=len(truth_chunks)
-            else:
-                hits=sum(1 for r in top if r.chunk.doc_id in truth_docs)
-                denom=len(truth_docs)
-            metrics[f"recall@{k}"]=hits/denom if denom else 0.0
-            metrics[f"precision@{k}"]=hits/k if k else 0.0
+            truth_ids = truth_chunks or truth_docs
+            denom=len(truth_ids)
+            seen_hits: set[str] = set()
+            hits=0
+            dcg=0.0
             rr=0.0
             for idx,r in enumerate(top, start=1):
-                ok=(r.chunk.chunk_id in truth_chunks) if truth_chunks else (r.chunk.doc_id in truth_docs)
-                if ok: rr=1.0/idx; break
+                evaluated_id = r.chunk.chunk_id if truth_chunks else r.chunk.doc_id
+                ok=evaluated_id in truth_ids
+                if ok and evaluated_id not in seen_hits:
+                    seen_hits.add(evaluated_id)
+                    hits += 1
+                    if rr == 0.0:
+                        rr=1.0/idx
+                    dcg += 1.0/math.log2(idx+1)
+            metrics[f"recall@{k}"]=min(hits/denom, 1.0) if denom else 0.0
+            metrics[f"precision@{k}"]=hits/k if k else 0.0
             metrics[f"mrr@{k}"]=rr
-            dcg=0.0
-            for idx,r in enumerate(top, start=1):
-                ok=(r.chunk.chunk_id in truth_chunks) if truth_chunks else (r.chunk.doc_id in truth_docs)
-                if ok: dcg += 1.0/math.log2(idx+1)
             ideal_hits=min(denom,k) if denom else 0
             idcg=sum(1.0/math.log2(i+1) for i in range(1, ideal_hits+1))
-            metrics[f"ndcg@{k}"]=dcg/idcg if idcg else 0.0
+            metrics[f"ndcg@{k}"]=min(dcg/idcg, 1.0) if idcg else 0.0
         return metrics
 
 class OperationalMetric(BaseMetric):
