@@ -31,6 +31,24 @@ def _load_cross_encoder(model_name: str):
     return CrossEncoder(model_name)
 
 
+@lru_cache(maxsize=2)
+def _load_jina_cross_encoder(
+    model_name: str,
+    trust_remote_code: bool,
+    max_length: int | None,
+    device: str | None,
+):
+    _ensure_package("sentence_transformers", "JinaReranker requires `pip install sentence-transformers`.")
+    from sentence_transformers import CrossEncoder
+
+    kwargs: dict[str, Any] = {"trust_remote_code": trust_remote_code}
+    if max_length is not None:
+        kwargs["max_length"] = max_length
+    if device:
+        kwargs["device"] = device
+    return CrossEncoder(model_name, **kwargs)
+
+
 class CrossEncoderReranker(BaseReranker):
     name = "cross_encoder"
 
@@ -186,7 +204,7 @@ class CohereReranker(BaseReranker):
 
 
 class JinaReranker(BaseReranker):
-    """Rerank candidates with Jina AI's hosted reranker API."""
+    """Rerank candidates locally with Jina AI's open-source reranker model."""
 
     name = "jina"
 
@@ -194,26 +212,14 @@ class JinaReranker(BaseReranker):
         if not results:
             return results
 
-        api_key = config.get("api_key") or os.getenv("JINA_API_KEY")
-        if not api_key:
-            raise ValueError("JinaReranker requires `api_key` or the JINA_API_KEY environment variable.")
-
-        payload: dict[str, Any] = {
-            "model": config.get("model", "jina-reranker-v3"),
-            "query": question,
-            "documents": [result.chunk.text for result in results],
-            "top_n": _coerce_optional_int(config.get("top_n")) or len(results),
-        }
-        if config.get("return_documents") is not None:
-            payload["return_documents"] = bool(config.get("return_documents"))
-
-        data = _post_rerank_request(
-            url=_resolve_rerank_url(config, "https://api.jina.ai/v1/rerank"),
-            payload=payload,
-            headers={"Authorization": f"Bearer {api_key}"},
-            timeout=_coerce_float(config.get("timeout"), default=30.0),
+        model = _load_jina_cross_encoder(
+            config.get("model", "jinaai/jina-reranker-v2-base-multilingual"),
+            _coerce_bool(config.get("trust_remote_code"), default=True),
+            _coerce_optional_int(config.get("max_length")),
+            config.get("device"),
         )
-        return _apply_ranked_indices(results, data.get("results", []), score_key="relevance_score")
+        scores = model.predict([(question, result.chunk.text) for result in results])
+        return _apply_score_order(results, scores)
 
 
 class DiversityMMRReranker(BaseReranker):
@@ -389,6 +395,20 @@ def _coerce_optional_int(value) -> int | None:
         return int(value)
     except (TypeError, ValueError):
         return None
+
+
+def _coerce_bool(value, default: bool) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"1", "true", "yes", "on"}:
+            return True
+        if normalized in {"0", "false", "no", "off"}:
+            return False
+    return bool(value)
 
 
 def _normalize_scores(scores: list[float]) -> list[float]:

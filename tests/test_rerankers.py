@@ -114,33 +114,33 @@ def test_cohere_reranker_calls_hosted_api_and_maps_results(monkeypatch):
     assert [result.rank for result in reranked] == [1, 2, 3]
 
 
-def test_jina_reranker_calls_hosted_api_and_preserves_missing_results(monkeypatch):
+def test_jina_reranker_uses_local_open_source_model(monkeypatch):
     results = [_result("a", 1.0, "first"), _result("b", 2.0, "second"), _result("c", 3.0, "third")]
     calls = []
 
-    def fake_post(url, payload, headers, timeout):
-        calls.append((url, payload, headers, timeout))
-        return {
-            "results": [
-                {"index": 1, "relevance_score": 0.88},
-                {"index": 0, "relevance_score": 0.33},
-            ]
-        }
+    class FakeCrossEncoder:
+        def predict(self, pairs):
+            calls.append(pairs)
+            return [0.33, 0.88, 0.12]
 
-    monkeypatch.setattr("ragbench_core.components.rerankers._post_rerank_request", fake_post)
+    def fake_load(model, trust_remote_code, max_length, device):
+        calls.append((model, trust_remote_code, max_length, device))
+        return FakeCrossEncoder()
 
-    reranked = JinaReranker().rerank("query", results, {"api_key": "jina-key", "url": "https://example.test/rerank"})
+    monkeypatch.setattr("ragbench_core.components.rerankers._load_jina_cross_encoder", fake_load)
+
+    reranked = JinaReranker().rerank(
+        "query",
+        results,
+        {"model": "jinaai/local-reranker", "trust_remote_code": False, "max_length": 1024, "device": "cpu"},
+    )
 
     assert calls == [
-        (
-            "https://example.test/rerank",
-            {"model": "jina-reranker-v3", "query": "query", "documents": ["first", "second", "third"], "top_n": 3},
-            {"Authorization": "Bearer jina-key"},
-            30.0,
-        )
+        ("jinaai/local-reranker", False, 1024, "cpu"),
+        [("query", "first"), ("query", "second"), ("query", "third")],
     ]
     assert [result.chunk.chunk_id for result in reranked] == ["b", "a", "c"]
-    assert [result.score for result in reranked] == [0.88, 0.33, 3.0]
+    assert [result.score for result in reranked] == [0.88, 0.33, 0.12]
     assert [result.rank for result in reranked] == [1, 2, 3]
 
 
