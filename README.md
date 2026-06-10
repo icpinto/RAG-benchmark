@@ -46,7 +46,7 @@ User question
 | Reranking | None, CrossEncoder reranker, FlashRank, RankLLM, ColBERT, Cohere, Jina, diversity/MMR reranker |
 | Context compression | None, top-N trimming |
 | Generation | Ollama, default model `gpt-oss:20b` |
-| Metrics | recall@k, precision@k, MRR, NDCG, latency, index size, simple citation validation, placeholder answer metrics |
+| Metrics | recall@k, precision@k, MRR, NDCG, latency, index size, simple citation validation, Ragas generation metrics |
 
 ## Architecture
 
@@ -185,8 +185,7 @@ The benchmark YAML is organized around top-level experiment, data, pipeline, LLM
 | Retrieval metrics | `metrics.retrieval_k` | Must be a non-empty list of positive integers. Computes `recall@k`, `precision@k`, `mrr@k`, and `ndcg@k` for every `k`. The runner reports both `raw_retrieval_*` metrics for the initial retrieval candidates and `reranked_*` metrics for the pre-compression reranked candidates; the historical unprefixed metric names mirror the reranked pre-compression values for downstream compatibility. It uses `ground_truth_chunk_ids` when present; otherwise it falls back to `ground_truth_doc_ids`. When no retrieval ground truth is available, metric values are reported as `null`; when ground truth exists but no results are returned for a stage, metric values are `0.0` and that stage's failure flag is `true`. |
 | Operational metrics | None | Always reports `answer_chars`, `context_chunks`, and `estimated_answer_tokens`. |
 | Citation coverage | Ground-truth `expected_citations` | Returns `1.0` when no expected citations are provided; otherwise checks for verbatim citation strings in the answer. |
-| Placeholder answer correctness | Ground-truth `expected_answer` | Lexical-overlap placeholder only; not a semantic answer judge. |
-| Placeholder faithfulness | Generated answer and assembled context | Lexical support heuristic over answer words longer than four characters; not an LLM-based faithfulness metric. |
+| Ragas generation metrics | Generated answer, question, assembled context, top-level `llm`, ingestion `embedder` | Reports `ragas_faithfulness` and `ragas_answer_relevancy`. Ragas uses the same configured RAG LLM as its evaluator LLM; answer relevancy additionally uses the configured ingestion embedding model, with `metrics.ragas_embeddings_model` as an override. When Ragas or its optional adapter dependencies are unavailable, values are `null` and `ragas_error` explains why. |
 
 ### Combination expansion behavior
 

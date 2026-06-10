@@ -94,8 +94,9 @@ class BenchmarkRunner:
                 )
                 evaluation_step=build_evaluation_step(example.question, rewritten_queries, combined, context, prompt)
             metrics={"ingestion_latency_seconds":ingest_timer["seconds"],"query_latency_seconds":query_timer["seconds"],"chunk_count":len(chunks)}
+            metric_config = {**case.metric_config, "llm": case.llm_config, "embedder": ing["embedder"]}
             for metric in self.registry.metrics.values():
-                metrics.update(metric.compute(example, combined, gen, case.metric_config))
+                metrics.update(metric.compute(example, combined, gen, metric_config))
             val=self.registry.citation_validators[qry["citation_validator"]["type"]].validate(gen, example.expected_citations, qry["citation_validator"])
             metrics.update(val)
             row={"case_id":case.case_id,"question":example.question,"metrics":metrics}

@@ -1,5 +1,9 @@
 from __future__ import annotations
-import math, os
+import asyncio
+import importlib.util
+import math
+from typing import Any
+
 from ragbench_core.interfaces import BaseMetric
 from ragbench_core.models.schema import QueryExample, RetrievalResult, GeneratedAnswer
 
@@ -124,21 +128,130 @@ class CitationCoverageMetric(BaseMetric):
         found=sum(1 for c in expected if c in answer.answer)
         return {"citation_coverage":found/len(expected)}
 
-class PlaceholderAnswerMetric(BaseMetric):
-    name = "answer_correctness_placeholder"
-    def compute(self, example: QueryExample, results: list[RetrievalResult], answer: GeneratedAnswer | None, config: dict) -> dict:
-        # Replace with RAGAS/DeepEval/LLM judge later. This cheap placeholder checks lexical overlap only.
-        if not answer or not example.expected_answer: return {"answer_correctness_placeholder":0.0}
-        expected=set(example.expected_answer.lower().split())
-        actual=set(answer.answer.lower().split())
-        return {"answer_correctness_placeholder":len(expected & actual)/len(expected) if expected else 0.0}
+class RagasGenerationMetric(BaseMetric):
+    name = "ragas_generation"
+    _DEFAULT_VALUES = {
+        "ragas_faithfulness": None,
+        "ragas_answer_relevancy": None,
+    }
 
-class PlaceholderFaithfulnessMetric(BaseMetric):
-    name = "faithfulness_placeholder"
-    def compute(self, example: QueryExample, results: list[RetrievalResult], answer: GeneratedAnswer | None, config: dict) -> dict:
-        if not answer: return {"faithfulness_placeholder":0.0}
-        context=" ".join(c.text.lower() for c in answer.context_chunks)
-        answer_words=[w for w in answer.answer.lower().split() if len(w)>4]
-        if not answer_words: return {"faithfulness_placeholder":0.0}
-        supported=sum(1 for w in answer_words if w in context)
-        return {"faithfulness_placeholder":supported/len(answer_words)}
+    def compute(
+        self,
+        example: QueryExample,
+        results: list[RetrievalResult],
+        answer: GeneratedAnswer | None,
+        config: dict,
+    ) -> dict:
+        values: dict[str, Any] = dict(self._DEFAULT_VALUES)
+        if not answer or not answer.answer:
+            values["ragas_error"] = "missing generated answer"
+            return values
+
+        contexts = [chunk.text for chunk in answer.context_chunks if chunk.text]
+        if not contexts:
+            values["ragas_error"] = "missing retrieved contexts"
+            return values
+
+        missing = [dependency for dependency in self._dependencies() if importlib.util.find_spec(dependency) is None]
+        if missing:
+            values["ragas_error"] = f"missing optional dependency: {', '.join(missing)}"
+            return values
+
+        from langchain_huggingface import HuggingFaceEmbeddings
+        from langchain_ollama import ChatOllama
+        from ragas.embeddings import LangchainEmbeddingsWrapper
+        from ragas.llms import LangchainLLMWrapper
+
+        llm_config = config.get("llm", {})
+        llm = self._build_llm(llm_config, ChatOllama, LangchainLLMWrapper)
+        embeddings = self._build_embeddings(config, HuggingFaceEmbeddings, LangchainEmbeddingsWrapper)
+
+        try:
+            values.update(self._score_collections(example.question, answer.answer, contexts, llm, embeddings))
+        except Exception as collections_error:
+            try:
+                values.update(self._score_legacy(example.question, answer.answer, contexts, llm, embeddings))
+            except Exception as legacy_error:
+                values["ragas_error"] = (
+                    f"collections API failed: {collections_error}; "
+                    f"legacy API failed: {legacy_error}"
+                )
+        return values
+
+    def _dependencies(self) -> list[str]:
+        return ["ragas", "langchain_ollama", "langchain_huggingface"]
+
+    def _build_llm(self, llm_config: dict, chat_ollama_cls: Any, wrapper_cls: Any) -> Any:
+        provider = llm_config.get("provider", "ollama")
+        if provider != "ollama":
+            raise ValueError(f"RagasGenerationMetric currently supports provider='ollama', got {provider!r}")
+        model = llm_config.get("model", "gpt-oss:20b")
+        base_url = llm_config.get("base_url", "http://ollama:11434")
+        temperature = llm_config.get("temperature", 0)
+        timeout = int(llm_config.get("timeout", 240))
+        return wrapper_cls(
+            chat_ollama_cls(
+                model=model,
+                base_url=base_url,
+                temperature=temperature,
+                timeout=timeout,
+            )
+        )
+
+    def _build_embeddings(self, config: dict, embeddings_cls: Any, wrapper_cls: Any) -> Any:
+        embedding_config = config.get("embedder", {})
+        model = config.get("ragas_embeddings_model") or embedding_config.get(
+            "model", "sentence-transformers/all-MiniLM-L6-v2"
+        )
+        return wrapper_cls(embeddings_cls(model_name=model))
+
+    def _score_collections(
+        self, question: str, response: str, contexts: list[str], llm: Any, embeddings: Any
+    ) -> dict[str, float | None]:
+        from ragas.metrics.collections import AnswerRelevancy, Faithfulness
+
+        faithfulness = Faithfulness(llm=llm).score(
+            user_input=question,
+            response=response,
+            retrieved_contexts=contexts,
+        )
+        relevancy = AnswerRelevancy(llm=llm, embeddings=embeddings).score(
+            user_input=question,
+            response=response,
+        )
+        return {
+            "ragas_faithfulness": self._metric_value(faithfulness),
+            "ragas_answer_relevancy": self._metric_value(relevancy),
+        }
+
+    def _score_legacy(
+        self, question: str, response: str, contexts: list[str], llm: Any, embeddings: Any
+    ) -> dict[str, float | None]:
+        from ragas.dataset_schema import SingleTurnSample
+        from ragas.metrics import Faithfulness, ResponseRelevancy
+
+        sample = SingleTurnSample(
+            user_input=question,
+            response=response,
+            retrieved_contexts=contexts,
+        )
+        faithfulness = Faithfulness(llm=llm)
+        relevancy = ResponseRelevancy(llm=llm, embeddings=embeddings)
+        return {
+            "ragas_faithfulness": self._run_async(faithfulness.single_turn_ascore(sample)),
+            "ragas_answer_relevancy": self._run_async(relevancy.single_turn_ascore(sample)),
+        }
+
+    def _run_async(self, awaitable: Any) -> float | None:
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            return self._metric_value(asyncio.run(awaitable))
+        close = getattr(awaitable, "close", None)
+        if close:
+            close()
+        raise RuntimeError("Ragas async legacy scoring cannot run inside an active event loop") from None
+
+    def _metric_value(self, value: Any) -> float | None:
+        raw = getattr(value, "value", value)
+        return float(raw) if raw is not None else None
