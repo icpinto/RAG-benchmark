@@ -109,6 +109,12 @@ pipeline:
       - type: "none"
       - type: "cross_encoder"
         model: "cross-encoder/ms-marco-MiniLM-L-6-v2"
+      - type: "diversity_mmr"
+        # Maximum Marginal Relevance balances original retrieval relevance
+        # against chunk-to-chunk similarity. 1.0 is relevance-only; 0.0 is
+        # diversity-only. Uses chunk embeddings when present and falls back to
+        # token cosine similarity over chunk text.
+        lambda_mult: 0.5
     compressors:
       - type: "none"
       - type: "top_n"
