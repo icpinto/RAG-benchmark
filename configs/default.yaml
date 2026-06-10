@@ -123,14 +123,16 @@ pipeline:
         # ColBERT uses late-interaction neural scoring for candidate reranking.
         model: "colbert"
       # Hosted rerankers are available when API keys are configured. Uncomment
-      # the relevant block and set api_key here, or set COHERE_API_KEY / JINA_API_KEY
-      # in the environment. top_n defaults to the number of retrieved results.
+      # the Cohere block and set api_key here, or set COHERE_API_KEY in the
+      # environment. top_n defaults to the number of retrieved results.
       # - type: "cohere"
       #   model: "rerank-v3.5"
       #   api_key: "${COHERE_API_KEY:}"
+      # Jina reranking runs the open-source model locally via SentenceTransformers
+      # and does not require JINA_API_KEY. Uncomment to include it in the grid.
       # - type: "jina"
-      #   model: "jina-reranker-v3"
-      #   api_key: "${JINA_API_KEY:}"
+      #   model: "jinaai/jina-reranker-v2-base-multilingual"
+      #   trust_remote_code: true
       - type: "diversity_mmr"
         # Maximum Marginal Relevance balances original retrieval relevance
         # against chunk-to-chunk similarity. 1.0 is relevance-only; 0.0 is
