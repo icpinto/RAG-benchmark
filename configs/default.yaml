@@ -88,6 +88,15 @@ pipeline:
         child_top_k_multiplier: 4
       - type: "bm25"
       - type: "hybrid"
+      - type: "adaptive_hybrid"
+        # Query-length adaptive routing: short queries use BM25, long
+        # descriptive queries use hybrid RRF, and medium-length queries
+        # use dense retrieval by default. Thresholds are token counts.
+        short_query_mode: "bm25"
+        long_query_mode: "hybrid"
+        default_mode: "dense"
+        short_query_max_terms: 4
+        long_query_min_terms: 12
     filters:
       - type: "none"
     rerankers:

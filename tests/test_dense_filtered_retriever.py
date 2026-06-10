@@ -1,4 +1,4 @@
-from ragbench_core.components.retrievers import DenseFilteredRetriever, ParentDocumentRetriever
+from ragbench_core.components.retrievers import AdaptiveHybridRetriever, DenseFilteredRetriever, ParentDocumentRetriever
 from ragbench_core.registry import ComponentRegistry, register_builtin_components
 from ragbench_core.models.schema import Chunk, RetrievalResult
 
@@ -49,6 +49,7 @@ def test_builtin_registry_includes_dense_filtered_retriever():
 
     assert "dense_filtered" in registry.retrievers
     assert "parent_document" in registry.retrievers
+    assert "adaptive_hybrid" in registry.retrievers
 
 
 def test_parent_document_expands_hierarchical_child_hits_to_parent_context():
@@ -128,3 +129,72 @@ def test_parent_document_child_top_k_uses_multiplier_or_explicit_limit():
     assert retriever._child_top_k({"child_top_k_multiplier": 3}, 5) == 15
     assert retriever._child_top_k({"child_top_k": 8, "child_top_k_multiplier": 3}, 5) == 8
     assert retriever._child_top_k({"child_top_k": 2}, 5) == 5
+
+
+def test_adaptive_hybrid_selects_modes_from_query_length_defaults():
+    retriever = AdaptiveHybridRetriever()
+
+    assert retriever._select_mode("refund policy", {}) == "bm25"
+    assert (
+        retriever._select_mode(
+            "How does the company handle international warranty claims for refurbished devices?",
+            {},
+        )
+        == "dense"
+    )
+    assert (
+        retriever._select_mode(
+            "Explain the complete step by step escalation process for enterprise support "
+            "incidents that involve security vulnerabilities and customer data exposure",
+            {},
+        )
+        == "hybrid"
+    )
+
+
+def test_adaptive_hybrid_allows_configured_modes_and_thresholds():
+    retriever = AdaptiveHybridRetriever()
+    config = {
+        "short_query_mode": "dense",
+        "long_query_mode": "bm25",
+        "default_mode": "hybrid",
+        "short_query_max_terms": 2,
+        "long_query_min_terms": 5,
+    }
+
+    assert retriever._select_mode("one two", config) == "dense"
+    assert retriever._select_mode("one two three", config) == "hybrid"
+    assert retriever._select_mode("one two three four five", config) == "bm25"
+
+
+def test_adaptive_hybrid_rejects_unsupported_modes():
+    retriever = AdaptiveHybridRetriever()
+
+    try:
+        retriever._select_mode("short query", {"short_query_mode": "parent_document"})
+    except ValueError as exc:
+        assert "Unsupported adaptive_hybrid short_query_mode" in str(exc)
+        assert "bm25, dense, hybrid" in str(exc)
+    else:
+        raise AssertionError("Expected unsupported mode to raise ValueError")
+
+
+def test_adaptive_hybrid_dispatches_and_labels_selected_mode(monkeypatch):
+    calls = []
+
+    class StubRetriever:
+        def __init__(self, mode):
+            self.mode = mode
+
+        def retrieve(self, question, query_embedding, index_name, config, top_k):
+            calls.append((self.mode, question, query_embedding, index_name, config, top_k))
+            return [RetrievalResult(Chunk("chunk-1", "doc-1", "text"), 0.7, 1, self.mode)]
+
+    retriever = AdaptiveHybridRetriever()
+    monkeypatch.setattr(retriever, "_retriever_for_mode", lambda mode: StubRetriever(mode))
+
+    results = retriever.retrieve("refund policy", [0.1], "idx", {}, 3)
+
+    assert calls == [("bm25", "refund policy", [0.1], "idx", {}, 3)]
+    assert results[0].retriever == "adaptive_hybrid:bm25"
+    assert results[0].chunk.chunk_id == "chunk-1"
