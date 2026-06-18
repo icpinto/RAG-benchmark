@@ -7,6 +7,30 @@ import streamlit as st
 API=os.getenv("API_BASE_URL", "http://api:8000")
 
 
+def api_request(method: str, path: str, **kwargs):
+    """Call the API and surface connection/HTTP failures in the UI."""
+    try:
+        response=requests.request(method, f"{API}{path}", **kwargs)
+        response.raise_for_status()
+        return response
+    except requests.RequestException as exc:
+        detail=getattr(getattr(exc, "response", None), "text", None)
+        message=detail or str(exc)
+        st.error(f"API request failed for {path}: {message}")
+        return None
+
+
+def api_json(method: str, path: str, *, default=None, **kwargs):
+    response=api_request(method, path, **kwargs)
+    if response is None:
+        return default
+    try:
+        return response.json()
+    except ValueError as exc:
+        st.error(f"API returned invalid JSON for {path}: {exc}")
+        return default
+
+
 def _result_label(item: dict, index: int) -> str:
     question=item.get("question", "")
     case_id=item.get("case_id", "unknown case")
@@ -65,12 +89,14 @@ with st.sidebar:
     data_files=st.file_uploader("Upload local files", accept_multiple_files=True, type=["txt","md","markdown","pdf","html"])
     if st.button("Upload files") and data_files:
         files=[("files", (f.name, f.getvalue())) for f in data_files]
-        r=requests.post(f"{API}/data/upload", files=files, timeout=120)
-        st.write(r.json())
+        payload=api_json("POST", "/data/upload", files=files, timeout=120)
+        if payload is not None:
+            st.write(payload)
     gt=st.file_uploader("Upload ground-truth qa.json", type=["json"])
     if st.button("Upload ground truth") and gt:
-        r=requests.post(f"{API}/data/ground-truth", files={"file":("qa.json", gt.getvalue())}, timeout=120)
-        st.write(r.json())
+        payload=api_json("POST", "/data/ground-truth", files={"file":("qa.json", gt.getvalue())}, timeout=120)
+        if payload is not None:
+            st.write(payload)
 
 st.header("Run Benchmark")
 
@@ -85,29 +111,27 @@ if "config_dirty" not in st.session_state:
 if "config_editor_text" not in st.session_state:
     st.session_state.config_editor_text=st.session_state.config_editor_content
 
-def load_config(path: str, *, sync_path_input: bool = False):
-    r=requests.get(f"{API}/configs/content", params={"config_path":path}, timeout=30)
-    r.raise_for_status()
-    payload=r.json()
+def load_config(path: str, *, sync_path_input: bool = False) -> bool:
+    payload=api_json("GET", "/configs/content", params={"config_path":path}, timeout=30)
+    if payload is None:
+        return False
     st.session_state.config_path=payload["config_path"]
     if sync_path_input:
         st.session_state.config_path_input=payload["config_path"]
     st.session_state.config_editor_content=payload["content"]
     st.session_state.config_editor_text=payload["content"]
     st.session_state.config_dirty=False
+    return True
 
-try:
-    config_listing=requests.get(f"{API}/configs", timeout=30).json()
-except Exception:
-    config_listing={"config_root":"/app/configs","files":[]}
+config_listing=api_json("GET", "/configs", timeout=30, default={"config_root":"/app/configs","files":[]})
 
 config_files=config_listing.get("files",[])
 if config_files:
     selected_config=st.selectbox("Saved configs", config_files, index=0)
     if st.button("Load selected config"):
         try:
-            load_config(selected_config, sync_path_input=True)
-            st.success(f"Loaded {st.session_state.config_path}")
+            if load_config(selected_config, sync_path_input=True):
+                st.success(f"Loaded {st.session_state.config_path}")
         except Exception as e:
             st.error(f"Could not load config: {e}")
 
@@ -120,8 +144,8 @@ with st.expander("Edit config YAML", expanded=True):
     with col_load:
         if st.button("Load config from path"):
             try:
-                load_config(st.session_state.config_path)
-                st.success(f"Loaded {st.session_state.config_path}")
+                if load_config(st.session_state.config_path):
+                    st.success(f"Loaded {st.session_state.config_path}")
             except Exception as e:
                 st.error(f"Could not load config: {e}")
     edited_content=st.text_area(
@@ -134,13 +158,14 @@ with st.expander("Edit config YAML", expanded=True):
     with col_save:
         if st.button("Save YAML"):
             try:
-                r=requests.put(
-                    f"{API}/configs/content",
+                payload=api_json(
+                    "PUT",
+                    "/configs/content",
                     json={"config_path":st.session_state.config_path,"content":edited_content},
                     timeout=30,
                 )
-                r.raise_for_status()
-                payload=r.json()
+                if payload is None:
+                    st.stop()
                 st.session_state.config_path=payload["config_path"]
                 st.session_state.config_editor_content=edited_content
                 st.session_state.config_dirty=False
@@ -154,12 +179,13 @@ with st.expander("Edit config YAML", expanded=True):
 if st.button("Start benchmark"):
     if st.session_state.config_dirty:
         st.warning("Unsaved YAML edits were not used. Click Save YAML first to benchmark the edited config.")
-    r=requests.post(f"{API}/benchmarks/run", json={"config_path":st.session_state.config_path}, timeout=30)
-    st.success(r.json())
+    payload=api_json("POST", "/benchmarks/run", json={"config_path":st.session_state.config_path}, timeout=30)
+    if payload is not None:
+        st.success(payload)
 
 st.header("Runs")
 try:
-    runs=requests.get(f"{API}/benchmarks", timeout=30).json()
+    runs=api_json("GET", "/benchmarks", timeout=30, default=[])
     if runs:
         st.dataframe(pd.DataFrame(runs), use_container_width=True)
         run_id=st.selectbox("Select run", [r["id"] for r in runs])
@@ -167,10 +193,10 @@ try:
             col1,col2=st.columns(2)
             with col1:
                 st.subheader("Run summary")
-                st.json(requests.get(f"{API}/benchmarks/{run_id}", timeout=30).json())
+                st.json(api_json("GET", f"/benchmarks/{run_id}", timeout=30, default={}))
             with col2:
                 st.subheader("Results")
-                results=requests.get(f"{API}/benchmarks/{run_id}/results", timeout=60).json()
+                results=api_json("GET", f"/benchmarks/{run_id}/results", timeout=60, default=[])
                 if results:
                     rows=[]
                     for item in results:
