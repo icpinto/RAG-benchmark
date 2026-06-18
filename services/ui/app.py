@@ -70,7 +70,7 @@ def show_evaluation_step_details(results: list[dict]):
         chunks=evaluation_step.get("retrieved_context", [])
         if chunks:
             chunk_rows=[{key:chunk.get(key) for key in ["rank","score","retriever","doc_id","chunk_id"]} for chunk in chunks]
-            st.dataframe(pd.DataFrame(chunk_rows), use_container_width=True)
+            st.dataframe(pd.DataFrame(chunk_rows), width="stretch")
             for chunk in chunks:
                 label=f"Rank {chunk.get('rank')} · {chunk.get('doc_id')}::{chunk.get('chunk_id')}"
                 with st.expander(label):
@@ -187,7 +187,7 @@ st.header("Runs")
 try:
     runs=api_json("GET", "/benchmarks", timeout=30, default=[])
     if runs:
-        st.dataframe(pd.DataFrame(runs), use_container_width=True)
+        st.dataframe(pd.DataFrame(runs), width="stretch")
         run_id=st.selectbox("Select run", [r["id"] for r in runs])
         if run_id:
             col1,col2=st.columns(2)
@@ -203,7 +203,7 @@ try:
                         row={"case_id":item["case_id"],"question":item["question"],"answer":item["answer"]}
                         row.update(item.get("metrics",{}))
                         rows.append(row)
-                    st.dataframe(pd.DataFrame(rows), use_container_width=True)
+                    st.dataframe(pd.DataFrame(rows), width="stretch")
                     show_evaluation_step_details(results)
                     with st.expander("Raw results"):
                         st.json(results)
