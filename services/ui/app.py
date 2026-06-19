@@ -538,23 +538,37 @@ def show_results_layer():
 
 
 navigation_options={
-    "1. Knowledge Base & Questions":"Manage source documents and scoring questions",
-    "2. Configure & Run Benchmark":"Edit YAML and start a benchmark run",
-    "3. Results & Trace Explorer":"Review metrics, traces, and raw JSON",
+    "Knowledge Base":{
+        "icon":"📚",
+        "description":"Upload documents and manage ground truth",
+        "page":"knowledge_base",
+    },
+    "Benchmark Setup":{
+        "icon":"⚙️",
+        "description":"Edit config and launch runs",
+        "page":"benchmark_setup",
+    },
+    "Results Explorer":{
+        "icon":"📊",
+        "description":"Compare metrics and inspect traces",
+        "page":"results_explorer",
+    },
 }
 with st.sidebar:
-    st.divider()
-    st.header("Navigation")
-    selected_page=st.radio(
-        "Go to",
+    st.markdown("### 🧭 Workflow")
+    selected_label=st.radio(
+        "Choose a workspace",
         list(navigation_options),
-        format_func=lambda option: f"{option} — {navigation_options[option]}",
+        format_func=lambda label: f"{navigation_options[label]['icon']} {label}",
         label_visibility="collapsed",
     )
+    st.caption(navigation_options[selected_label]["description"])
 
-if selected_page == "1. Knowledge Base & Questions":
+selected_page=navigation_options[selected_label]["page"]
+
+if selected_page == "knowledge_base":
     show_data_library()
-elif selected_page == "2. Configure & Run Benchmark":
+elif selected_page == "benchmark_setup":
     show_test_config_setup()
 else:
     show_results_layer()
