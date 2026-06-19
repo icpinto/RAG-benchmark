@@ -167,8 +167,8 @@ metrics:
     - latency
     - index_size
     - citation_coverage
-    - ragas_faithfulness
-    - ragas_answer_relevancy
+    - answer_correctness_placeholder
+    - faithfulness_placeholder
 
 runtime:
   max_combinations: 32
