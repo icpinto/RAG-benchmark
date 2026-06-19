@@ -262,3 +262,75 @@ def test_multi_query_fusion_delegates_to_configured_base_retriever(monkeypatch):
 
     assert calls == [("query", [0.2], "idx", config, 5)]
     assert results[0].retriever == "multi_query_fusion:dense"
+
+
+def test_dense_retriever_uses_legacy_qdrant_search_when_available():
+    class LegacyClient:
+        def __init__(self):
+            self.calls = []
+
+        def search(self, **kwargs):
+            self.calls.append(kwargs)
+            return []
+
+    client = LegacyClient()
+    hits = DenseFilteredRetriever()._search_qdrant(
+        client,
+        collection_name="idx",
+        query_vector=[0.1, 0.2],
+        query_filter={"must": []},
+        limit=5,
+    )
+
+    assert hits == []
+    assert client.calls == [
+        {
+            "collection_name": "idx",
+            "query_vector": [0.1, 0.2],
+            "query_filter": {"must": []},
+            "limit": 5,
+        }
+    ]
+
+
+def test_dense_retriever_uses_query_points_for_new_qdrant_client():
+    class QueryResponse:
+        points = ["hit-1"]
+
+    class QueryPointsClient:
+        def __init__(self):
+            self.calls = []
+
+        def query_points(self, **kwargs):
+            self.calls.append(kwargs)
+            return QueryResponse()
+
+    client = QueryPointsClient()
+    hits = DenseFilteredRetriever()._search_qdrant(
+        client,
+        collection_name="idx",
+        query_vector=[0.1, 0.2],
+        query_filter={"must": []},
+        limit=5,
+    )
+
+    assert hits == ["hit-1"]
+    assert client.calls == [
+        {
+            "collection_name": "idx",
+            "query": [0.1, 0.2],
+            "query_filter": {"must": []},
+            "limit": 5,
+        }
+    ]
+
+
+def test_dense_retriever_rejects_missing_query_embedding():
+    try:
+        DenseFilteredRetriever()._search_qdrant(
+            object(), collection_name="idx", query_vector=None, limit=5
+        )
+    except ValueError as exc:
+        assert "query_embedding" in str(exc)
+    else:
+        raise AssertionError("Expected missing query embedding to raise ValueError")
