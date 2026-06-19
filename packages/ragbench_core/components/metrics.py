@@ -1,5 +1,6 @@
 from __future__ import annotations
 import asyncio
+import importlib
 import importlib.util
 import math
 from typing import Any
@@ -152,19 +153,39 @@ class RagasGenerationMetric(BaseMetric):
             values["ragas_error"] = "missing retrieved contexts"
             return values
 
-        missing = [dependency for dependency in self._dependencies() if importlib.util.find_spec(dependency) is None]
+        missing = [
+            dependency
+            for dependency in self._dependencies()
+            if importlib.util.find_spec(dependency) is None
+        ]
         if missing:
             values["ragas_error"] = f"missing optional dependency: {', '.join(missing)}"
             return values
 
-        from langchain_huggingface import HuggingFaceEmbeddings
-        from langchain_ollama import ChatOllama
-        from ragas.embeddings import LangchainEmbeddingsWrapper
-        from ragas.llms import LangchainLLMWrapper
+        try:
+            HuggingFaceEmbeddings = importlib.import_module(
+                "langchain_huggingface"
+            ).HuggingFaceEmbeddings
+            ChatOllama = importlib.import_module("langchain_ollama").ChatOllama
+            LangchainEmbeddingsWrapper = importlib.import_module(
+                "ragas.embeddings"
+            ).LangchainEmbeddingsWrapper
+            LangchainLLMWrapper = importlib.import_module(
+                "ragas.llms"
+            ).LangchainLLMWrapper
+        except Exception as import_error:
+            values["ragas_error"] = f"ragas dependency import failed: {import_error}"
+            return values
 
         llm_config = config.get("llm", {})
-        llm = self._build_llm(llm_config, ChatOllama, LangchainLLMWrapper)
-        embeddings = self._build_embeddings(config, HuggingFaceEmbeddings, LangchainEmbeddingsWrapper)
+        try:
+            llm = self._build_llm(llm_config, ChatOllama, LangchainLLMWrapper)
+            embeddings = self._build_embeddings(
+                config, HuggingFaceEmbeddings, LangchainEmbeddingsWrapper
+            )
+        except Exception as build_error:
+            values["ragas_error"] = f"ragas dependency setup failed: {build_error}"
+            return values
 
         try:
             values.update(self._score_collections(example.question, answer.answer, contexts, llm, embeddings))
