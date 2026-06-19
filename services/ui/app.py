@@ -156,9 +156,46 @@ def _question_form_payload(prefix: str, question: dict | None = None) -> dict:
         "expected_citations":_split_csv(st.text_input("Expected citations (comma-separated)", value=", ".join(question.get("expected_citations", [])), key=f"{prefix}_citations")),
     }
 
+
+def render_quick_uploads(key_prefix: str, *, rerun_after_upload: bool = False):
+    data_files=st.file_uploader(
+        "Add source documents",
+        accept_multiple_files=True,
+        type=["txt","md","markdown","pdf","html"],
+        key=f"{key_prefix}_source_documents",
+    )
+    if st.button("Upload source documents", key=f"{key_prefix}_upload_source_documents"):
+        if not data_files:
+            st.warning("Choose one or more source documents before uploading.")
+        else:
+            files=[("files", (f.name, f.getvalue())) for f in data_files]
+            r=requests.post(f"{API}/data/upload", files=files, timeout=120)
+            r.raise_for_status()
+            st.success(r.json())
+            if rerun_after_upload:
+                st.rerun()
+
+    gt=st.file_uploader(
+        "Replace ground-truth qa.json",
+        type=["json"],
+        key=f"{key_prefix}_ground_truth_json",
+    )
+    if st.button("Upload ground-truth JSON", key=f"{key_prefix}_upload_ground_truth_json"):
+        if not gt:
+            st.warning("Choose a qa.json file before uploading.")
+        else:
+            r=requests.post(f"{API}/data/ground-truth", files={"file":("qa.json", gt.getvalue())}, timeout=120)
+            r.raise_for_status()
+            st.success(r.json())
+            if rerun_after_upload:
+                st.rerun()
+
 def show_data_library():
     st.header("1. Knowledge Base & Evaluation Questions")
     section_intro("Prepare your benchmark inputs", "Upload source documents, inspect raw files, and maintain the ground-truth questions used to score each RAG run.")
+    with st.expander("⚡ Quick uploads", expanded=True):
+        st.caption("Add source documents or replace the ground-truth question file without leaving the Knowledge Base section.")
+        render_quick_uploads("knowledge_base", rerun_after_upload=True)
     files_tab,questions_tab=st.tabs(["📄 Source documents", "✅ Ground-truth questions"])
     with files_tab:
         try:
@@ -277,15 +314,7 @@ st.markdown(
 
 with st.sidebar:
     st.header("Quick Uploads")
-    data_files=st.file_uploader("Add source documents", accept_multiple_files=True, type=["txt","md","markdown","pdf","html"])
-    if st.button("Upload source documents") and data_files:
-        files=[("files", (f.name, f.getvalue())) for f in data_files]
-        r=requests.post(f"{API}/data/upload", files=files, timeout=120)
-        st.write(r.json())
-    gt=st.file_uploader("Replace ground-truth qa.json", type=["json"])
-    if st.button("Upload ground-truth JSON") and gt:
-        r=requests.post(f"{API}/data/ground-truth", files={"file":("qa.json", gt.getvalue())}, timeout=120)
-        st.write(r.json())
+    render_quick_uploads("sidebar")
 
 def show_test_config_setup():
     st.header("2. Benchmark Configuration")
