@@ -23,42 +23,12 @@ class DenseRetriever(BaseRetriever):
 
         client = QdrantClient(url=settings.qdrant_url)
         try:
-            hits = self._search_qdrant(
-                client, collection_name=index_name, query_vector=query_embedding, limit=top_k
+            hits = client.search(
+                collection_name=index_name, query_vector=query_embedding, limit=top_k
             )
             return self._results_from_hits(hits)
         finally:
             close_client(client)
-
-    def _search_qdrant(
-        self,
-        client: Any,
-        *,
-        collection_name: str,
-        query_vector: list[float] | None,
-        limit: int,
-        query_filter: dict[str, Any] | None = None,
-    ) -> list[Any]:
-        if query_vector is None:
-            raise ValueError("Dense retrieval requires a query_embedding")
-
-        if hasattr(client, "search"):
-            search_kwargs = {
-                "collection_name": collection_name,
-                "query_vector": query_vector,
-                "limit": limit,
-            }
-            if query_filter is not None:
-                search_kwargs["query_filter"] = query_filter
-            return client.search(**search_kwargs)
-
-        response = client.query_points(
-            collection_name=collection_name,
-            query=query_vector,
-            query_filter=query_filter,
-            limit=limit,
-        )
-        return getattr(response, "points", response)
 
     def _results_from_hits(self, hits) -> list[RetrievalResult]:
         out = []
@@ -91,8 +61,7 @@ class DenseFilteredRetriever(DenseRetriever):
 
         client = QdrantClient(url=settings.qdrant_url)
         try:
-            hits = self._search_qdrant(
-                client,
+            hits = client.search(
                 collection_name=index_name,
                 query_vector=query_embedding,
                 query_filter=self._build_query_filter(config),
