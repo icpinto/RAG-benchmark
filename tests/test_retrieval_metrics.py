@@ -3,7 +3,7 @@ import math
 import pytest
 
 from ragbench_core.components.metrics import RetrievalMetrics
-from ragbench_core.models.schema import Chunk, GeneratedAnswer, QueryExample, RetrievalResult
+from ragbench_core.models.schema import Chunk, QueryExample, RetrievalResult
 
 
 def _result(chunk_id: str, doc_id: str, rank: int) -> RetrievalResult:
@@ -108,62 +108,3 @@ def test_retrieval_metrics_marks_failed_when_ground_truth_has_no_results():
     assert metrics["precision@1"] == 0.0
     assert metrics["mrr@1"] == 0.0
     assert metrics["ndcg@1"] == 0.0
-
-
-def test_retrieval_metrics_evaluates_raw_and_reranked_precompression_sets():
-    example = QueryExample(question="q", ground_truth_doc_ids=["doc-a"])
-    raw_results = [
-        _result("chunk-b", "doc-b", 1),
-        _result("chunk-a", "doc-a", 2),
-    ]
-    reranked_results = [
-        _result("chunk-a", "doc-a", 1),
-        _result("chunk-b", "doc-b", 2),
-    ]
-    compressed_results = [_result("chunk-b", "doc-b", 1)]
-    answer = GeneratedAnswer(
-        answer="answer",
-        prompt="prompt",
-        context_chunks=[result.chunk for result in compressed_results],
-        metadata={
-            "raw_retrieval_results": raw_results,
-            "reranked_results": reranked_results,
-        },
-    )
-
-    metrics = RetrievalMetrics().compute(example, compressed_results, answer, {"retrieval_k": [1, 2]})
-
-    assert metrics["raw_retrieval_recall@1"] == 0.0
-    assert metrics["raw_retrieval_recall@2"] == 1.0
-    assert metrics["reranked_recall@1"] == 1.0
-    assert metrics["reranked_recall@2"] == 1.0
-    assert metrics["recall@1"] == 1.0
-    assert metrics["recall@2"] == 1.0
-    assert metrics["raw_retrieval_failed"] is False
-    assert metrics["reranked_failed"] is False
-    assert metrics["retrieval_failed"] is False
-
-
-def test_retrieval_metrics_ignores_post_compression_results_when_stage_sets_are_available():
-    example = QueryExample(question="q", ground_truth_doc_ids=["doc-a"])
-    raw_results = [_result("chunk-a", "doc-a", 1)]
-    reranked_results = [_result("chunk-a", "doc-a", 1)]
-    compressed_results = []
-    answer = GeneratedAnswer(
-        answer="answer",
-        prompt="prompt",
-        context_chunks=[],
-        metadata={
-            "raw_retrieval_results": raw_results,
-            "reranked_results": reranked_results,
-        },
-    )
-
-    metrics = RetrievalMetrics().compute(example, compressed_results, answer, {"retrieval_k": [1]})
-
-    assert metrics["raw_retrieval_recall@1"] == 1.0
-    assert metrics["reranked_recall@1"] == 1.0
-    assert metrics["recall@1"] == 1.0
-    assert metrics["raw_retrieval_failed"] is False
-    assert metrics["reranked_failed"] is False
-    assert metrics["retrieval_failed"] is False

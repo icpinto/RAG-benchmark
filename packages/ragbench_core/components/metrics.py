@@ -9,10 +9,6 @@ from ragbench_core.models.schema import QueryExample, RetrievalResult, Generated
 
 class RetrievalMetrics(BaseMetric):
     name = "retrieval_metrics"
-    _STAGE_RESULT_KEYS = {
-        "raw_retrieval": "raw_retrieval_results",
-        "reranked": "reranked_results",
-    }
 
     @staticmethod
     def _validate_retrieval_k(config: dict) -> list[int]:
@@ -29,59 +25,11 @@ class RetrievalMetrics(BaseMetric):
         truth_docs = set(example.ground_truth_doc_ids or [])
         truth_ids = truth_chunks or truth_docs
         has_ground_truth = bool(truth_ids)
-
-        result_sets = self._evaluation_result_sets(results, answer)
-        metrics = {"retrieval_ground_truth_available": has_ground_truth}
-
-        if set(result_sets) == {"retrieval"}:
-            metrics.update(
-                self._compute_result_set_metrics(
-                    result_sets["retrieval"], ks, truth_chunks, truth_ids, has_ground_truth
-                )
-            )
-            return metrics
-
-        for stage, stage_results in result_sets.items():
-            stage_metrics = self._compute_result_set_metrics(
-                stage_results, ks, truth_chunks, truth_ids, has_ground_truth
-            )
-            metrics[f"{stage}_failed"] = stage_metrics.pop("retrieval_failed")
-            for key, value in stage_metrics.items():
-                metrics[f"{stage}_{key}"] = value
-
-            if stage == "reranked":
-                # Preserve the historical, unprefixed metric names for downstream
-                # aggregations while ensuring they represent the pre-compression
-                # reranked candidates rather than the compressed context set.
-                metrics["retrieval_failed"] = metrics[f"{stage}_failed"]
-                metrics.update(stage_metrics)
-
-        return metrics
-
-    def _evaluation_result_sets(
-        self, results: list[RetrievalResult], answer: GeneratedAnswer | None
-    ) -> dict[str, list[RetrievalResult]]:
-        if not answer:
-            return {"retrieval": results}
-
-        result_sets = {}
-        for stage, metadata_key in self._STAGE_RESULT_KEYS.items():
-            stage_results = answer.metadata.get(metadata_key)
-            if stage_results is not None:
-                result_sets[stage] = stage_results
-
-        return result_sets or {"retrieval": results}
-
-    def _compute_result_set_metrics(
-        self,
-        results: list[RetrievalResult],
-        ks: list[int],
-        truth_chunks: set[str],
-        truth_ids: set[str],
-        has_ground_truth: bool,
-    ) -> dict:
         retrieval_failed = has_ground_truth and not results
-        metrics = {"retrieval_failed": retrieval_failed}
+        metrics = {
+            "retrieval_ground_truth_available": has_ground_truth,
+            "retrieval_failed": retrieval_failed,
+        }
         for k in ks:
             if not has_ground_truth:
                 metrics[f"recall@{k}"] = None
