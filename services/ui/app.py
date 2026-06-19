@@ -312,9 +312,6 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-with st.sidebar:
-    st.header("Quick Uploads")
-    render_quick_uploads("sidebar")
 
 def show_test_config_setup():
     st.header("2. Benchmark Configuration")
