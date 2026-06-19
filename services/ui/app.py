@@ -16,6 +16,92 @@ def _result_label(item: dict, index: int) -> str:
 def _evaluation_step(item: dict) -> dict:
     return item.get("case_config", {}).get("evaluation_step", {}) or {}
 
+
+
+def _split_csv(value: str) -> list[str]:
+    return [item.strip() for item in value.split(",") if item.strip()]
+
+def _question_form_payload(prefix: str, question: dict | None = None) -> dict:
+    question=question or {}
+    return {
+        "question":st.text_area("Question", value=question.get("question", ""), height=90, key=f"{prefix}_question"),
+        "expected_answer":st.text_area("Expected answer", value=question.get("expected_answer", ""), height=120, key=f"{prefix}_expected_answer"),
+        "ground_truth_doc_ids":_split_csv(st.text_input("Ground-truth document IDs (comma-separated)", value=", ".join(question.get("ground_truth_doc_ids", [])), key=f"{prefix}_doc_ids")),
+        "ground_truth_chunk_ids":_split_csv(st.text_input("Ground-truth chunk IDs (comma-separated)", value=", ".join(question.get("ground_truth_chunk_ids", [])), key=f"{prefix}_chunk_ids")),
+        "expected_citations":_split_csv(st.text_input("Expected citations (comma-separated)", value=", ".join(question.get("expected_citations", [])), key=f"{prefix}_citations")),
+    }
+
+def show_data_library():
+    st.header("Evaluation data")
+    st.caption("Review the raw data files and the question set that will be used by the benchmark ground-truth file.")
+    files_tab,questions_tab=st.tabs(["Data files", "Evaluation questions"])
+    with files_tab:
+        try:
+            listing=requests.get(f"{API}/data/files", timeout=30).json()
+            files=listing.get("files", [])
+            st.caption(f"Raw data directory: {listing.get('data_root', 'unknown')}")
+            if files:
+                st.dataframe(pd.DataFrame(files), use_container_width=True)
+                selected_file=st.selectbox("Preview data file", [f["path"] for f in files])
+                if selected_file:
+                    try:
+                        content=requests.get(f"{API}/data/files/content", params={"path":selected_file}, timeout=30).json()
+                        st.text_area("File content", value=content.get("content", ""), height=360, disabled=True)
+                    except Exception as e:
+                        st.warning(f"Could not preview file: {e}")
+            else:
+                st.info("No raw data files have been uploaded yet.")
+        except Exception as e:
+            st.error(f"Could not load data files: {e}")
+    with questions_tab:
+        try:
+            payload=requests.get(f"{API}/data/questions", timeout=30).json()
+            questions=payload.get("questions", [])
+            st.caption(f"Ground-truth file: {payload.get('path', 'unknown')}")
+            if questions:
+                rows=[]
+                for index,item in enumerate(questions):
+                    rows.append({
+                        "index":index,
+                        "question":item.get("question", ""),
+                        "expected_answer":item.get("expected_answer", ""),
+                        "ground_truth_doc_ids":", ".join(item.get("ground_truth_doc_ids", [])),
+                        "expected_citations":", ".join(item.get("expected_citations", [])),
+                    })
+                st.dataframe(pd.DataFrame(rows), use_container_width=True)
+                selected_index=st.selectbox("Edit or delete question", range(len(questions)), format_func=lambda i: f"{i + 1}. {questions[i].get('question', '')[:90]}")
+                with st.form(f"edit_question_{selected_index}"):
+                    edited=_question_form_payload(f"edit_{selected_index}", questions[selected_index])
+                    edit_col,delete_col=st.columns(2)
+                    save_clicked=edit_col.form_submit_button("Save question")
+                    delete_clicked=delete_col.form_submit_button("Delete question")
+                if save_clicked:
+                    r=requests.put(f"{API}/data/questions/{selected_index}", json=edited, timeout=30)
+                    r.raise_for_status()
+                    st.success("Question saved")
+                    st.rerun()
+                if delete_clicked:
+                    r=requests.delete(f"{API}/data/questions/{selected_index}", timeout=30)
+                    r.raise_for_status()
+                    st.success("Question deleted")
+                    st.rerun()
+            else:
+                st.info("No evaluation questions are available yet.")
+            with st.expander("Add a new evaluation question", expanded=not questions):
+                with st.form("add_question"):
+                    new_question=_question_form_payload("new")
+                    add_clicked=st.form_submit_button("Add question")
+                if add_clicked:
+                    if not new_question["question"].strip():
+                        st.error("Question text is required.")
+                    else:
+                        r=requests.post(f"{API}/data/questions", json=new_question, timeout=30)
+                        r.raise_for_status()
+                        st.success("Question added")
+                        st.rerun()
+        except Exception as e:
+            st.error(f"Could not load evaluation questions: {e}")
+
 def show_evaluation_step_details(results: list[dict]):
     st.subheader("Evaluation step details")
     detail_index=st.selectbox(
@@ -71,6 +157,8 @@ with st.sidebar:
     if st.button("Upload ground truth") and gt:
         r=requests.post(f"{API}/data/ground-truth", files={"file":("qa.json", gt.getvalue())}, timeout=120)
         st.write(r.json())
+
+show_data_library()
 
 st.header("Run Benchmark")
 
