@@ -197,18 +197,18 @@ Chunkers, dense indexer strategies, sparse indexer strategies, embeddings, rewri
 ```json
 [
   {
-    "question": "What is the refund period?",
-    "expected_answer": "Customers can request a refund within 14 days.",
-    "ground_truth_doc_ids": ["sample_policy.md"],
+    "question": "Can an open-box item and downloadable software both be refunded under the current policy?",
+    "expected_answer": "Open-box items qualify for the 14-day refund window when all original accessories are returned, but downloadable software is not refundable unless required by law.",
+    "ground_truth_doc_ids": ["refund_windows.md", "refund_exclusions.md"],
     "ground_truth_chunk_ids": [],
-    "expected_citations": ["sample_policy.md"]
+    "expected_citations": ["refund_windows.md", "refund_exclusions.md"]
   }
 ]
 ```
 
-For v1, retrieval metrics can use `ground_truth_doc_ids`; exact `ground_truth_chunk_ids` are optional.
+For v1, retrieval metrics can use `ground_truth_doc_ids`; exact `ground_truth_chunk_ids` are optional. `ground_truth_doc_ids` and `expected_citations` may contain multiple documents when an answer requires evidence from more than one source file.
 
-The checked-in sample evaluation set includes both a simple policy document and a more adversarial `tricky_policy.md` addendum. The addendum adds archived-but-invalid policy wording, exception-heavy answers, table-only facts, negation, abbreviation disambiguation, and retention/warranty edge cases so pipeline variants can be evaluated on more than direct fact lookup.
+The checked-in sample evaluation set is split across multiple focused policy files under `data/raw/` instead of one large source document. Several questions require evidence from multiple files, while the corpus still includes archived-but-invalid policy wording, exception-heavy answers, table-only facts, negation, abbreviation disambiguation, and retention/warranty edge cases so pipeline variants can be evaluated on multi-document retrieval as well as direct fact lookup.
 
 ## Add a new component
 

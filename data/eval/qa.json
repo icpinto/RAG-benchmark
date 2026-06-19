@@ -1,156 +1,107 @@
 [
   {
-    "question": "What is the refund period?",
-    "expected_answer": "Customers can request a refund within 14 days of purchase.",
-    "ground_truth_doc_ids": [
-      "sample_policy.md"
-    ],
+    "question": "What is the refund period and what basic conditions apply?",
+    "expected_answer": "Customers can request a refund within 14 days of purchase. The product must not be damaged and proof of purchase is required.",
+    "ground_truth_doc_ids": ["refund_windows.md"],
     "ground_truth_chunk_ids": [],
-    "expected_citations": [
-      "sample_policy.md"
-    ]
-  },
-  {
-    "question": "How long does standard shipping take?",
-    "expected_answer": "Standard shipping takes 3 to 5 business days.",
-    "ground_truth_doc_ids": [
-      "sample_policy.md"
-    ],
-    "ground_truth_chunk_ids": [],
-    "expected_citations": [
-      "sample_policy.md"
-    ]
+    "expected_citations": ["refund_windows.md"]
   },
   {
     "question": "For a purchase made after March 1, 2024, should the answer use the archived 30-day refund window or the current refund window?",
     "expected_answer": "Use the current 14-day refund window; the 30-day refund wording is archived and must not be used for purchases made on or after March 1, 2024.",
-    "ground_truth_doc_ids": [
-      "tricky_policy.md"
-    ],
+    "ground_truth_doc_ids": ["refund_windows.md", "refund_exclusions.md"],
     "ground_truth_chunk_ids": [],
-    "expected_citations": [
-      "tricky_policy.md"
-    ]
+    "expected_citations": ["refund_windows.md", "refund_exclusions.md"]
   },
   {
-    "question": "Can a customer get a refund for downloadable software under the current policy?",
-    "expected_answer": "Downloadable software is not refundable unless required by law.",
-    "ground_truth_doc_ids": [
-      "tricky_policy.md"
-    ],
+    "question": "Can an open-box item and downloadable software both be refunded under the current policy?",
+    "expected_answer": "Open-box items qualify for the 14-day refund window when all original accessories are returned, but downloadable software is not refundable unless required by law.",
+    "ground_truth_doc_ids": ["refund_windows.md", "refund_exclusions.md"],
     "ground_truth_chunk_ids": [],
-    "expected_citations": [
-      "tricky_policy.md"
-    ]
+    "expected_citations": ["refund_windows.md", "refund_exclusions.md"]
   },
   {
     "question": "When does the 3 to 5 business day standard shipping estimate start?",
     "expected_answer": "The 3 to 5 business day standard shipping estimate starts after the order leaves the warehouse, not when the customer places the order.",
-    "ground_truth_doc_ids": [
-      "tricky_policy.md"
-    ],
+    "ground_truth_doc_ids": ["shipping_timelines.md"],
     "ground_truth_chunk_ids": [],
-    "expected_citations": [
-      "tricky_policy.md"
-    ]
+    "expected_citations": ["shipping_timelines.md"]
   },
   {
-    "question": "Does express shipping deliver to PO boxes?",
-    "expected_answer": "No. Express shipping does not deliver to PO boxes, APO addresses, FPO addresses, or DPO addresses.",
-    "ground_truth_doc_ids": [
-      "tricky_policy.md"
-    ],
+    "question": "Does express shipping deliver to PO boxes, and how long does express shipping take?",
+    "expected_answer": "Express shipping takes 1 to 2 business days after warehouse departure, but it does not deliver to PO boxes, APO addresses, FPO addresses, or DPO addresses.",
+    "ground_truth_doc_ids": ["shipping_timelines.md", "shipping_restrictions.md"],
     "ground_truth_chunk_ids": [],
-    "expected_citations": [
-      "tricky_policy.md"
-    ]
+    "expected_citations": ["shipping_timelines.md", "shipping_restrictions.md"]
   },
   {
     "question": "How long is standard shipping to Alaska, Hawaii, and U.S. territories?",
     "expected_answer": "Standard shipping to Alaska, Hawaii, and U.S. territories takes 6 to 10 business days after warehouse departure.",
-    "ground_truth_doc_ids": [
-      "tricky_policy.md"
-    ],
+    "ground_truth_doc_ids": ["shipping_timelines.md"],
     "ground_truth_chunk_ids": [],
-    "expected_citations": [
-      "tricky_policy.md"
-    ]
+    "expected_citations": ["shipping_timelines.md"]
   },
   {
     "question": "What happens to the quoted delivery estimate when a carrier declares a weather delay?",
     "expected_answer": "Add 2 business days to the quoted delivery estimate when the carrier declares a weather delay.",
-    "ground_truth_doc_ids": [
-      "tricky_policy.md"
-    ],
+    "ground_truth_doc_ids": ["shipping_timelines.md", "shipping_restrictions.md"],
     "ground_truth_chunk_ids": [],
-    "expected_citations": [
-      "tricky_policy.md"
-    ]
+    "expected_citations": ["shipping_timelines.md", "shipping_restrictions.md"]
+  },
+  {
+    "question": "When is support available by email and chat?",
+    "expected_answer": "Email support is available Monday to Friday. Chat support is available every day from 9:00 a.m. to 5:00 p.m. Eastern Time, except company holidays.",
+    "ground_truth_doc_ids": ["support_channels.md"],
+    "ground_truth_chunk_ids": [],
+    "expected_citations": ["support_channels.md"]
   },
   {
     "question": "When is a support ticket escalated to a specialist?",
     "expected_answer": "A support ticket is escalated after two failed troubleshooting attempts or after 48 hours without a customer-visible update, whichever happens first; the clock pauses while waiting for customer-requested information.",
-    "ground_truth_doc_ids": [
-      "tricky_policy.md"
-    ],
+    "ground_truth_doc_ids": ["support_escalation.md"],
     "ground_truth_chunk_ids": [],
-    "expected_citations": [
-      "tricky_policy.md"
-    ]
+    "expected_citations": ["support_escalation.md"]
   },
   {
-    "question": "Does the warranty cover damage caused by non-approved chargers?",
-    "expected_answer": "No. The warranty does not cover damage caused by using non-approved chargers.",
-    "ground_truth_doc_ids": [
-      "tricky_policy.md"
-    ],
+    "question": "How long is the limited warranty and does it cover damage caused by non-approved chargers?",
+    "expected_answer": "The limited warranty lasts 365 days from the original purchase date. It does not cover damage caused by using non-approved chargers.",
+    "ground_truth_doc_ids": ["warranty_coverage.md"],
     "ground_truth_chunk_ids": [],
-    "expected_citations": [
-      "tricky_policy.md"
-    ]
+    "expected_citations": ["warranty_coverage.md"]
   },
   {
     "question": "What warranty does a replacement item get if fewer than 90 days remain on the original warranty?",
     "expected_answer": "The replacement receives a 90-day minimum warranty from the shipment date if fewer than 90 days remain on the original warranty when it ships.",
-    "ground_truth_doc_ids": [
-      "tricky_policy.md"
-    ],
+    "ground_truth_doc_ids": ["warranty_replacements.md"],
     "ground_truth_chunk_ids": [],
-    "expected_citations": [
-      "tricky_policy.md"
-    ]
+    "expected_citations": ["warranty_replacements.md"]
   },
   {
     "question": "Are all records deleted when account deletion is completed?",
     "expected_answer": "No. Some records, including order records, invoices, fraud-prevention logs, tax records, and warranty records, may be retained when required for legal, accounting, security, or compliance reasons.",
-    "ground_truth_doc_ids": [
-      "tricky_policy.md"
-    ],
+    "ground_truth_doc_ids": ["account_deletion.md", "retained_records.md"],
     "ground_truth_chunk_ids": [],
-    "expected_citations": [
-      "tricky_policy.md"
-    ]
+    "expected_citations": ["account_deletion.md", "retained_records.md"]
   },
   {
     "question": "How quickly are marketing preferences removed after account deletion is completed?",
     "expected_answer": "Marketing preferences are removed within 7 calendar days after account deletion is completed.",
-    "ground_truth_doc_ids": [
-      "tricky_policy.md"
-    ],
+    "ground_truth_doc_ids": ["account_deletion.md"],
     "ground_truth_chunk_ids": [],
-    "expected_citations": [
-      "tricky_policy.md"
-    ]
+    "expected_citations": ["account_deletion.md"]
   },
   {
     "question": "In shipping conversations, what does ETA mean in this policy?",
     "expected_answer": "In shipping conversations, ETA means estimated time of arrival, not employee travel allowance.",
-    "ground_truth_doc_ids": [
-      "tricky_policy.md"
-    ],
+    "ground_truth_doc_ids": ["abbreviations.md"],
     "ground_truth_chunk_ids": [],
-    "expected_citations": [
-      "tricky_policy.md"
-    ]
+    "expected_citations": ["abbreviations.md"]
+  },
+  {
+    "question": "What does RMA mean, and when is it required?",
+    "expected_answer": "RMA means return merchandise authorization and is required before a customer ships back a warranty replacement.",
+    "ground_truth_doc_ids": ["abbreviations.md", "warranty_replacements.md"],
+    "ground_truth_chunk_ids": [],
+    "expected_citations": ["abbreviations.md", "warranty_replacements.md"]
   }
 ]

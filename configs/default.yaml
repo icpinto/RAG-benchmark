@@ -77,7 +77,7 @@ pipeline:
         # a prefix are matched against the chunk metadata payload; doc_id and
         # chunk_id target top-level payload fields. Example:
         # metadata_filters:
-        #   source: "sample_policy.md"
+        #   source: "refund_windows.md"
         #   word_count: {gte: 20}
         metadata_filters: {}
       - type: "parent_document"
