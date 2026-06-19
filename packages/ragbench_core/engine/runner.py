@@ -1,6 +1,7 @@
 from __future__ import annotations
 from dataclasses import replace
-import logging
+import statistics, time
+from pathlib import Path
 from ragbench_core.registry import register_builtin_components
 from ragbench_core.engine.config_expander import expand_cases
 from ragbench_core.engine.data_loader import list_sources, load_ground_truth
@@ -11,15 +12,13 @@ from ragbench_core.components.metrics import RetrievalMetrics
 from ragbench_core.utils.ids import stable_id
 from ragbench_core.utils.timing import timer
 
-logger = logging.getLogger(__name__)
-
 class BenchmarkRunner:
     def __init__(self):
         self.registry=register_builtin_components()
 
     def run(self, run_id: str, config: dict) -> dict:
         upsert_run(run_id, config.get("experiment",{}).get("name","benchmark"), "running", config)
-        summary={"cases":0,"questions":0,"errors":0,"error_details":[]}
+        summary={"cases":0,"questions":0,"errors":0}
         try:
             cases=expand_cases(config)
             examples=load_ground_truth(config["data"]["ground_truth_file"])
@@ -33,15 +32,11 @@ class BenchmarkRunner:
                     all_metric_rows.extend(case_summary["metric_rows"])
                 except Exception as e:
                     summary["errors"] += 1
-                    error_detail = {"case_id": case.case_id, "error": str(e)}
-                    summary["error_details"].append(error_detail)
-                    logger.exception("Benchmark case %s failed", case.case_id)
                     # Continue; a benchmark platform should isolate bad component configs.
             summary["aggregate"] = self._aggregate(all_metric_rows)
             upsert_run(run_id, config.get("experiment",{}).get("name","benchmark"), "completed", config, summary)
             return summary
         except Exception as e:
-            logger.exception("Benchmark run %s failed before case execution", run_id)
             upsert_run(run_id, config.get("experiment",{}).get("name","benchmark"), "failed", config, summary, error=str(e))
             raise
 
