@@ -1,4 +1,5 @@
 from __future__ import annotations
+from dataclasses import replace
 import statistics, time
 from pathlib import Path
 from ragbench_core.registry import register_builtin_components
@@ -72,14 +73,25 @@ class BenchmarkRunner:
                     combined=retriever.fuse(result_sets, qry["retriever"], max_k)
                 else:
                     combined=self._dedupe([result for result_set in result_sets for result in result_set])[:max_k]
+                raw_retrieval_results=self._snapshot_results(combined)
                 for f_conf in qry.get("filters", []):
                     combined=self.registry.filters[f_conf["type"]].filter(combined, f_conf)
                 combined=self.registry.rerankers[qry["reranker"]["type"]].rerank(example.question, combined, qry["reranker"])
+                reranked_results=self._snapshot_results(combined)
                 combined=self.registry.compressors[qry["compressor"]["type"]].compress(example.question, combined, qry["compressor"])
                 context=self.registry.assemblers[qry["context_assembler"]["type"]].assemble(combined, qry["context_assembler"])
                 prompt=self.registry.prompt_builders[qry["prompt_builder"]["type"]].build(example.question, context, qry["prompt_builder"])
                 answer_text=self.registry.generators[case.llm_config["provider"]].generate(prompt, case.llm_config)
-                gen=GeneratedAnswer(answer_text, prompt, [r.chunk for r in combined], {"rewritten_queries":rewritten_queries})
+                gen=GeneratedAnswer(
+                    answer_text,
+                    prompt,
+                    [r.chunk for r in combined],
+                    {
+                        "rewritten_queries": rewritten_queries,
+                        "raw_retrieval_results": raw_retrieval_results,
+                        "reranked_results": reranked_results,
+                    },
+                )
                 evaluation_step=build_evaluation_step(example.question, rewritten_queries, combined, context, prompt)
             metrics={"ingestion_latency_seconds":ingest_timer["seconds"],"query_latency_seconds":query_timer["seconds"],"chunk_count":len(chunks)}
             for metric in self.registry.metrics.values():
@@ -99,6 +111,9 @@ class BenchmarkRunner:
                 {"ingestion":ing,"query":qry,"llm":case.llm_config,"evaluation_step":evaluation_step},
             )
         return {"questions":len(examples),"metric_rows":metric_rows}
+
+    def _snapshot_results(self, results):
+        return [replace(result) for result in results]
 
     def _dedupe(self, results):
         seen=set(); out=[]
