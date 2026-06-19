@@ -308,6 +308,96 @@ def show_test_config_setup():
             st.warning("You have unsaved YAML edits. Save before starting a benchmark if you want those edits to be used.")
 
 
+
+def _flatten_mapping(mapping: dict, prefix: str = "") -> dict:
+    flattened={}
+    for key,value in (mapping or {}).items():
+        column=f"{prefix}.{key}" if prefix else str(key)
+        if isinstance(value, dict):
+            flattened.update(_flatten_mapping(value, column))
+        else:
+            flattened[column]=value
+    return flattened
+
+def _run_summary_rows(run_payload: dict) -> list[dict]:
+    summary=run_payload.get("summary", {}) or {}
+    aggregate=summary.get("aggregate", {}) or {}
+    return [{"metric":key,"value":value} for key,value in _flatten_mapping(aggregate).items()]
+
+def _results_comparison_frame(run_results: dict[str, list[dict]]) -> pd.DataFrame:
+    comparison=None
+    for run_id,results in run_results.items():
+        rows=[]
+        for item in results:
+            row={"case_id":item.get("case_id", ""),"question":item.get("question", "")}
+            for metric,value in (item.get("metrics", {}) or {}).items():
+                row[f"{run_id} · {metric}"]=value
+            rows.append(row)
+        run_frame=pd.DataFrame(rows)
+        if run_frame.empty:
+            run_frame=pd.DataFrame(columns=["case_id","question"])
+        comparison=run_frame if comparison is None else comparison.merge(run_frame, on=["case_id","question"], how="outer")
+    return comparison if comparison is not None else pd.DataFrame()
+
+def _add_two_run_deltas(frame: pd.DataFrame, first_run_id: str, second_run_id: str) -> pd.DataFrame:
+    delta_frame=frame.copy()
+    first_prefix=f"{first_run_id} · "
+    second_prefix=f"{second_run_id} · "
+    for first_column in [column for column in frame.columns if column.startswith(first_prefix)]:
+        metric=first_column[len(first_prefix):]
+        second_column=f"{second_prefix}{metric}"
+        if second_column not in frame.columns:
+            continue
+        first_values=pd.to_numeric(frame[first_column], errors="coerce")
+        second_values=pd.to_numeric(frame[second_column], errors="coerce")
+        if first_values.notna().any() or second_values.notna().any():
+            delta_frame[f"Δ {metric} ({second_run_id} - {first_run_id})"]=second_values - first_values
+    return delta_frame
+
+def show_run_comparison(runs: list[dict]):
+    st.subheader("Compare benchmark runs")
+    run_ids=[run["id"] for run in runs]
+    default_run_ids=run_ids[:2] if len(run_ids) >= 2 else run_ids
+    selected_run_ids=st.multiselect(
+        "Choose two or more run IDs to compare",
+        run_ids,
+        default=default_run_ids,
+    )
+    if len(selected_run_ids) < 2:
+        st.info("Select at least two runs to build a comparison.")
+        return
+
+    run_payloads={}
+    run_results={}
+    try:
+        for selected_run_id in selected_run_ids:
+            run_payloads[selected_run_id]=requests.get(f"{API}/benchmarks/{selected_run_id}", timeout=30).json()
+            run_results[selected_run_id]=requests.get(f"{API}/benchmarks/{selected_run_id}/results", timeout=60).json()
+    except Exception as e:
+        st.error(f"Could not load comparison data: {e}")
+        return
+
+    st.write("Run summaries")
+    for column,selected_run_id in zip(st.columns(len(selected_run_ids)), selected_run_ids):
+        with column:
+            payload=run_payloads[selected_run_id]
+            st.markdown(f"**{selected_run_id}**")
+            st.caption(f"{payload.get('name', 'benchmark')} · {payload.get('status', 'unknown status')}")
+            summary_rows=_run_summary_rows(payload)
+            if summary_rows:
+                st.dataframe(pd.DataFrame(summary_rows), use_container_width=True, hide_index=True)
+            else:
+                st.info("No aggregate summary metrics available.")
+
+    comparison_frame=_results_comparison_frame(run_results)
+    if comparison_frame.empty:
+        st.info("No scored result metrics are available for the selected runs yet.")
+        return
+    if len(selected_run_ids) == 2:
+        comparison_frame=_add_two_run_deltas(comparison_frame, selected_run_ids[0], selected_run_ids[1])
+    st.write("Joined result metrics by case and question")
+    st.dataframe(comparison_frame, use_container_width=True)
+
 def show_results_layer():
     st.header("3. Benchmark Results")
     section_intro("Analyze run performance", "Review completed and queued runs, compare metrics, inspect traces, and open the raw JSON when deeper debugging is needed.")
@@ -317,7 +407,7 @@ def show_results_layer():
             st.dataframe(pd.DataFrame(runs), use_container_width=True)
             run_id=st.selectbox("Choose a benchmark run", [r["id"] for r in runs])
             if run_id:
-                summary_tab,results_tab,raw_tab=st.tabs(["📊 Run summary", "🏁 Scored results", "🧾 Raw JSON"])
+                summary_tab,results_tab,comparison_tab,raw_tab=st.tabs(["📊 Run summary", "🏁 Scored results", "🔀 Run comparison", "🧾 Raw JSON"])
                 with summary_tab:
                     st.json(requests.get(f"{API}/benchmarks/{run_id}", timeout=30).json())
                 with results_tab:
@@ -332,6 +422,8 @@ def show_results_layer():
                         show_evaluation_step_details(results)
                     else:
                         st.info("No results for this run yet. If the run stays queued, check that the Celery worker is running and consuming the ragbench queue.")
+                with comparison_tab:
+                    show_run_comparison(runs)
                 with raw_tab:
                     results=requests.get(f"{API}/benchmarks/{run_id}/results", timeout=60).json()
                     if results:
