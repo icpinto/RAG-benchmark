@@ -60,6 +60,78 @@ def section_intro(title: str, description: str):
     )
 
 
+
+RETRIEVAL_METRIC_KEYWORDS=("recall","precision","mrr","ndcg","hit","retrieval","citation")
+
+def _short_question_label(question: str, index: int, max_length: int = 48) -> str:
+    question_text=(question or "").strip().replace("\n", " ")
+    if not question_text:
+        return f"Q{index + 1}"
+    shortened=question_text[:max_length] + ("…" if len(question_text)>max_length else "")
+    return f"Q{index + 1}: {shortened}"
+
+def _results_metrics_frame(results: list[dict]) -> pd.DataFrame:
+    rows=[]
+    for index,item in enumerate(results):
+        row={
+            "case_id":item.get("case_id", ""),
+            "question_index":index + 1,
+            "question":item.get("question", ""),
+            "question_label":_short_question_label(item.get("question", ""), index),
+        }
+        row.update(item.get("metrics", {}) or {})
+        rows.append(row)
+    return pd.DataFrame(rows)
+
+def _retrieval_metric_columns(frame: pd.DataFrame) -> list[str]:
+    metric_columns=[]
+    metadata_columns={"case_id","question_index","question","question_label","answer"}
+    for column in frame.columns:
+        column_name=str(column).lower()
+        if column in metadata_columns:
+            continue
+        if not any(keyword in column_name for keyword in RETRIEVAL_METRIC_KEYWORDS):
+            continue
+        numeric_values=pd.to_numeric(frame[column], errors="coerce")
+        if numeric_values.notna().any():
+            metric_columns.append(column)
+    return metric_columns
+
+def show_retrieval_heatmaps(results: list[dict]):
+    st.subheader("Retrieval heatmaps")
+    st.caption("Inspect retrieval-oriented metrics by benchmark case and question.")
+    if not results:
+        st.info("No results are available for the selected run yet.")
+        return
+
+    frame=_results_metrics_frame(results)
+    if frame.empty:
+        st.info("No result rows are available to build a retrieval heatmap.")
+        return
+
+    retrieval_metrics=_retrieval_metric_columns(frame)
+    if not retrieval_metrics:
+        st.info("No retrieval-oriented numeric metrics were found. Expected metric names containing terms such as recall, precision, mrr, ndcg, hit, retrieval, or citation.")
+        return
+
+    selected_metric=st.selectbox("Heatmap metric", retrieval_metrics)
+    heatmap_frame=frame.copy()
+    heatmap_frame[selected_metric]=pd.to_numeric(heatmap_frame[selected_metric], errors="coerce")
+    pivot=heatmap_frame.pivot_table(
+        index="case_id",
+        columns="question_label",
+        values=selected_metric,
+        aggfunc="mean",
+    )
+    if pivot.empty:
+        st.info(f"No numeric values are available for {selected_metric}.")
+        return
+
+    try:
+        st.dataframe(pivot.style.background_gradient(axis=None), use_container_width=True)
+    except Exception:
+        st.dataframe(pivot, use_container_width=True)
+
 def _result_label(item: dict, index: int) -> str:
     question=item.get("question", "")
     case_id=item.get("case_id", "unknown case")
@@ -407,7 +479,7 @@ def show_results_layer():
             st.dataframe(pd.DataFrame(runs), use_container_width=True)
             run_id=st.selectbox("Choose a benchmark run", [r["id"] for r in runs])
             if run_id:
-                summary_tab,results_tab,comparison_tab,raw_tab=st.tabs(["📊 Run summary", "🏁 Scored results", "🔀 Run comparison", "🧾 Raw JSON"])
+                summary_tab,results_tab,heatmap_tab,comparison_tab,raw_tab=st.tabs(["📊 Run summary", "🏁 Scored results", "🔥 Retrieval heatmaps", "🔀 Run comparison", "🧾 Raw JSON"])
                 with summary_tab:
                     st.json(requests.get(f"{API}/benchmarks/{run_id}", timeout=30).json())
                 with results_tab:
@@ -422,6 +494,9 @@ def show_results_layer():
                         show_evaluation_step_details(results)
                     else:
                         st.info("No results for this run yet. If the run stays queued, check that the Celery worker is running and consuming the ragbench queue.")
+                with heatmap_tab:
+                    results=requests.get(f"{API}/benchmarks/{run_id}/results", timeout=60).json()
+                    show_retrieval_heatmaps(results)
                 with comparison_tab:
                     show_run_comparison(runs)
                 with raw_tab:
