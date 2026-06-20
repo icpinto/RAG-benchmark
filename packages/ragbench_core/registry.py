@@ -64,17 +64,7 @@ def register_builtin_components() -> ComponentRegistry:
     from ragbench_core.components.context import DefaultContextAssembler, DefaultPromptBuilder
     from ragbench_core.components.generators import OllamaGenerator
     from ragbench_core.components.validators import SimpleCitationValidator
-    from ragbench_core.components.metrics import (
-        CitationCoverageMetric,
-        DeepEvalAnswerCorrectnessMetric,
-        DeepEvalFaithfulnessMetric,
-        OperationalMetric,
-        PlaceholderAnswerMetric,
-        PlaceholderFaithfulnessMetric,
-        RagasAnswerRelevancyMetric,
-        RagasFaithfulnessMetric,
-        RetrievalMetrics,
-    )
+    from ragbench_core.components.metrics import RetrievalMetrics, OperationalMetric, CitationCoverageMetric, PlaceholderAnswerMetric, PlaceholderFaithfulnessMetric
 
     for c in [TxtExtractor(), MarkdownExtractor(), PdfExtractor(), HtmlUrlExtractor(), DoclingExtractor()]: REGISTRY.register_extractor(c)
     REGISTRY.register_cleaner(BasicCleaner())
@@ -99,15 +89,5 @@ def register_builtin_components() -> ComponentRegistry:
     REGISTRY.register_prompt_builder(DefaultPromptBuilder())
     REGISTRY.register_generator(OllamaGenerator())
     REGISTRY.register_citation_validator(SimpleCitationValidator())
-    for m in [
-        RetrievalMetrics(),
-        OperationalMetric(),
-        CitationCoverageMetric(),
-        PlaceholderAnswerMetric(),
-        PlaceholderFaithfulnessMetric(),
-        RagasFaithfulnessMetric(),
-        RagasAnswerRelevancyMetric(),
-        DeepEvalFaithfulnessMetric(),
-        DeepEvalAnswerCorrectnessMetric(),
-    ]: REGISTRY.register_metric(m)
+    for m in [RetrievalMetrics(), OperationalMetric(), CitationCoverageMetric(), PlaceholderAnswerMetric(), PlaceholderFaithfulnessMetric()]: REGISTRY.register_metric(m)
     return REGISTRY
