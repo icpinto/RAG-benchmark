@@ -80,6 +80,23 @@ pipeline:
       #   model: "BAAI/bge-m3"
       #   batch_size: 32
       #   normalize: true
+      # Neural sparse embedders populate Chunk.sparse_embedding for SPLADE or
+      # BGE-M3 lexical retrieval. Use bge_m3_hybrid when the same run should
+      # produce both dense vectors for Qdrant and sparse vectors for neural_sparse.
+      # - provider: "bge_m3_sparse"
+      #   model: "BAAI/bge-m3"
+      #   batch_size: 16
+      #   sparse_top_k: 256
+      # - provider: "splade_sparse"
+      #   model: "naver/splade-cocondenser-ensembledistil"
+      #   batch_size: 8
+      #   max_length: 512
+      #   sparse_top_k: 256
+      # - provider: "bge_m3_hybrid"
+      #   model: "BAAI/bge-m3"
+      #   batch_size: 16
+      #   normalize: true
+      #   sparse_top_k: 256
     indexers:
       dense:
         type: "qdrant"
@@ -97,6 +114,18 @@ pipeline:
           - "bm25_field_weighted"
           - "bm25_custom_analyzer"
           - "bm25_phrase"
+      # Neural sparse indexer examples. Uncomment one of these and pair it with
+      # bge_m3_sparse, splade_sparse, or bge_m3_hybrid above. OpenSearch stores
+      # token weights in rank_features; Qdrant stores them in a separate sparse
+      # vector collection named <index_name>_neural_sparse by default.
+      # sparse:
+      #   type: "opensearch_neural_sparse"
+      #   strategy: "neural_sparse_rank_features"
+      #   field: "sparse_embedding"
+      # sparse:
+      #   type: "qdrant_sparse"
+      #   vector_name: "neural_sparse"
+      #   on_disk: false
 
   query:
     rewriters:
@@ -120,16 +149,42 @@ pipeline:
         child_top_k_multiplier: 4
       - type: "bm25"
       - type: "hybrid"
+      # Neural sparse retrieval expects a sparse query embedding from
+      # bge_m3_sparse, splade_sparse, or the sparse side of bge_m3_hybrid.
+      # - type: "neural_sparse"
+      #   backend: "opensearch"
+      #   field: "sparse_embedding"
+      #   query_terms: 256
+      # - type: "neural_sparse"
+      #   backend: "qdrant"
+      #   vector_name: "neural_sparse"
+      # Weighted hybrid fuses available dense, BM25, and neural sparse result
+      # sets with weighted reciprocal-rank fusion. Use bge_m3_hybrid to provide
+      # both dense and sparse query vectors in one embedder configuration.
+      # - type: "weighted_hybrid"
+      #   weights:
+      #     dense: 1.0
+      #     bm25: 1.0
+      #     neural_sparse: 1.0
+      #   rrf_k: 60
+      #   neural_sparse:
+      #     backend: "opensearch"
+      #     field: "sparse_embedding"
+      #     query_terms: 256
       - type: "multi_query_fusion"
         # Runs the configured base retriever for each rewritten query (for
         # example, the original question plus HyDE's hypothetical passage)
         # and fuses those per-query rankings with reciprocal rank fusion.
+        # Supported base retrievers include dense, dense_filtered, bm25,
+        # hybrid, neural_sparse, and weighted_hybrid.
         base_retriever: "dense"
         fusion: "rrf"
       - type: "adaptive_hybrid"
         # Query-length adaptive routing: short queries use BM25, long
         # descriptive queries use hybrid RRF, and medium-length queries
         # use dense retrieval by default. Thresholds are token counts.
+        # neural_sparse and weighted_hybrid can also be used when paired with
+        # a sparse-capable embedder/indexer configuration.
         short_query_mode: "bm25"
         long_query_mode: "hybrid"
         default_mode: "dense"

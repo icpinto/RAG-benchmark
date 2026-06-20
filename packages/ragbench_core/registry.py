@@ -56,15 +56,18 @@ def register_builtin_components() -> ComponentRegistry:
     from ragbench_core.components.metadata import BasicMetadataEnricher
     from ragbench_core.components.embedders import (
         BGEM3Embedder,
+        BGEM3HybridEmbedder,
+        BGEM3SparseEmbedder,
         CohereEmbedder,
         JinaEmbedder,
         OpenAIEmbedder,
         SentenceTransformerEmbedder,
         VoyageEmbedder,
+        SPLADESparseEmbedder,
     )
-    from ragbench_core.components.indexers import QdrantIndexer, OpenSearchIndexer
+    from ragbench_core.components.indexers import QdrantIndexer, OpenSearchIndexer, OpenSearchNeuralSparseIndexer, QdrantSparseIndexer
     from ragbench_core.components.rewriters import NoRewrite, HyDERewrite
-    from ragbench_core.components.retrievers import DenseRetriever, DenseFilteredRetriever, ParentDocumentRetriever, BM25Retriever, HybridRetriever, MultiQueryFusionRetriever, AdaptiveHybridRetriever
+    from ragbench_core.components.retrievers import DenseRetriever, DenseFilteredRetriever, ParentDocumentRetriever, BM25Retriever, HybridRetriever, NeuralSparseRetriever, WeightedHybridRetriever, MultiQueryFusionRetriever, AdaptiveHybridRetriever
     from ragbench_core.components.filters import NoFilter
     from ragbench_core.components.rerankers import NoReranker, CrossEncoderReranker, FlashRankReranker, RankLLMReranker, ColBERTReranker, CohereReranker, JinaReranker, DiversityMMRReranker
     from ragbench_core.components.compressors import NoCompressor, TopNCompressor
@@ -85,10 +88,10 @@ def register_builtin_components() -> ComponentRegistry:
         LlamaIndexDocumentStructureChunker(),
     ]: REGISTRY.register_chunker(c)
     REGISTRY.register_metadata_enricher(BasicMetadataEnricher())
-    for c in [SentenceTransformerEmbedder(), OpenAIEmbedder(), VoyageEmbedder(), CohereEmbedder(), JinaEmbedder(), BGEM3Embedder()]: REGISTRY.register_embedder(c)
-    for c in [QdrantIndexer(), OpenSearchIndexer()]: REGISTRY.register_indexer(c)
+    for c in [SentenceTransformerEmbedder(), OpenAIEmbedder(), VoyageEmbedder(), CohereEmbedder(), JinaEmbedder(), BGEM3Embedder(), BGEM3SparseEmbedder(), SPLADESparseEmbedder(), BGEM3HybridEmbedder()]: REGISTRY.register_embedder(c)
+    for c in [QdrantIndexer(), OpenSearchIndexer(), OpenSearchNeuralSparseIndexer(), QdrantSparseIndexer()]: REGISTRY.register_indexer(c)
     for c in [NoRewrite(), HyDERewrite()]: REGISTRY.register_rewriter(c)
-    for c in [DenseRetriever(), DenseFilteredRetriever(), ParentDocumentRetriever(), BM25Retriever(), HybridRetriever(), MultiQueryFusionRetriever(), AdaptiveHybridRetriever()]: REGISTRY.register_retriever(c)
+    for c in [DenseRetriever(), DenseFilteredRetriever(), ParentDocumentRetriever(), BM25Retriever(), HybridRetriever(), NeuralSparseRetriever(), WeightedHybridRetriever(), MultiQueryFusionRetriever(), AdaptiveHybridRetriever()]: REGISTRY.register_retriever(c)
     REGISTRY.register_filter(NoFilter())
     for c in [NoReranker(), CrossEncoderReranker(), FlashRankReranker(), RankLLMReranker(), ColBERTReranker(), CohereReranker(), JinaReranker(), DiversityMMRReranker()]: REGISTRY.register_reranker(c)
     for c in [NoCompressor(), TopNCompressor()]: REGISTRY.register_compressor(c)

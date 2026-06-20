@@ -295,3 +295,112 @@ class OpenSearchIndexer(BaseIndexer):
                 }
             )
         return body
+
+
+OPENSEARCH_NEURAL_SPARSE_STRATEGIES: dict[str, dict[str, Any]] = {
+    "neural_sparse_rank_features": {
+        "field": "sparse_embedding",
+        "mappings": {
+            "text": {"type": "text"},
+            "sparse_embedding": {"type": "rank_features"},
+        },
+    }
+}
+
+
+class OpenSearchNeuralSparseIndexer(BaseIndexer):
+    """Index precomputed neural sparse vectors into OpenSearch rank_features fields."""
+
+    name = "opensearch_neural_sparse"
+
+    def index(self, chunks: list[Chunk], index_name: str, config: dict) -> dict:
+        from opensearchpy import OpenSearch
+        from ragbench_core.settings import settings
+
+        client = OpenSearch(settings.opensearch_url, verify_certs=False, ssl_show_warn=False)
+        try:
+            strategy_name = config.get("strategy", "neural_sparse_rank_features")
+            strategy = self._strategy_config(strategy_name, config)
+            if client.indices.exists(index=index_name):
+                client.indices.delete(index=index_name)
+            client.indices.create(index=index_name, body=self._index_body(strategy))
+            indexed = 0
+            for c in chunks:
+                if not c.sparse_embedding:
+                    continue
+                client.index(index=index_name, id=c.chunk_id, body=self._document_body(c, strategy), refresh=False)
+                indexed += 1
+            client.indices.refresh(index=index_name)
+            return {"documents": indexed, "backend": "opensearch", "strategy": strategy_name, "sparse": True}
+        finally:
+            close_client(client)
+
+    def _strategy_config(self, strategy_name: str, config: dict) -> dict:
+        if strategy_name not in OPENSEARCH_NEURAL_SPARSE_STRATEGIES:
+            supported = ", ".join(sorted(OPENSEARCH_NEURAL_SPARSE_STRATEGIES))
+            raise ValueError(f"Unsupported OpenSearch neural sparse strategy '{strategy_name}'. Supported: {supported}")
+        strategy = dict(OPENSEARCH_NEURAL_SPARSE_STRATEGIES[strategy_name])
+        if "field" in config:
+            strategy["field"] = config["field"]
+        return strategy
+
+    def _index_body(self, strategy: dict) -> dict:
+        return {
+            "mappings": {
+                "properties": {
+                    **strategy["mappings"],
+                    "doc_id": {"type": "keyword"},
+                    "chunk_id": {"type": "keyword"},
+                    "metadata": {"type": "object", "enabled": True},
+                }
+            }
+        }
+
+    def _document_body(self, chunk: Chunk, strategy: dict) -> dict:
+        return {
+            "text": chunk.text,
+            "doc_id": chunk.doc_id,
+            "chunk_id": chunk.chunk_id,
+            "metadata": chunk.metadata or {},
+            strategy["field"]: {str(k): float(v) for k, v in (chunk.sparse_embedding or {}).items()},
+        }
+
+
+class QdrantSparseIndexer(BaseIndexer):
+    """Index precomputed neural sparse vectors into a Qdrant sparse-vector collection."""
+
+    name = "qdrant_sparse"
+
+    def index(self, chunks: list[Chunk], index_name: str, config: dict) -> dict:
+        from qdrant_client import QdrantClient
+        from qdrant_client.http.models import PointStruct, SparseVector, SparseVectorParams, SparseIndexParams
+        from ragbench_core.settings import settings
+
+        collection_name = config.get("collection_name", f"{index_name}_neural_sparse")
+        vector_name = config.get("vector_name", "neural_sparse")
+        client = QdrantClient(url=settings.qdrant_url)
+        try:
+            client.recreate_collection(
+                collection_name=collection_name,
+                vectors_config={},
+                sparse_vectors_config={
+                    vector_name: SparseVectorParams(index=SparseIndexParams(on_disk=bool(config.get("on_disk", False))))
+                },
+            )
+            points = []
+            for idx, c in enumerate(chunks):
+                if not c.sparse_embedding:
+                    continue
+                sparse = dict(sorted(c.sparse_embedding.items()))
+                points.append(
+                    PointStruct(
+                        id=idx,
+                        vector={vector_name: SparseVector(indices=list(sparse.keys()), values=list(sparse.values()))},
+                        payload={"chunk_id": c.chunk_id, "doc_id": c.doc_id, "text": c.text, "metadata": c.metadata},
+                    )
+                )
+            if points:
+                client.upsert(collection_name=collection_name, points=points)
+            return {"points": len(points), "backend": "qdrant", "strategy": "neural_sparse", "collection": collection_name}
+        finally:
+            close_client(client)

@@ -16,6 +16,7 @@ class Chunk:
     text: str
     metadata: dict[str, Any] = field(default_factory=dict)
     embedding: list[float] | None = None
+    sparse_embedding: dict[int, float] | None = None
 
 @dataclass
 class QueryExample:

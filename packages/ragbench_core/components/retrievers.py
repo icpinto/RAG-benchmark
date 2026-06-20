@@ -24,7 +24,7 @@ class DenseRetriever(BaseRetriever):
         client = QdrantClient(url=settings.qdrant_url)
         try:
             hits = client.search(
-                collection_name=index_name, query_vector=query_embedding, limit=top_k
+                collection_name=index_name, query_vector=(query_embedding.get("dense") if isinstance(query_embedding, dict) and "dense" in query_embedding else query_embedding), limit=top_k
             )
             return self._results_from_hits(hits)
         finally:
@@ -63,7 +63,7 @@ class DenseFilteredRetriever(DenseRetriever):
         try:
             hits = client.search(
                 collection_name=index_name,
-                query_vector=query_embedding,
+                query_vector=(query_embedding.get("dense") if isinstance(query_embedding, dict) and "dense" in query_embedding else query_embedding),
                 query_filter=self._build_query_filter(config),
                 limit=top_k,
             )
@@ -347,7 +347,7 @@ class HybridRetriever(BaseRetriever):
 
 class MultiQueryFusionRetriever(BaseRetriever):
     name = "multi_query_fusion"
-    supported_base_retrievers = {"dense", "dense_filtered", "bm25", "hybrid"}
+    supported_base_retrievers = {"dense", "dense_filtered", "bm25", "hybrid", "neural_sparse", "weighted_hybrid"}
     supported_fusions = {"rrf"}
 
     def retrieve(
@@ -411,6 +411,10 @@ class MultiQueryFusionRetriever(BaseRetriever):
             return BM25Retriever()
         if base_retriever_name == "hybrid":
             return HybridRetriever()
+        if base_retriever_name == "neural_sparse":
+            return NeuralSparseRetriever()
+        if base_retriever_name == "weighted_hybrid":
+            return WeightedHybridRetriever()
         supported = ", ".join(sorted(self.supported_base_retrievers))
         raise ValueError(
             f"Unsupported multi_query_fusion base_retriever '{base_retriever_name}'. Supported: {supported}"
@@ -419,7 +423,7 @@ class MultiQueryFusionRetriever(BaseRetriever):
 
 class AdaptiveHybridRetriever(BaseRetriever):
     name = "adaptive_hybrid"
-    supported_modes = {"dense", "bm25", "hybrid"}
+    supported_modes = {"dense", "bm25", "hybrid", "neural_sparse", "weighted_hybrid"}
 
     def retrieve(
         self,
@@ -469,8 +473,136 @@ class AdaptiveHybridRetriever(BaseRetriever):
             return BM25Retriever()
         if mode == "hybrid":
             return HybridRetriever()
+        if mode == "neural_sparse":
+            return NeuralSparseRetriever()
+        if mode == "weighted_hybrid":
+            return WeightedHybridRetriever()
         return self._raise_unsupported_mode(mode)
 
     def _raise_unsupported_mode(self, mode: str) -> BaseRetriever:
         supported = ", ".join(sorted(self.supported_modes))
         raise ValueError(f"Unsupported adaptive_hybrid mode '{mode}'. Supported: {supported}")
+
+
+class NeuralSparseRetriever(BaseRetriever):
+    """Retrieve with precomputed neural sparse query vectors."""
+
+    name = "neural_sparse"
+
+    def retrieve(
+        self,
+        question: str,
+        query_embedding: list[float] | dict[int, float] | None,
+        index_name: str,
+        config: dict,
+        top_k: int,
+    ) -> list[RetrievalResult]:
+        if isinstance(query_embedding, dict) and "sparse" in query_embedding:
+            query_embedding = query_embedding["sparse"]
+        if not isinstance(query_embedding, dict):
+            raise ValueError("neural_sparse retrieval requires a sparse query embedding dictionary.")
+        backend = config.get("backend", "opensearch")
+        if backend == "opensearch":
+            return self._retrieve_opensearch(query_embedding, index_name, config, top_k)
+        if backend == "qdrant":
+            return self._retrieve_qdrant(query_embedding, index_name, config, top_k)
+        raise ValueError("Unsupported neural_sparse backend '%s'. Supported: opensearch, qdrant" % backend)
+
+    def _retrieve_opensearch(self, query_embedding: dict[int, float], index_name: str, config: dict, top_k: int) -> list[RetrievalResult]:
+        from opensearchpy import OpenSearch
+        from ragbench_core.settings import settings
+
+        client = OpenSearch(settings.opensearch_url, verify_certs=False, ssl_show_warn=False)
+        try:
+            field = config.get("field", "sparse_embedding")
+            terms = sorted(query_embedding.items(), key=lambda item: item[1], reverse=True)[: int(config.get("query_terms", 256))]
+            should = [
+                {"rank_feature": {"field": f"{field}.{token_id}", "boost": float(weight)}}
+                for token_id, weight in terms
+                if weight > 0
+            ]
+            res = client.search(index=index_name, body={"query": {"bool": {"should": should or [{"match_none": {}}]}}, "size": top_k})
+            return self._opensearch_results(res)
+        finally:
+            close_client(client)
+
+    def _retrieve_qdrant(self, query_embedding: dict[int, float], index_name: str, config: dict, top_k: int) -> list[RetrievalResult]:
+        from qdrant_client import QdrantClient
+        from qdrant_client.http.models import NamedSparseVector, SparseVector
+        from ragbench_core.settings import settings
+
+        collection_name = config.get("collection_name", f"{index_name}_neural_sparse")
+        vector_name = config.get("vector_name", "neural_sparse")
+        sparse = dict(sorted(query_embedding.items()))
+        client = QdrantClient(url=settings.qdrant_url)
+        try:
+            hits = client.search(
+                collection_name=collection_name,
+                query_vector=NamedSparseVector(name=vector_name, vector=SparseVector(indices=list(sparse.keys()), values=list(sparse.values()))),
+                limit=top_k,
+            )
+            return DenseRetriever()._results_from_hits(hits)
+        finally:
+            close_client(client)
+
+    def _opensearch_results(self, res: dict[str, Any]) -> list[RetrievalResult]:
+        out = []
+        for i, h in enumerate(res["hits"]["hits"]):
+            s = h["_source"]
+            out.append(RetrievalResult(Chunk(s["chunk_id"], s["doc_id"], s["text"], s.get("metadata", {})), float(h["_score"]), i + 1, self.name))
+        return out
+
+
+def weighted_rank_fusion(
+    named_result_sets: list[tuple[str, list[RetrievalResult]]],
+    *,
+    weights: dict[str, float],
+    rrf_k: int = 60,
+    top_k: int,
+    retriever_name: str,
+) -> list[RetrievalResult]:
+    scores = defaultdict(float)
+    chunks = {}
+    source_retrievers = defaultdict(list)
+    for name, result_set in named_result_sets:
+        weight = float(weights.get(name, 1.0))
+        if weight == 0:
+            continue
+        for result in result_set:
+            chunk_id = result.chunk.chunk_id
+            scores[chunk_id] += weight / (rrf_k + result.rank)
+            chunks.setdefault(chunk_id, result.chunk)
+            if result.retriever not in source_retrievers[chunk_id]:
+                source_retrievers[chunk_id].append(result.retriever)
+    ranked = sorted(scores.items(), key=lambda x: x[1], reverse=True)[:top_k]
+    fused = []
+    for rank, (chunk_id, score) in enumerate(ranked, start=1):
+        chunk = chunks[chunk_id]
+        metadata = dict(chunk.metadata or {})
+        metadata["fusion_source_retrievers"] = source_retrievers[chunk_id]
+        fused.append(RetrievalResult(Chunk(chunk.chunk_id, chunk.doc_id, chunk.text, metadata, chunk.embedding, chunk.sparse_embedding), score, rank, retriever_name))
+    return fused
+
+
+class WeightedHybridRetriever(BaseRetriever):
+    """Fuse dense, BM25, and neural sparse retrieval with weighted RRF."""
+
+    name = "weighted_hybrid"
+
+    def retrieve(
+        self,
+        question: str,
+        query_embedding: list[float] | dict[int, float] | None,
+        index_name: str,
+        config: dict,
+        top_k: int,
+    ) -> list[RetrievalResult]:
+        weights = config.get("weights", {"dense": 1.0, "bm25": 1.0, "neural_sparse": 1.0})
+        result_sets: list[tuple[str, list[RetrievalResult]]] = []
+        if weights.get("dense", 1.0) and (not isinstance(query_embedding, dict) or "dense" in query_embedding):
+            result_sets.append(("dense", DenseRetriever().retrieve(question, query_embedding, index_name, config, top_k)))
+        if weights.get("bm25", 1.0):
+            result_sets.append(("bm25", BM25Retriever().retrieve(question, query_embedding, index_name, config, top_k)))
+        if weights.get("neural_sparse", 1.0) and isinstance(query_embedding, dict):
+            result_sets.append(("neural_sparse", NeuralSparseRetriever().retrieve(question, query_embedding, index_name, config.get("neural_sparse", config), top_k)))
+        return weighted_rank_fusion(result_sets, weights=weights, rrf_k=int(config.get("rrf_k", 60)), top_k=top_k, retriever_name=self.name)
