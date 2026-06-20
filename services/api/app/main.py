@@ -16,6 +16,8 @@ GROUND_TRUTH_PATH=(EVAL_DATA_DIR / "qa.json").resolve()
 
 class RunRequest(BaseModel):
     config_path: str = "/app/configs/default.yaml"
+    source_paths: list[str] | None = None
+    question_indices: list[int] | None = None
 
 class ConfigSaveRequest(BaseModel):
     config_path: str = "/app/configs/default.yaml"
@@ -106,14 +108,51 @@ def save_config_content(req: ConfigSaveRequest):
     path.write_text(req.content, encoding="utf-8")
     return {"config_path":str(path),"experiment_name":parsed.get("experiment",{}).get("name","benchmark"),"status":"saved"}
 
+def _validated_source_paths(source_paths: list[str] | None) -> list[str] | None:
+    if source_paths is None:
+        return None
+    selected=[]
+    for source_path in source_paths:
+        data_path=_resolve_data_path(source_path, RAW_DATA_DIR)
+        if not data_path.exists() or not data_path.is_file():
+            raise HTTPException(status_code=404, detail=f"Data file not found: {source_path}")
+        selected.append(str(data_path))
+    return selected
+
+def _validated_question_indices(question_indices: list[int] | None) -> list[int] | None:
+    if question_indices is None:
+        return None
+    questions=_read_ground_truth()
+    selected=[]
+    for index in question_indices:
+        if index < 0 or index >= len(questions):
+            raise HTTPException(status_code=400, detail=f"Question index out of range: {index}")
+        selected.append(index)
+    return selected
+
+def _apply_input_selection(config: dict, source_paths: list[str] | None, question_indices: list[int] | None) -> dict:
+    if source_paths is None and question_indices is None:
+        return config
+    config=dict(config)
+    selection={}
+    if source_paths is not None:
+        selection["source_paths"]=source_paths
+    if question_indices is not None:
+        selection["question_indices"]=question_indices
+    config["input_selection"]=selection
+    return config
+
 @app.post("/benchmarks/run")
 def run_benchmark(req: RunRequest):
     if not Path(req.config_path).exists():
         raise HTTPException(status_code=404, detail=f"Config not found: {req.config_path}")
     config=load_yaml(req.config_path)
+    source_paths=_validated_source_paths(req.source_paths)
+    question_indices=_validated_question_indices(req.question_indices)
+    config=_apply_input_selection(config, source_paths, question_indices)
     run_id=str(uuid.uuid4())
     upsert_run(run_id, config.get("experiment",{}).get("name","benchmark"), "queued", config)
-    run_benchmark_task.delay(run_id, req.config_path)
+    run_benchmark_task.delay(run_id, req.config_path, {"input_selection":config.get("input_selection", {})})
     return {"run_id":run_id,"status":"queued"}
 
 @app.get("/benchmarks")

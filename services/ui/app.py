@@ -370,10 +370,42 @@ def show_test_config_setup():
 
         st.divider()
         st.subheader("Launch benchmark")
+        selected_source_paths=[]
+        selected_question_indices=[]
+        try:
+            files_payload=requests.get(f"{API}/data/files", timeout=30).json()
+            source_files=files_payload.get("files", [])
+            source_options=[item.get("path", "") for item in source_files if item.get("path")]
+            selected_source_paths=st.multiselect(
+                "Source documents to include",
+                source_options,
+                default=source_options,
+                help="Leave all selected to benchmark every uploaded source document. Clear selections to run with no source documents.",
+            )
+        except Exception as e:
+            st.warning(f"Could not load source document choices: {e}")
+        try:
+            questions_payload=requests.get(f"{API}/data/questions", timeout=30).json()
+            questions=questions_payload.get("questions", [])
+            question_options=list(range(len(questions)))
+            selected_question_indices=st.multiselect(
+                "Evaluation questions to include",
+                question_options,
+                default=question_options,
+                format_func=lambda index: _short_question_label(questions[index].get("question", ""), index),
+                help="Leave all selected to benchmark every ground-truth question. Clear selections to run with no questions.",
+            )
+        except Exception as e:
+            st.warning(f"Could not load evaluation question choices: {e}")
         if st.button("Start benchmark run"):
             if st.session_state.config_dirty:
                 st.warning("Unsaved YAML edits were not used. Click Save YAML first to benchmark the edited config.")
-            r=requests.post(f"{API}/benchmarks/run", json={"config_path":st.session_state.config_path}, timeout=30)
+            payload={
+                "config_path":st.session_state.config_path,
+                "source_paths":selected_source_paths,
+                "question_indices":selected_question_indices,
+            }
+            r=requests.post(f"{API}/benchmarks/run", json=payload, timeout=30)
             st.success(r.json())
 
     with editor_col:

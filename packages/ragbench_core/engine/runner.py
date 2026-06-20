@@ -23,6 +23,8 @@ class BenchmarkRunner:
             cases=expand_cases(config)
             examples=load_ground_truth(config["data"]["ground_truth_file"])
             sources=list_sources(config["data"]["input_dir"], config["data"].get("remote_urls_file"))
+            sources=self._select_sources(sources, config.get("input_selection", {}).get("source_paths"))
+            examples=self._select_examples(examples, config.get("input_selection", {}).get("question_indices"))
             all_metric_rows=[]
             for case in cases:
                 try:
@@ -113,6 +115,17 @@ class BenchmarkRunner:
                 {"ingestion":ing,"query":qry,"llm":case.llm_config,"evaluation_step":evaluation_step},
             )
         return {"questions":len(examples),"metric_rows":metric_rows}
+
+    def _select_sources(self, sources, selected_source_paths):
+        if selected_source_paths is None:
+            return sources
+        selected={str(Path(source).resolve()) for source in selected_source_paths}
+        return [source for source in sources if str(Path(source).resolve()) in selected]
+
+    def _select_examples(self, examples, selected_question_indices):
+        if selected_question_indices is None:
+            return examples
+        return [example for index,example in enumerate(examples) if index in set(selected_question_indices)]
 
     def _snapshot_results(self, results):
         return [replace(result) for result in results]
