@@ -1,5 +1,8 @@
 from __future__ import annotations
 from pathlib import Path
+from datetime import datetime, timezone
+import mimetypes
+
 from ragbench_core.interfaces import BaseExtractor
 from ragbench_core.models.schema import Document
 
@@ -149,6 +152,139 @@ class MarkdownExtractor(BaseExtractor):
                 images.append({"src": child.attrGet("src") or "", "alt": child.content or child.attrGet("alt") or "", "title": child.attrGet("title") or ""})
             elif link_stack and child.type in {"text", "code_inline"}:
                 link_stack[-1]["text"] += child.content
+
+class DoclingExtractor(BaseExtractor):
+    name = "docling"
+    supported_extensions = {
+        ".pdf",
+        ".docx",
+        ".pptx",
+        ".xlsx",
+        ".html",
+        ".htm",
+        ".png",
+        ".jpg",
+        ".jpeg",
+        ".tif",
+        ".tiff",
+    }
+
+    def extract(self, source: str, config: dict) -> list[Document]:
+        if source.startswith(("http://", "https://")):
+            return []
+
+        p = Path(source)
+        file_extension = p.suffix.lower()
+        if file_extension not in self.supported_extensions:
+            return []
+
+        try:
+            from docling.document_converter import DocumentConverter
+
+            converter = DocumentConverter()
+            result = converter.convert(str(p))
+            document = result.document
+            text = self._export_text(document, config)
+            metadata = self._build_metadata(p, result, document)
+            return [Document(doc_id=p.name, source=str(p), text=text, metadata=metadata)]
+        except Exception as exc:
+            if config.get("ignore_errors"):
+                return []
+            raise RuntimeError(f"Docling failed to extract {p}: {exc}") from exc
+
+    def _export_text(self, document, config: dict) -> str:
+        export_format = config.get("export_format", "markdown")
+        if export_format == "text" and hasattr(document, "export_to_text"):
+            return document.export_to_text()
+        if hasattr(document, "export_to_markdown"):
+            return document.export_to_markdown()
+        if hasattr(document, "export_to_text"):
+            return document.export_to_text()
+        return str(document)
+
+    def _build_metadata(self, path: Path, result, document) -> dict:
+        stat = path.stat()
+        mime_type, _ = mimetypes.guess_type(path.name)
+        pages_count = self._count_collection(getattr(document, "pages", None))
+        tables = getattr(document, "tables", None)
+        images = self._first_present_collection(document, ["pictures", "images"])
+        tables_count = self._count_collection(tables)
+        images_count = self._count_collection(images)
+
+        metadata = {
+            "file_name": path.name,
+            "file_extension": path.suffix.lower(),
+            "type": "docling",
+            "mime_type": mime_type,
+            "file_size_bytes": stat.st_size,
+            "modified_at": datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc).isoformat(),
+            "docling_format": self._detect_docling_format(result),
+            "pages_count": pages_count,
+            "tables_count": tables_count,
+            "images_count": images_count,
+            "has_tables": tables_count > 0,
+            "has_images": images_count > 0,
+        }
+
+        page_summaries = self._summarize_collection(getattr(document, "pages", None), ["page_no", "page_number", "size"], limit=20)
+        table_summaries = self._summarize_collection(tables, ["label", "caption", "num_rows", "num_cols"], limit=20)
+        image_summaries = self._summarize_collection(images, ["label", "caption", "image_ref"], limit=20)
+        if page_summaries:
+            metadata["pages"] = page_summaries
+        if table_summaries:
+            metadata["tables"] = table_summaries
+        if image_summaries:
+            metadata["images"] = image_summaries
+        return metadata
+
+    def _detect_docling_format(self, result) -> str | None:
+        for attr_path in [("input", "format"), ("input", "file", "format"), ("document", "origin", "mimetype")]:
+            value = result
+            for attr in attr_path:
+                value = getattr(value, attr, None)
+                if value is None:
+                    break
+            if value is not None:
+                return getattr(value, "value", str(value))
+        return None
+
+    def _first_present_collection(self, obj, names: list[str]):
+        for name in names:
+            value = getattr(obj, name, None)
+            if value is not None:
+                return value
+        return None
+
+    def _count_collection(self, collection) -> int:
+        if collection is None:
+            return 0
+        if isinstance(collection, dict):
+            return len(collection)
+        try:
+            return len(collection)
+        except TypeError:
+            return sum(1 for _ in collection)
+
+    def _summarize_collection(self, collection, attributes: list[str], limit: int) -> list[dict]:
+        if collection is None:
+            return []
+        values = collection.values() if isinstance(collection, dict) else collection
+        summaries = []
+        for index, item in enumerate(values):
+            if index >= limit:
+                break
+            summary = {"index": index}
+            for attr in attributes:
+                value = getattr(item, attr, None)
+                if value is None:
+                    continue
+                if hasattr(value, "text"):
+                    value = value.text
+                summary[attr] = str(value) if not isinstance(value, (str, int, float, bool)) else value
+            if len(summary) > 1:
+                summaries.append(summary)
+        return summaries
+
 
 class PdfExtractor(BaseExtractor):
     name = "pdf"
