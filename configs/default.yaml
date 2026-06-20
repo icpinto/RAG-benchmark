@@ -166,6 +166,19 @@ llm:
 
 metrics:
   retrieval_k: [3, 5, 10]
+  judge:
+    model: "${OLLAMA_MODEL:gpt-oss:20b}"
+    base_url: "${OLLAMA_BASE_URL:http://ollama:11434}"
+    timeout: 60
+  providers:
+    ragas:
+      model: "${OLLAMA_MODEL:gpt-oss:20b}"
+      base_url: "${OLLAMA_BASE_URL:http://ollama:11434}"
+      timeout: 60
+    deepeval:
+      model: "${OLLAMA_MODEL:gpt-oss:20b}"
+      base_url: "${OLLAMA_BASE_URL:http://ollama:11434}"
+      timeout: 60
   enabled:
     - recall_at_k
     - precision_at_k
@@ -176,6 +189,12 @@ metrics:
     - citation_coverage
     - answer_correctness_placeholder
     - faithfulness_placeholder
+    # Optional LLM judge metrics. They return null/error metadata when their
+    # dependencies or judge credentials are unavailable.
+    # - ragas_faithfulness
+    # - ragas_answer_relevancy
+    # - deepeval_faithfulness
+    # - deepeval_answer_correctness
 
 runtime:
   max_combinations: 32
