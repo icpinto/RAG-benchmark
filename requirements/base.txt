@@ -10,6 +10,7 @@ python-multipart==0.0.19
 PyYAML==6.0.2
 requests==2.32.3
 beautifulsoup4==4.12.3
+markdown-it-py==3.0.0
 pypdf==5.1.0
 qdrant-client==1.12.1
 opensearch-py==2.8.0
