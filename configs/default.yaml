@@ -9,7 +9,14 @@ data:
 
 pipeline:
   ingestion:
-    extractors: ["txt", "markdown", "pdf", "html_url"]
+    # Prefer docling over pdf when table, image, and layout understanding matters.
+    # Keeping pdf disabled here avoids duplicate PDF ingestion in the default rich-extraction path.
+    extractors: ["txt", "markdown", "docling", "html_url"]
+    extractor_configs:
+      docling:
+        ocr: true
+        table_structure: true
+        image_descriptions: true
     cleaners:
       - type: "basic"
     chunkers:
