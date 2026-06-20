@@ -54,7 +54,14 @@ def register_builtin_components() -> ComponentRegistry:
         LlamaIndexDocumentStructureChunker,
     )
     from ragbench_core.components.metadata import BasicMetadataEnricher
-    from ragbench_core.components.embedders import SentenceTransformerEmbedder
+    from ragbench_core.components.embedders import (
+        BGEM3Embedder,
+        CohereEmbedder,
+        JinaEmbedder,
+        OpenAIEmbedder,
+        SentenceTransformerEmbedder,
+        VoyageEmbedder,
+    )
     from ragbench_core.components.indexers import QdrantIndexer, OpenSearchIndexer
     from ragbench_core.components.rewriters import NoRewrite, HyDERewrite
     from ragbench_core.components.retrievers import DenseRetriever, DenseFilteredRetriever, ParentDocumentRetriever, BM25Retriever, HybridRetriever, MultiQueryFusionRetriever, AdaptiveHybridRetriever
@@ -88,7 +95,7 @@ def register_builtin_components() -> ComponentRegistry:
         LlamaIndexDocumentStructureChunker(),
     ]: REGISTRY.register_chunker(c)
     REGISTRY.register_metadata_enricher(BasicMetadataEnricher())
-    REGISTRY.register_embedder(SentenceTransformerEmbedder())
+    for c in [SentenceTransformerEmbedder(), OpenAIEmbedder(), VoyageEmbedder(), CohereEmbedder(), JinaEmbedder(), BGEM3Embedder()]: REGISTRY.register_embedder(c)
     for c in [QdrantIndexer(), OpenSearchIndexer()]: REGISTRY.register_indexer(c)
     for c in [NoRewrite(), HyDERewrite()]: REGISTRY.register_rewriter(c)
     for c in [DenseRetriever(), DenseFilteredRetriever(), ParentDocumentRetriever(), BM25Retriever(), HybridRetriever(), MultiQueryFusionRetriever(), AdaptiveHybridRetriever()]: REGISTRY.register_retriever(c)
