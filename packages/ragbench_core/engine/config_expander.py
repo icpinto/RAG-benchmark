@@ -35,10 +35,14 @@ def _expand_indexer_variants(indexer_config, key, default):
 
 
 def _expand_dense_indexers(indexer_config):
+    if indexer_config and "dense" not in indexer_config:
+        return [None]
     return _expand_indexer_variants(indexer_config, "dense", {"type": "qdrant", "strategy": "dense_hnsw"})
 
 
 def _expand_sparse_indexers(indexer_config):
+    if indexer_config and "sparse" not in indexer_config:
+        return [None]
     return _expand_indexer_variants(indexer_config, "sparse", {"type": "opensearch", "strategy": "bm25_standard"})
 
 
@@ -57,7 +61,15 @@ def expand_cases(config: dict) -> list[BenchmarkCase]:
     max_combos=int(config.get("runtime",{}).get("max_combinations", 32))
     cases=[]
     for embedder, rewriter, retriever, reranker, compressor, chunker, dense_indexer, sparse_indexer in product(embeddings, rewriters, retrievers, rerankers, compressors, chunkers, dense_indexers, sparse_indexers):
-        indexers=dict(indexer_config); indexers["dense"]=dense_indexer; indexers["sparse"]=sparse_indexer
+        indexers=dict(indexer_config)
+        if dense_indexer is not None:
+            indexers["dense"] = dense_indexer
+        else:
+            indexers.pop("dense", None)
+        if sparse_indexer is not None:
+            indexers["sparse"] = sparse_indexer
+        else:
+            indexers.pop("sparse", None)
         ing_conf={"chunker":chunker,"embedder":embedder,"cleaners":ing.get("cleaners",[]),"extractors":ing.get("extractors",[]),"metadata_enrichers":ing.get("metadata_enrichers",[]),"indexers":indexers}
         qry_conf={"rewriter":rewriter,"retriever":retriever,"filters":qry.get("filters", [{"type":"none"}]),"reranker":reranker,"compressor":compressor,"context_assembler":qry.get("context_assemblers", [{"type":"default"}])[0],"prompt_builder":qry.get("prompt_builders", [{"type":"default"}])[0],"citation_validator":qry.get("citation_validators", [{"type":"simple"}])[0]}
         cid=stable_id(ing_conf,qry_conf,config.get("experiment",{}).get("name","exp"))

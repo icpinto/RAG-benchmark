@@ -59,10 +59,12 @@ class BenchmarkRunner:
         with timer() as ingest_timer:
             chunks=embedder.embed_chunks(chunks, ing["embedder"])
             index_name=f"{full_config.get('runtime',{}).get('collection_prefix','ragbench')}_{case.case_id}".lower().replace('-', '_')
-            dense_indexer_conf=ing.get("indexers",{}).get("dense",{"type":"qdrant"})
-            sparse_indexer_conf=ing.get("indexers",{}).get("sparse",{"type":"opensearch"})
-            self.registry.indexers[dense_indexer_conf.get("type","qdrant")].index(chunks, index_name, dense_indexer_conf)
-            self.registry.indexers[sparse_indexer_conf.get("type","opensearch")].index(chunks, index_name, sparse_indexer_conf)
+            dense_indexer_conf=ing.get("indexers",{}).get("dense")
+            sparse_indexer_conf=ing.get("indexers",{}).get("sparse")
+            if dense_indexer_conf:
+                self.registry.indexers[dense_indexer_conf.get("type","qdrant")].index(chunks, index_name, dense_indexer_conf)
+            if sparse_indexer_conf:
+                self.registry.indexers[sparse_indexer_conf.get("type","opensearch")].index(chunks, index_name, sparse_indexer_conf)
         metric_rows=[]
         max_k = max(RetrievalMetrics._validate_retrieval_k(case.metric_config))
         for example in examples:

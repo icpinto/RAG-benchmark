@@ -73,3 +73,27 @@ def test_expand_cases_includes_opensearch_bm25_strategies():
         "bm25_custom_analyzer",
         "bm25_phrase",
     ]
+
+
+def test_expand_cases_preserves_sparse_only_indexer_config():
+    config=load_yaml("configs/default.yaml")
+    config=deepcopy(config)
+    config["pipeline"]["ingestion"]["chunkers"] = [
+        {"type": "fixed", "chunk_size": 256, "overlap": 0}
+    ]
+    config["pipeline"]["ingestion"]["embeddings"] = [
+        {"provider": "splade_sparse", "model": "stub"}
+    ]
+    config["pipeline"]["ingestion"]["indexers"] = {
+        "sparse": {"type": "qdrant_sparse", "vector_name": "neural_sparse"}
+    }
+    config["pipeline"]["query"]["rewriters"] = [{"type": "none"}]
+    config["pipeline"]["query"]["retrievers"] = [{"type": "neural_sparse", "backend": "qdrant"}]
+    config["pipeline"]["query"]["rerankers"] = [{"type": "none"}]
+    config["pipeline"]["query"]["compressors"] = [{"type": "none"}]
+
+    cases=expand_cases(config)
+
+    assert len(cases) == 1
+    assert "dense" not in cases[0].ingestion_config["indexers"]
+    assert cases[0].ingestion_config["indexers"]["sparse"]["type"] == "qdrant_sparse"
