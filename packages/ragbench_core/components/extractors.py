@@ -185,7 +185,8 @@ class DoclingExtractor(BaseExtractor):
             result = converter.convert(str(p))
             document = result.document
             text = self._export_text(document, config)
-            metadata = self._build_metadata(p, result, document)
+            metadata = self._build_metadata(p, result, document, config)
+            text = self._enrich_text_with_tables_and_images(text, metadata)
             return [Document(doc_id=p.name, source=str(p), text=text, metadata=metadata)]
         except Exception as exc:
             if config.get("ignore_errors"):
@@ -202,7 +203,7 @@ class DoclingExtractor(BaseExtractor):
             return document.export_to_text()
         return str(document)
 
-    def _build_metadata(self, path: Path, result, document) -> dict:
+    def _build_metadata(self, path: Path, result, document, config: dict | None = None) -> dict:
         stat = path.stat()
         mime_type, _ = mimetypes.guess_type(path.name)
         pages_count = self._count_collection(getattr(document, "pages", None))
@@ -227,8 +228,8 @@ class DoclingExtractor(BaseExtractor):
         }
 
         page_summaries = self._summarize_collection(getattr(document, "pages", None), ["page_no", "page_number", "size"], limit=20)
-        table_summaries = self._summarize_collection(tables, ["label", "caption", "num_rows", "num_cols"], limit=20)
-        image_summaries = self._summarize_collection(images, ["label", "caption", "image_ref"], limit=20)
+        table_summaries = self._summarize_tables(tables)
+        image_summaries = self._summarize_images(images, config or {})
         if page_summaries:
             metadata["pages"] = page_summaries
         if table_summaries:
@@ -236,6 +237,128 @@ class DoclingExtractor(BaseExtractor):
         if image_summaries:
             metadata["images"] = image_summaries
         return metadata
+
+    def _enrich_text_with_tables_and_images(self, text: str, metadata: dict) -> str:
+        parts = [text.strip()] if text and text.strip() else []
+        seen = {part for part in parts}
+
+        for table in metadata.get("tables", []):
+            for key in ("caption", "markdown", "text"):
+                value = table.get(key)
+                if value and value not in seen:
+                    parts.append(value)
+                    seen.add(value)
+
+        for image in metadata.get("images", []):
+            for key in ("caption", "ocr_text", "description"):
+                value = image.get(key)
+                if value and value not in seen:
+                    parts.append(value)
+                    seen.add(value)
+
+        return "\n\n".join(parts)
+
+    def _summarize_tables(self, tables) -> list[dict]:
+        summaries = []
+        for index, table in enumerate(self._iter_collection(tables)):
+            summary = {"index": index}
+            self._copy_first_attr(summary, table, "page_number", ["page_no", "page_number", "page", "prov.page_no"])
+            self._copy_first_attr(summary, table, "row_count", ["num_rows", "nrows", "row_count", "rows_count"])
+            self._copy_first_attr(summary, table, "column_count", ["num_cols", "ncols", "column_count", "columns_count"])
+            self._copy_first_attr(summary, table, "caption", ["caption", "captions", "title"])
+            self._copy_first_attr(summary, table, "label", ["label", "name"])
+
+            markdown = self._export_item_text(table, ["export_to_markdown", "to_markdown", "export_to_html", "text"])
+            if markdown:
+                summary["markdown"] = markdown
+                summary.setdefault("text", markdown)
+
+            summaries.append(summary)
+        return summaries
+
+    def _summarize_images(self, images, config: dict) -> list[dict]:
+        summaries = []
+        image_description_config = config.get("image_descriptions", {})
+        descriptions_enabled = (
+            bool(image_description_config.get("enabled", False))
+            if isinstance(image_description_config, dict)
+            else bool(image_description_config)
+        )
+        for index, image in enumerate(self._iter_collection(images)):
+            summary = {"index": index}
+            self._copy_first_attr(summary, image, "page_number", ["page_no", "page_number", "page", "prov.page_no"])
+            self._copy_first_attr(summary, image, "caption", ["caption", "captions", "title"])
+            self._copy_first_attr(summary, image, "ocr_text", ["ocr_text", "text", "extracted_text"])
+            self._copy_first_attr(summary, image, "dimensions", ["size", "dimensions", "image.size"])
+            self._copy_first_attr(summary, image, "source_id", ["image_ref", "self_ref", "ref", "uri", "id", "label"])
+            self._copy_first_attr(summary, image, "label", ["label", "name"])
+
+            if descriptions_enabled:
+                description = self._available_image_description(image, config)
+                if description:
+                    summary["description"] = description
+
+            summaries.append(summary)
+        return summaries
+
+    def _available_image_description(self, image, config: dict) -> str | None:
+        # External vision calls are intentionally not performed here. If Docling (or
+        # a caller-supplied preprocessing step) has already attached a description,
+        # expose it only when explicitly enabled so normal ingestion needs no API.
+        return self._stringify(self._first_attr(image, ["description", "image_description", "alt_text"]))
+
+    def _iter_collection(self, collection):
+        if collection is None:
+            return []
+        return collection.values() if isinstance(collection, dict) else collection
+
+    def _copy_first_attr(self, target: dict, obj, key: str, attr_paths: list[str]) -> None:
+        value = self._first_attr(obj, attr_paths)
+        if value is not None:
+            target[key] = self._stringify(value)
+
+    def _first_attr(self, obj, attr_paths: list[str]):
+        for attr_path in attr_paths:
+            value = obj
+            for attr in attr_path.split("."):
+                if isinstance(value, (list, tuple)):
+                    value = value[0] if value else None
+                value = getattr(value, attr, None) if value is not None else None
+                if value is None:
+                    break
+            if value is not None:
+                return value
+        return None
+
+    def _export_item_text(self, item, attr_names: list[str]) -> str | None:
+        for attr in attr_names:
+            value = getattr(item, attr, None)
+            if value is None:
+                continue
+            if callable(value):
+                try:
+                    value = value()
+                except TypeError:
+                    continue
+            text = self._stringify(value)
+            if text:
+                return text
+        return None
+
+    def _stringify(self, value) -> str | int | float | bool | None:
+        if value is None:
+            return None
+        if hasattr(value, "text"):
+            value = value.text
+        if isinstance(value, (str, int, float, bool)):
+            return value
+        if isinstance(value, (list, tuple)):
+            values = [self._stringify(item) for item in value]
+            values = [item for item in values if item]
+            return "\n".join(str(item) for item in values) if values else None
+        if isinstance(value, dict):
+            return {key: self._stringify(item) for key, item in value.items()}
+        return str(value)
 
     def _detect_docling_format(self, result) -> str | None:
         for attr_path in [("input", "format"), ("input", "file", "format"), ("document", "origin", "mimetype")]:
