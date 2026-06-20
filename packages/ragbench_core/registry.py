@@ -42,7 +42,7 @@ class ComponentRegistry:
 REGISTRY = ComponentRegistry()
 
 def register_builtin_components() -> ComponentRegistry:
-    from ragbench_core.components.extractors import TxtExtractor, MarkdownExtractor, DoclingExtractor, PdfExtractor, HtmlUrlExtractor
+    from ragbench_core.components.extractors import TxtExtractor, MarkdownExtractor, PdfExtractor, HtmlUrlExtractor, DoclingExtractor
     from ragbench_core.components.cleaners import BasicCleaner
     from ragbench_core.components.chunkers import (
         FixedSizeChunker,
@@ -66,7 +66,7 @@ def register_builtin_components() -> ComponentRegistry:
     from ragbench_core.components.validators import SimpleCitationValidator
     from ragbench_core.components.metrics import RetrievalMetrics, OperationalMetric, CitationCoverageMetric, PlaceholderAnswerMetric, PlaceholderFaithfulnessMetric
 
-    for c in [TxtExtractor(), MarkdownExtractor(), DoclingExtractor(), PdfExtractor(), HtmlUrlExtractor()]: REGISTRY.register_extractor(c)
+    for c in [TxtExtractor(), MarkdownExtractor(), PdfExtractor(), HtmlUrlExtractor(), DoclingExtractor()]: REGISTRY.register_extractor(c)
     REGISTRY.register_cleaner(BasicCleaner())
     for c in [
         FixedSizeChunker(),
