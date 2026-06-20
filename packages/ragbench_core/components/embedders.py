@@ -242,3 +242,135 @@ class JinaEmbedder(_HostedEmbedder):
 
     def _parse_vectors(self, response):
         return [item["embedding"] for item in sorted(response["data"], key=lambda item: item.get("index", 0))]
+
+
+def _sparse_dict_from_indices_values(indices: list[int], values: list[float]) -> dict[int, float]:
+    sparse: dict[int, float] = {}
+    for index, value in zip(indices, values):
+        if value:
+            sparse[int(index)] = float(value)
+    return sparse
+
+
+def _top_k_sparse(sparse: dict[int, float], top_k: int | None) -> dict[int, float]:
+    if not top_k or len(sparse) <= top_k:
+        return sparse
+    return dict(sorted(sparse.items(), key=lambda item: item[1], reverse=True)[:top_k])
+
+
+class BGEM3SparseEmbedder(BaseEmbedder):
+    """Generate BGE-M3 lexical sparse vectors with FlagEmbedding.
+
+    The vectors are stored on ``Chunk.sparse_embedding`` as ``token_id -> weight``
+    dictionaries so sparse indexers can persist them without changing the dense path.
+    """
+
+    name = "bge_m3_sparse"
+
+    def _model(self, config: dict[str, Any]):
+        from FlagEmbedding import BGEM3FlagModel
+
+        return BGEM3FlagModel(config.get("model", "BAAI/bge-m3"), use_fp16=bool(config.get("use_fp16", True)))
+
+    def _encode(self, texts: list[str], config: dict[str, Any]) -> list[dict[int, float]]:
+        model = self._model(config)
+        encoded = model.encode(
+            texts,
+            batch_size=_batch_size(config),
+            return_dense=False,
+            return_sparse=True,
+            return_colbert_vecs=False,
+        )
+        sparse_vectors = encoded.get("lexical_weights", encoded)
+        top_k = config.get("sparse_top_k")
+        out: list[dict[int, float]] = []
+        for sparse in sparse_vectors:
+            if isinstance(sparse, dict):
+                out.append(_top_k_sparse({int(k): float(v) for k, v in sparse.items() if float(v)}, top_k))
+            else:
+                out.append(_top_k_sparse(dict(sparse), top_k))
+        return out
+
+    def embed_chunks(self, chunks: list[Chunk], config: dict) -> list[Chunk]:
+        vectors = self._encode(_prefixed_documents(chunks, config), config)
+        for chunk, vector in zip(chunks, vectors):
+            chunk.sparse_embedding = vector
+        return chunks
+
+    def embed_query(self, query: str, config: dict) -> dict[int, float]:
+        return self._encode([_prefixed_query(query, config)], config)[0]
+
+
+class SPLADESparseEmbedder(BaseEmbedder):
+    """Generate SPLADE-style sparse vectors with Hugging Face Transformers."""
+
+    name = "splade_sparse"
+
+    @lru_cache(maxsize=2)
+    def _load(self, model_name: str):
+        from transformers import AutoModelForMaskedLM, AutoTokenizer
+
+        return AutoTokenizer.from_pretrained(model_name), AutoModelForMaskedLM.from_pretrained(model_name)
+
+    def _encode(self, texts: list[str], config: dict[str, Any]) -> list[dict[int, float]]:
+        import torch
+
+        model_name = config.get("model", "naver/splade-cocondenser-ensembledistil")
+        tokenizer, model = self._load(model_name)
+        max_length = int(config.get("max_length", 512))
+        top_k = config.get("sparse_top_k")
+        vectors: list[dict[int, float]] = []
+        model.eval()
+        with torch.no_grad():
+            for batch in _batch(texts, _batch_size(config)):
+                inputs = tokenizer(batch, padding=True, truncation=True, max_length=max_length, return_tensors="pt")
+                logits = model(**inputs).logits
+                weights = torch.log1p(torch.relu(logits)) * inputs["attention_mask"].unsqueeze(-1)
+                sparse_batch = torch.max(weights, dim=1).values
+                for row in sparse_batch:
+                    indices = torch.nonzero(row, as_tuple=False).flatten()
+                    values = row[indices]
+                    sparse = _sparse_dict_from_indices_values(indices.tolist(), values.tolist())
+                    vectors.append(_top_k_sparse(sparse, top_k))
+        return vectors
+
+    def embed_chunks(self, chunks: list[Chunk], config: dict) -> list[Chunk]:
+        vectors = self._encode(_prefixed_documents(chunks, config), config)
+        for chunk, vector in zip(chunks, vectors):
+            chunk.sparse_embedding = vector
+        return chunks
+
+    def embed_query(self, query: str, config: dict) -> dict[int, float]:
+        return self._encode([_prefixed_query(query, config)], config)[0]
+
+
+class BGEM3HybridEmbedder(BGEM3SparseEmbedder):
+    """Generate both BGE-M3 dense and lexical sparse embeddings in one pass."""
+
+    name = "bge_m3_hybrid"
+
+    def _encode_hybrid(self, texts: list[str], config: dict[str, Any]) -> dict[str, Any]:
+        model = self._model(config)
+        return model.encode(
+            texts,
+            batch_size=_batch_size(config),
+            return_dense=True,
+            return_sparse=True,
+            return_colbert_vecs=False,
+        )
+
+    def embed_chunks(self, chunks: list[Chunk], config: dict) -> list[Chunk]:
+        encoded = self._encode_hybrid(_prefixed_documents(chunks, config), config)
+        dense_vectors = _maybe_normalize(_as_list(encoded["dense_vecs"]), config)
+        sparse_vectors = encoded.get("lexical_weights", [])
+        top_k = config.get("sparse_top_k")
+        for chunk, dense, sparse in zip(chunks, dense_vectors, sparse_vectors):
+            chunk.embedding = _as_list(dense)
+            chunk.sparse_embedding = _top_k_sparse({int(k): float(v) for k, v in sparse.items() if float(v)}, top_k)
+        return chunks
+
+    def embed_query(self, query: str, config: dict) -> dict[str, Any]:
+        encoded = self._encode_hybrid([_prefixed_query(query, config)], config)
+        dense = _maybe_normalize([_as_list(encoded["dense_vecs"][0])], config)[0]
+        sparse = encoded.get("lexical_weights", [{}])[0]
+        return {"dense": dense, "sparse": _top_k_sparse({int(k): float(v) for k, v in sparse.items() if float(v)}, config.get("sparse_top_k"))}
