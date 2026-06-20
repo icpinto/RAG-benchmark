@@ -43,9 +43,11 @@ class BenchmarkRunner:
     def _run_case(self, run_id, case, sources, examples, full_config):
         ing=case.ingestion_config; qry=case.query_config
         docs=[]
+        extractor_configs = ing.get("extractor_configs", {})
         for source in sources:
             for ex_name in ing.get("extractors", []):
-                docs.extend(self.registry.extractors[ex_name].extract(source, {}))
+                ex_config = extractor_configs.get(ex_name, {})
+                docs.extend(self.registry.extractors[ex_name].extract(source, ex_config))
         for c_conf in ing.get("cleaners", []):
             docs=self.registry.cleaners[c_conf["type"]].clean(docs, c_conf)
         chunks=self.registry.chunkers[ing["chunker"]["type"]].chunk(docs, ing["chunker"])
