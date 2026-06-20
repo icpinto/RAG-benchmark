@@ -7,10 +7,3 @@ requires-python = ">=3.11"
 [tool.pytest.ini_options]
 pythonpath = ["packages", "."]
 testpaths = ["tests"]
-
-[project.optional-dependencies]
-answer-quality = [
-  "deepeval",
-  "langchain-ollama",
-  "ragas",
-]
