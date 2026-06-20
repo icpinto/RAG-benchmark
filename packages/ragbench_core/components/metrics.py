@@ -227,6 +227,14 @@ class _JudgeMetric(BaseMetric):
         metadata = {"available": False, "provider": self.provider, "reason": reason}
         if detail:
             metadata["error"] = detail
+        if reason == "ModuleNotFoundError":
+            metadata.update(
+                {
+                    "dependency": self.dependency_name,
+                    "install_extra": "answer-quality",
+                    "install_command": "pip install -e '.[answer-quality]'",
+                }
+            )
         if metric_config:
             metadata.update({"model": metric_config.model, "base_url": metric_config.base_url})
         return {self.score_key: None, f"{self.score_key}_metadata": metadata}

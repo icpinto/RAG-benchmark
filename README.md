@@ -187,6 +187,8 @@ The benchmark YAML is organized around top-level experiment, data, pipeline, LLM
 | Citation coverage | Ground-truth `expected_citations` | Returns `1.0` when no expected citations are provided; otherwise checks for verbatim citation strings in the answer. |
 | Placeholder answer correctness | Ground-truth `expected_answer` | Lexical-overlap placeholder only; not a semantic answer judge. |
 | Placeholder faithfulness | Generated answer and assembled context | Lexical support heuristic over answer words longer than four characters; not an LLM-based faithfulness metric. |
+| Ragas answer-quality judges | `metrics.judge`, `metrics.providers.ragas`, metric-specific overrides | Optional LLM-judge metrics: `ragas_faithfulness` and `ragas_answer_relevancy`. Install the `answer-quality` extra with `pip install -e '.[answer-quality]'` for local runs; Docker images install these dependencies from `requirements/base.txt`. They default to the configured Ollama model/base URL and return `null` plus availability metadata when dependencies or the judge service are unavailable. |
+| DeepEval answer-quality judges | `metrics.judge`, `metrics.providers.deepeval`, metric-specific overrides | Optional LLM-judge metrics: `deepeval_faithfulness` and `deepeval_answer_correctness`. Install the `answer-quality` extra with `pip install -e '.[answer-quality]'` for local runs; Docker images install these dependencies from `requirements/base.txt`. They default to the configured Ollama model/base URL and return `null` plus availability metadata when dependencies or the judge service are unavailable. |
 
 ### Combination expansion behavior
 

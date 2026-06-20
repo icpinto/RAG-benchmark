@@ -73,6 +73,9 @@ def test_judge_metric_gracefully_returns_null_metadata_on_error(monkeypatch):
     assert metadata["provider"] == "deepeval"
     assert metadata["reason"] == "ModuleNotFoundError"
     assert "deepeval" in metadata["error"]
+    assert metadata["dependency"] == "deepeval"
+    assert metadata["install_extra"] == "answer-quality"
+    assert metadata["install_command"] == "pip install -e '.[answer-quality]'"
 
 
 def test_builtin_registry_includes_answer_quality_metrics(monkeypatch):
