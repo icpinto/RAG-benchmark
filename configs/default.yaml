@@ -53,8 +53,33 @@ pipeline:
       # Hugging Face IDs (for example, "intfloat/e5-large-v2").
       # - provider: "sentence_transformers"
       #   model: "e5-base-v2"
+      #   batch_size: 32
+      #   normalize: true
+      #   query_prefix: "query: "
+      #   document_prefix: "passage: "
       # - provider: "sentence_transformers"
       #   model: "e5-large-v2"
+      # Hosted embedders support api_key (or provider env vars), base_url, model,
+      # batch_size, normalize, query_prefix, and document_prefix.
+      # - provider: "openai"
+      #   api_key: "${OPENAI_API_KEY}"
+      #   base_url: "https://api.openai.com/v1"
+      #   model: "text-embedding-3-small"
+      #   batch_size: 64
+      #   normalize: false
+      # - provider: "voyage"
+      #   api_key: "${VOYAGE_API_KEY}"
+      #   model: "voyage-3"
+      # - provider: "cohere"
+      #   api_key: "${COHERE_API_KEY}"
+      #   model: "embed-v4.0"
+      # - provider: "jina"
+      #   api_key: "${JINA_API_KEY}"
+      #   model: "jina-embeddings-v3"
+      # - provider: "bge_m3"
+      #   model: "BAAI/bge-m3"
+      #   batch_size: 32
+      #   normalize: true
     indexers:
       dense:
         type: "qdrant"
