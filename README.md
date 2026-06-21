@@ -42,7 +42,7 @@ User question
 | Embeddings | SentenceTransformers: MiniLM, BGE small, configurable local HF model |
 | Indexing | Qdrant dense strategies (`dense_hnsw`, `dense_hnsw_tuned`, `dense_exact`, `dense_quantized`, `dense_on_disk`, `dense_payload_indexed`), OpenSearch BM25 strategies (`bm25_standard`, `bm25_field_weighted`, `bm25_custom_analyzer`, `bm25_phrase`) |
 | Retrieval | Dense, metadata-filtered dense, BM25, hybrid reciprocal-rank-fusion, query-adaptive hybrid routing |
-| Query rewriting | None, HyDE via Ollama |
+| Query rewriting | None, HyDE via Ollama, multi-query paraphrases, step-back conceptual queries, decomposition, local synonym expansion |
 | Reranking | None, CrossEncoder reranker, FlashRank, RankLLM, ColBERT, Cohere, Jina, diversity/MMR reranker |
 | Context compression | None, top-N trimming |
 | Generation | Ollama, default model `gpt-oss:20b` |
@@ -168,7 +168,25 @@ The benchmark YAML is organized around top-level experiment, data, pipeline, LLM
 
 | Component | Built-in variants | Parameters | Restrictions / notes |
 |---|---|---|---|
-| Query rewriters | `none`, `hyde` | `type` | `none` returns the original question. `hyde` uses the top-level `llm.base_url` and `llm.model` to call Ollama and returns the original question plus a hypothetical passage when generation succeeds. HyDE has a fixed 120-second request timeout and fixed generation temperature `0`. |
+| Query rewriters | `none`, `hyde`, `multi_query`, `step_back`, `decompose`, `synonym_expand` | `type`; `multi_query.count`, `multi_query.temperature`; `step_back.temperature`; `decompose.max_subquestions`, `decompose.temperature`; `synonym_expand.synonyms` | All rewriters return `list[str]` so the runner can pass every rewritten query through `embedder.embed_queries(...)` and `retriever.retrieve_batch(...)`. `none` returns the original question. `hyde` uses the top-level `llm.base_url` and `llm.model` to call Ollama and returns the original question plus a hypothetical passage when generation succeeds. `multi_query` uses the LLM to generate diverse paraphrases and prepends the original question; `count` defaults to `4`. `step_back` uses the LLM to add one broader conceptual/background query. `decompose` uses the LLM to add atomic subquestions for compound or multi-hop questions; `max_subquestions` defaults to `4`. LLM-backed rewriters fall back to `[question]` on generation errors. `synonym_expand` does not call an LLM; it accepts either a mapping such as `PTO: ["paid time off", "vacation leave"]` or list groups such as `["SSO", "single sign-on"]`, and returns the original question plus a Boolean-style expanded variant when a configured term is present. |
+
+Example query rewriter configuration:
+
+```yaml
+pipeline:
+  query:
+    rewriters:
+      - type: "multi_query"
+        count: 4
+        temperature: 0.2
+      - type: "step_back"
+      - type: "decompose"
+        max_subquestions: 4
+      - type: "synonym_expand"
+        synonyms:
+          PTO: ["paid time off", "vacation leave"]
+          SSO: ["single sign-on", "federated login"]
+```
 | Retrievers | `dense`, `dense_filtered`, `parent_document`, `bm25`, `hybrid`, `neural_sparse`, `weighted_hybrid`, `multi_query_fusion`, `adaptive_hybrid` | `type`, `metadata_filters` / `metadata_filter`, `payload_filter`, `doc_id`, `doc_ids`, `base_retriever`, `child_top_k`, `child_top_k_multiplier`, `rrf_k` for `hybrid`, `short_query_mode`, `long_query_mode`, `default_mode`, `short_query_max_terms`, `long_query_min_terms` for `adaptive_hybrid` | `dense` requires Qdrant and a query embedding. `dense_filtered` applies a Qdrant payload filter before vector ranking; metadata filter keys without a prefix target `metadata.<key>`, while `doc_id` and `chunk_id` target top-level payload fields. `payload_filter` can pass a raw Qdrant filter object. `parent_document` retrieves `llamaindex_hierarchical` child chunks with `dense` or `dense_filtered`, deduplicates by stored `parent_chunk_id`, and returns the stored `parent_text` as the context chunk while retaining child hit details in metadata. `bm25` requires OpenSearch. `hybrid` calls its configured `sources` and merges results with reciprocal-rank fusion; by default it fetches `dense` and `bm25`, and it can fetch `dense` plus `neural_sparse` when paired with `bge_m3_hybrid` query embeddings and a configured sparse index. `rrf_k` defaults to `60` and must be convertible to a positive integer. `adaptive_hybrid` routes each query by token count: queries at or below `short_query_max_terms` (default `4`) use `short_query_mode` (default `bm25`), queries at or above `long_query_min_terms` (default `12`) use `long_query_mode` (default `hybrid`), and the remaining queries use `default_mode` (default `dense`). Adaptive modes must be one of `dense`, `bm25`, `hybrid`, `neural_sparse`, or `weighted_hybrid`, and returned hits are labeled `adaptive_hybrid:<mode>`. Retrieval depth comes from `max(metrics.retrieval_k)`. |
 | Filters | `none` | `type: none` | No additional parameters. Use the `dense_filtered` retriever when metadata constraints should be pushed into Qdrant retrieval instead of applied after retrieval. |
 | Rerankers | `none`, `cross_encoder`, `flashrank`, `rankllm`, `colbert`, `cohere`, `jina`, `diversity_mmr` | `type`, `model` for model-backed rerankers; `api_key`, `top_n`, `timeout`, `url` / `base_url` for Cohere; `trust_remote_code`, `max_length`, `device` for local Jina; `lambda_mult` for `diversity_mmr` | `cross_encoder.model` defaults to `cross-encoder/ms-marco-MiniLM-L-6-v2` and must be a local or downloadable SentenceTransformers CrossEncoder-compatible model. `flashrank` uses the FlashRank `Ranker`/`RerankRequest` API; `model`, `cache_dir`, and `max_length` are passed to the ranker when provided, and `model` defaults to FlashRank's default model if omitted. `rankllm` uses the Answer.AI `rerankers` RankLLM integration; configure `model` (default `rankllm`), plus optional `api_key` and `lang` for API-backed models. `colbert` uses the Answer.AI `rerankers` ColBERT integration; configure `model` (default `colbert`) plus optional `lang`; it requires installing compatible optional dependencies outside the base Docker image because the `rerankers[transformers]` extra conflicts with the pinned FlagEmbedding dependency set. `cohere` calls Cohere's hosted Rerank API using `api_key` or `COHERE_API_KEY`, defaults to `model: rerank-v3.5`, and posts to `https://api.cohere.com/v2/rerank` unless `url` or `base_url` is set; it defaults `top_n` to the number of retrieved results and preserves any results omitted by the API at the end. `jina` runs an open-source Jina reranker locally with SentenceTransformers, defaults to `model: jinaai/jina-reranker-v2-base-multilingual`, and does not require `JINA_API_KEY`. `diversity_mmr.lambda_mult` defaults to `0.5`; `1.0` preserves relevance-only ordering, while `0.0` maximizes diversity. MMR uses chunk embeddings when present and falls back to token cosine similarity over chunk text. Rerankers replace retriever scores with reranker scores when their backend returns scores and update result ranks. |

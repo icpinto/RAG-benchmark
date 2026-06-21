@@ -151,6 +151,21 @@ pipeline:
     rewriters:
       - type: "none"
       - type: "hyde"
+      # Generates several LLM paraphrases plus the original question.
+      - type: "multi_query"
+        count: 4
+        temperature: 0.2
+      # Generates one broader conceptual/background query plus the original.
+      - type: "step_back"
+      # Splits compound or multi-hop questions into retrieval subquestions.
+      - type: "decompose"
+        max_subquestions: 4
+      # Expands configured domain terms locally without an LLM.
+      - type: "synonym_expand"
+        synonyms:
+          PTO: ["paid time off", "vacation leave"]
+          SSO: ["single sign-on", "federated login"]
+          refund: ["return", "reimbursement"]
     retrievers:
       - type: "dense"
       - type: "dense_filtered"
