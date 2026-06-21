@@ -134,3 +134,30 @@ def test_bge_m3_embedder_defaults_to_local_bge_m3_model(monkeypatch):
 
     assert loaded_models == ["BAAI/bge-m3"]
     assert chunks[0].embedding == [0.0, 1.0]
+
+
+def test_bge_m3_hybrid_embedder_populates_dense_and_sparse(monkeypatch):
+    class FakeBGEM3Model:
+        def encode(self, texts, **kwargs):
+            assert kwargs["return_dense"] is True
+            assert kwargs["return_sparse"] is True
+            return {
+                "dense_vecs": FakeVectors([[3.0, 4.0], [0.0, 2.0]][: len(texts)]),
+                "lexical_weights": [
+                    {"10": 0.5, "20": 0.0, "30": 0.25},
+                    {"40": 0.75},
+                ][: len(texts)],
+            }
+
+    monkeypatch.setattr(embedders_module.BGEM3HybridEmbedder, "_model", lambda self, config: FakeBGEM3Model())
+
+    chunks = [Chunk("c1", "d1", "alpha", {}), Chunk("c2", "d1", "beta", {})]
+    embedder = embedders_module.BGEM3HybridEmbedder()
+    embedded = embedder.embed_chunks(chunks, {"normalize": True, "sparse_top_k": 1})
+    query_embedding = embedder.embed_query("find alpha", {"normalize": True})
+
+    assert embedded[0].embedding == [0.6, 0.8]
+    assert embedded[0].sparse_embedding == {10: 0.5}
+    assert embedded[1].embedding == [0.0, 1.0]
+    assert embedded[1].sparse_embedding == {40: 0.75}
+    assert query_embedding == {"dense": [0.6, 0.8], "sparse": {10: 0.5, 30: 0.25}}

@@ -262,3 +262,46 @@ def test_multi_query_fusion_delegates_to_configured_base_retriever(monkeypatch):
 
     assert calls == [("query", [0.2], "idx", config, 5)]
     assert results[0].retriever == "multi_query_fusion:dense"
+
+
+def test_hybrid_retriever_can_fuse_dense_and_neural_sparse(monkeypatch):
+    from ragbench_core.components import retrievers as retrievers_module
+
+    calls = []
+
+    class StubDense:
+        def retrieve(self, question, query_embedding, index_name, config, top_k):
+            calls.append(("dense", query_embedding, config))
+            return [RetrievalResult(Chunk("chunk-a", "doc-1", "dense"), 0.9, 1, "dense")]
+
+    class StubSparse:
+        def retrieve(self, question, query_embedding, index_name, config, top_k):
+            calls.append(("neural_sparse", query_embedding, config))
+            return [
+                RetrievalResult(Chunk("chunk-b", "doc-2", "sparse"), 0.8, 1, "neural_sparse"),
+                RetrievalResult(Chunk("chunk-a", "doc-1", "dense"), 0.7, 2, "neural_sparse"),
+            ]
+
+    monkeypatch.setattr(retrievers_module, "DenseRetriever", StubDense)
+    monkeypatch.setattr(retrievers_module, "NeuralSparseRetriever", StubSparse)
+
+    query_embedding = {"dense": [0.1, 0.2], "sparse": {42: 0.9}}
+    config = {"sources": ["dense", "neural_sparse"], "neural_sparse": {"backend": "qdrant"}}
+    results = retrievers_module.HybridRetriever().retrieve("q", query_embedding, "idx", config, 2)
+
+    assert [call[0] for call in calls] == ["dense", "neural_sparse"]
+    assert calls[1][2] == {"backend": "qdrant"}
+    assert [result.chunk.chunk_id for result in results] == ["chunk-a", "chunk-b"]
+    assert results[0].chunk.metadata["fusion_source_retrievers"] == ["dense", "neural_sparse"]
+
+
+def test_hybrid_retriever_rejects_unsupported_sources():
+    from ragbench_core.components.retrievers import HybridRetriever
+
+    try:
+        HybridRetriever()._sources({"sources": ["dense", "unknown"]})
+    except ValueError as exc:
+        assert "Unsupported hybrid source" in str(exc)
+        assert "neural_sparse" in str(exc)
+    else:
+        raise AssertionError("Expected unsupported hybrid source to raise ValueError")
