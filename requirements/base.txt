@@ -26,4 +26,4 @@ streamlit==1.41.1
 httpx==0.28.1
 minio==7.2.12
 flashrank==0.2.10
-rerankers[rankllm,transformers]==0.10.0
+rerankers[rankllm]==0.10.0
