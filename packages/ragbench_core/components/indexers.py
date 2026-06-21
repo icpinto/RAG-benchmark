@@ -4,7 +4,7 @@ from typing import Any
 
 from ragbench_core.interfaces import BaseIndexer
 from ragbench_core.models.schema import Chunk
-from ragbench_core.utils.clients import close_client
+from ragbench_core.utils.clients import get_opensearch_client, get_qdrant_client
 
 
 QDRANT_DENSE_STRATEGIES: dict[str, dict[str, Any]] = {
@@ -96,43 +96,40 @@ class QdrantIndexer(BaseIndexer):
     def index(self, chunks: list[Chunk], index_name: str, config: dict) -> dict:
         if not chunks:
             return {"points": 0}
-        from qdrant_client import QdrantClient
         from qdrant_client.http.models import PointStruct
         from ragbench_core.settings import settings
 
-        client = QdrantClient(url=settings.qdrant_url)
-        try:
-            dim = len(chunks[0].embedding or [])
-            strategy_name = config.get("strategy", "dense_hnsw")
-            strategy = self._strategy_config(strategy_name, config)
-            client.recreate_collection(
-                collection_name=index_name,
-                vectors_config=self._vector_params(dim, strategy),
-            )
-            points = []
-            for idx, c in enumerate(chunks):
-                points.append(
-                    PointStruct(
-                        id=idx,
-                        vector=c.embedding,
-                        payload={
-                            "chunk_id": c.chunk_id,
-                            "doc_id": c.doc_id,
-                            "text": c.text,
-                            "metadata": c.metadata,
-                        },
-                    )
+        client = get_qdrant_client(settings.qdrant_url)
+        dim = len(chunks[0].embedding or [])
+        strategy_name = config.get("strategy", "dense_hnsw")
+        strategy = self._strategy_config(strategy_name, config)
+        client.recreate_collection(
+            collection_name=index_name,
+            vectors_config=self._vector_params(dim, strategy),
+        )
+        points = []
+        for idx, c in enumerate(chunks):
+            points.append(
+                PointStruct(
+                    id=idx,
+                    vector=c.embedding,
+                    payload={
+                        "chunk_id": c.chunk_id,
+                        "doc_id": c.doc_id,
+                        "text": c.text,
+                        "metadata": c.metadata,
+                    },
                 )
-            client.upsert(collection_name=index_name, points=points)
-            self._create_payload_indexes(client, index_name, strategy)
-            return {
-                "points": len(points),
-                "dim": dim,
-                "backend": "qdrant",
-                "strategy": strategy_name,
-            }
-        finally:
-            close_client(client)
+            )
+        client.upsert(collection_name=index_name, points=points)
+        self._create_payload_indexes(client, index_name, strategy)
+        return {
+            "points": len(points),
+            "dim": dim,
+            "backend": "qdrant",
+            "strategy": strategy_name,
+        }
+
 
     def _strategy_config(self, strategy_name: str, config: dict) -> dict:
         if strategy_name not in QDRANT_DENSE_STRATEGIES:
@@ -191,27 +188,24 @@ class OpenSearchIndexer(BaseIndexer):
     name = "opensearch"
 
     def index(self, chunks: list[Chunk], index_name: str, config: dict) -> dict:
-        from opensearchpy import OpenSearch
         from ragbench_core.settings import settings
 
-        client = OpenSearch(settings.opensearch_url, verify_certs=False, ssl_show_warn=False)
-        try:
-            strategy_name = config.get("strategy", "bm25_standard")
-            strategy = self._strategy_config(strategy_name, config)
-            if client.indices.exists(index=index_name):
-                client.indices.delete(index=index_name)
-            client.indices.create(index=index_name, body=self._index_body(strategy))
-            for c in chunks:
-                client.index(
-                    index=index_name,
-                    id=c.chunk_id,
-                    body=self._document_body(c, strategy),
-                    refresh=False,
-                )
-            client.indices.refresh(index=index_name)
-            return {"documents": len(chunks), "backend": "opensearch", "strategy": strategy_name}
-        finally:
-            close_client(client)
+        client = get_opensearch_client(settings.opensearch_url)
+        strategy_name = config.get("strategy", "bm25_standard")
+        strategy = self._strategy_config(strategy_name, config)
+        if client.indices.exists(index=index_name):
+            client.indices.delete(index=index_name)
+        client.indices.create(index=index_name, body=self._index_body(strategy))
+        for c in chunks:
+            client.index(
+                index=index_name,
+                id=c.chunk_id,
+                body=self._document_body(c, strategy),
+                refresh=False,
+            )
+        client.indices.refresh(index=index_name)
+        return {"documents": len(chunks), "backend": "opensearch", "strategy": strategy_name}
+
 
     def _strategy_config(self, strategy_name: str, config: dict) -> dict:
         if strategy_name not in OPENSEARCH_BM25_STRATEGIES:
@@ -314,26 +308,23 @@ class OpenSearchNeuralSparseIndexer(BaseIndexer):
     name = "opensearch_neural_sparse"
 
     def index(self, chunks: list[Chunk], index_name: str, config: dict) -> dict:
-        from opensearchpy import OpenSearch
         from ragbench_core.settings import settings
 
-        client = OpenSearch(settings.opensearch_url, verify_certs=False, ssl_show_warn=False)
-        try:
-            strategy_name = config.get("strategy", "neural_sparse_rank_features")
-            strategy = self._strategy_config(strategy_name, config)
-            if client.indices.exists(index=index_name):
-                client.indices.delete(index=index_name)
-            client.indices.create(index=index_name, body=self._index_body(strategy))
-            indexed = 0
-            for c in chunks:
-                if not c.sparse_embedding:
-                    continue
-                client.index(index=index_name, id=c.chunk_id, body=self._document_body(c, strategy), refresh=False)
-                indexed += 1
-            client.indices.refresh(index=index_name)
-            return {"documents": indexed, "backend": "opensearch", "strategy": strategy_name, "sparse": True}
-        finally:
-            close_client(client)
+        client = get_opensearch_client(settings.opensearch_url)
+        strategy_name = config.get("strategy", "neural_sparse_rank_features")
+        strategy = self._strategy_config(strategy_name, config)
+        if client.indices.exists(index=index_name):
+            client.indices.delete(index=index_name)
+        client.indices.create(index=index_name, body=self._index_body(strategy))
+        indexed = 0
+        for c in chunks:
+            if not c.sparse_embedding:
+                continue
+            client.index(index=index_name, id=c.chunk_id, body=self._document_body(c, strategy), refresh=False)
+            indexed += 1
+        client.indices.refresh(index=index_name)
+        return {"documents": indexed, "backend": "opensearch", "strategy": strategy_name, "sparse": True}
+
 
     def _strategy_config(self, strategy_name: str, config: dict) -> dict:
         if strategy_name not in OPENSEARCH_NEURAL_SPARSE_STRATEGIES:
@@ -372,35 +363,31 @@ class QdrantSparseIndexer(BaseIndexer):
     name = "qdrant_sparse"
 
     def index(self, chunks: list[Chunk], index_name: str, config: dict) -> dict:
-        from qdrant_client import QdrantClient
         from qdrant_client.http.models import PointStruct, SparseVector, SparseVectorParams, SparseIndexParams
         from ragbench_core.settings import settings
 
         collection_name = config.get("collection_name", f"{index_name}_neural_sparse")
         vector_name = config.get("vector_name", "neural_sparse")
-        client = QdrantClient(url=settings.qdrant_url)
-        try:
-            client.recreate_collection(
-                collection_name=collection_name,
-                vectors_config={},
-                sparse_vectors_config={
-                    vector_name: SparseVectorParams(index=SparseIndexParams(on_disk=bool(config.get("on_disk", False))))
-                },
-            )
-            points = []
-            for idx, c in enumerate(chunks):
-                if not c.sparse_embedding:
-                    continue
-                sparse = dict(sorted(c.sparse_embedding.items()))
-                points.append(
-                    PointStruct(
-                        id=idx,
-                        vector={vector_name: SparseVector(indices=list(sparse.keys()), values=list(sparse.values()))},
-                        payload={"chunk_id": c.chunk_id, "doc_id": c.doc_id, "text": c.text, "metadata": c.metadata},
-                    )
+        client = get_qdrant_client(settings.qdrant_url)
+        client.recreate_collection(
+            collection_name=collection_name,
+            vectors_config={},
+            sparse_vectors_config={
+                vector_name: SparseVectorParams(index=SparseIndexParams(on_disk=bool(config.get("on_disk", False))))
+            },
+        )
+        points = []
+        for idx, c in enumerate(chunks):
+            if not c.sparse_embedding:
+                continue
+            sparse = dict(sorted(c.sparse_embedding.items()))
+            points.append(
+                PointStruct(
+                    id=idx,
+                    vector={vector_name: SparseVector(indices=list(sparse.keys()), values=list(sparse.values()))},
+                    payload={"chunk_id": c.chunk_id, "doc_id": c.doc_id, "text": c.text, "metadata": c.metadata},
                 )
-            if points:
-                client.upsert(collection_name=collection_name, points=points)
-            return {"points": len(points), "backend": "qdrant", "strategy": "neural_sparse", "collection": collection_name}
-        finally:
-            close_client(client)
+            )
+        if points:
+            client.upsert(collection_name=collection_name, points=points)
+        return {"points": len(points), "backend": "qdrant", "strategy": "neural_sparse", "collection": collection_name}

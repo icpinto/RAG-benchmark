@@ -30,6 +30,9 @@ class BaseEmbedder(ABC):
     @abstractmethod
     def embed_query(self, query: str, config: dict[str, Any]) -> list[float] | dict[int, float]: ...
 
+    def embed_queries(self, queries: list[str], config: dict[str, Any]) -> list[list[float] | dict[int, float]]:
+        return [self.embed_query(query, config) for query in queries]
+
 class BaseIndexer(ABC):
     name: str
     @abstractmethod
@@ -44,6 +47,9 @@ class BaseRetriever(ABC):
     name: str
     @abstractmethod
     def retrieve(self, question: str, query_embedding: list[float] | None, index_name: str, config: dict[str, Any], top_k: int) -> list[RetrievalResult]: ...
+
+    def retrieve_batch(self, questions: list[str], query_embeddings: list[Any], index_name: str, config: dict[str, Any], top_k: int) -> list[list[RetrievalResult]]:
+        return [self.retrieve(question, embedding, index_name, config, top_k) for question, embedding in zip(questions, query_embeddings)]
 
 class BaseFilter(ABC):
     name: str
