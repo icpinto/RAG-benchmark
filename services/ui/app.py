@@ -7,6 +7,43 @@ import streamlit as st
 API=os.getenv("API_BASE_URL", "http://api:8000")
 
 
+def _response_detail(response: requests.Response | None, max_length: int = 500) -> str:
+    if response is None:
+        return ""
+    text=(response.text or "").strip()
+    if not text:
+        return ""
+    if len(text)>max_length:
+        text=f"{text[:max_length]}…"
+    return f" Response body: {text}"
+
+def api_request_json(method: str, url: str, *, error_context: str, **kwargs):
+    try:
+        response=requests.request(method, url, **kwargs)
+        response.raise_for_status()
+        try:
+            return response.json()
+        except ValueError:
+            st.error(f"{error_context}: API returned a non-JSON response.{_response_detail(response)}")
+            return None
+    except requests.RequestException as e:
+        response=getattr(e, "response", None)
+        st.error(f"{error_context}: {e}.{_response_detail(response)}")
+        return None
+
+def api_get_json(url: str, *, error_context: str, **kwargs):
+    return api_request_json("GET", url, error_context=error_context, **kwargs)
+
+def api_post_json(url: str, *, error_context: str, **kwargs):
+    return api_request_json("POST", url, error_context=error_context, **kwargs)
+
+def api_put_json(url: str, *, error_context: str, **kwargs):
+    return api_request_json("PUT", url, error_context=error_context, **kwargs)
+
+def api_delete_json(url: str, *, error_context: str, **kwargs):
+    return api_request_json("DELETE", url, error_context=error_context, **kwargs)
+
+
 def apply_app_theme():
     st.markdown(
         """
@@ -169,11 +206,12 @@ def render_quick_uploads(key_prefix: str, *, rerun_after_upload: bool = False):
             st.warning("Choose one or more source documents before uploading.")
         else:
             files=[("files", (f.name, f.getvalue())) for f in data_files]
-            r=requests.post(f"{API}/data/upload", files=files, timeout=120)
-            r.raise_for_status()
-            st.success(r.json())
-            if rerun_after_upload:
-                st.rerun()
+
+            payload=api_post_json(f"{API}/data/upload", files=files, timeout=120, error_context="Could not upload source documents")
+            if payload is not None:
+                st.success(payload)
+                if rerun_after_upload:
+                    st.rerun()
 
     gt=st.file_uploader(
         "Replace ground-truth qa.json",
@@ -184,11 +222,12 @@ def render_quick_uploads(key_prefix: str, *, rerun_after_upload: bool = False):
         if not gt:
             st.warning("Choose a qa.json file before uploading.")
         else:
-            r=requests.post(f"{API}/data/ground-truth", files={"file":("qa.json", gt.getvalue())}, timeout=120)
-            r.raise_for_status()
-            st.success(r.json())
-            if rerun_after_upload:
-                st.rerun()
+
+            payload=api_post_json(f"{API}/data/ground-truth", files={"file":("qa.json", gt.getvalue())}, timeout=120, error_context="Could not upload ground-truth JSON")
+            if payload is not None:
+                st.success(payload)
+                if rerun_after_upload:
+                    st.rerun()
 
 def show_data_library():
     st.header("1. Knowledge Base & Evaluation Questions")
@@ -199,7 +238,10 @@ def show_data_library():
     files_tab,questions_tab=st.tabs(["📄 Source documents", "✅ Ground-truth questions"])
     with files_tab:
         try:
-            listing=requests.get(f"{API}/data/files", timeout=30).json()
+
+            listing=api_get_json(f"{API}/data/files", timeout=30, error_context="Could not load data files")
+            if listing is None:
+                return
             files=listing.get("files", [])
             st.caption(f"Raw data directory: {listing.get('data_root', 'unknown')}")
             if files:
@@ -207,8 +249,10 @@ def show_data_library():
                 selected_file=st.selectbox("Choose a source file to preview", [f["path"] for f in files])
                 if selected_file:
                     try:
-                        content=requests.get(f"{API}/data/files/content", params={"path":selected_file}, timeout=30).json()
-                        st.text_area("Source file preview", value=content.get("content", ""), height=360, disabled=True)
+
+                        content=api_get_json(f"{API}/data/files/content", params={"path":selected_file}, timeout=30, error_context="Could not preview file")
+                        if content is not None:
+                            st.text_area("Source file preview", value=content.get("content", ""), height=360, disabled=True)
                     except Exception as e:
                         st.warning(f"Could not preview file: {e}")
             else:
@@ -217,7 +261,10 @@ def show_data_library():
             st.error(f"Could not load data files: {e}")
     with questions_tab:
         try:
-            payload=requests.get(f"{API}/data/questions", timeout=30).json()
+
+            payload=api_get_json(f"{API}/data/questions", timeout=30, error_context="Could not load evaluation questions")
+            if payload is None:
+                return
             questions=payload.get("questions", [])
             st.caption(f"Ground-truth file: {payload.get('path', 'unknown')}")
             if questions:
@@ -238,15 +285,17 @@ def show_data_library():
                     save_clicked=edit_col.form_submit_button("Save changes")
                     delete_clicked=delete_col.form_submit_button("Delete question")
                 if save_clicked:
-                    r=requests.put(f"{API}/data/questions/{selected_index}", json=edited, timeout=30)
-                    r.raise_for_status()
-                    st.success("Question saved")
-                    st.rerun()
+
+                    payload=api_put_json(f"{API}/data/questions/{selected_index}", json=edited, timeout=30, error_context="Could not save question")
+                    if payload is not None:
+                        st.success("Question saved")
+                        st.rerun()
                 if delete_clicked:
-                    r=requests.delete(f"{API}/data/questions/{selected_index}", timeout=30)
-                    r.raise_for_status()
-                    st.success("Question deleted")
-                    st.rerun()
+
+                    payload=api_delete_json(f"{API}/data/questions/{selected_index}", timeout=30, error_context="Could not delete question")
+                    if payload is not None:
+                        st.success("Question deleted")
+                        st.rerun()
             else:
                 st.info("No evaluation questions are available yet.")
             with st.expander("➕ Add a ground-truth question", expanded=not questions):
@@ -257,10 +306,11 @@ def show_data_library():
                     if not new_question["question"].strip():
                         st.error("Question text is required.")
                     else:
-                        r=requests.post(f"{API}/data/questions", json=new_question, timeout=30)
-                        r.raise_for_status()
-                        st.success("Question added")
-                        st.rerun()
+
+                        payload=api_post_json(f"{API}/data/questions", json=new_question, timeout=30, error_context="Could not add question")
+                        if payload is not None:
+                            st.success("Question added")
+                            st.rerun()
         except Exception as e:
             st.error(f"Could not load evaluation questions: {e}")
 
@@ -329,18 +379,22 @@ def show_test_config_setup():
         st.session_state.config_editor_text=st.session_state.config_editor_content
 
     def load_config(path: str, *, sync_path_input: bool = False):
-        r=requests.get(f"{API}/configs/content", params={"config_path":path}, timeout=30)
-        r.raise_for_status()
-        payload=r.json()
+
+        payload=api_get_json(f"{API}/configs/content", params={"config_path":path}, timeout=30, error_context="Could not load config")
+        if payload is None:
+            return False
         st.session_state.config_path=payload["config_path"]
         if sync_path_input:
             st.session_state.config_path_input=payload["config_path"]
         st.session_state.config_editor_content=payload["content"]
         st.session_state.config_editor_text=payload["content"]
+
         st.session_state.config_dirty=False
+        return True
 
     try:
-        config_listing=requests.get(f"{API}/configs", timeout=30).json()
+
+        config_listing=api_get_json(f"{API}/configs", timeout=30, error_context="Could not load saved configurations") or {"config_root":"/app/configs","files":[]}
     except Exception:
         config_listing={"config_root":"/app/configs","files":[]}
 
@@ -352,8 +406,9 @@ def show_test_config_setup():
             selected_config=st.selectbox("Choose a saved YAML config", config_files, index=0)
             if st.button("Load selected YAML"):
                 try:
-                    load_config(selected_config, sync_path_input=True)
-                    st.success(f"Loaded {st.session_state.config_path}")
+
+                    if load_config(selected_config, sync_path_input=True):
+                        st.success(f"Loaded {st.session_state.config_path}")
                 except Exception as e:
                     st.error(f"Could not load config: {e}")
         else:
@@ -363,8 +418,9 @@ def show_test_config_setup():
         st.session_state.config_path=config_path
         if st.button("Load from path"):
             try:
-                load_config(st.session_state.config_path)
-                st.success(f"Loaded {st.session_state.config_path}")
+
+                if load_config(st.session_state.config_path):
+                    st.success(f"Loaded {st.session_state.config_path}")
             except Exception as e:
                 st.error(f"Could not load config: {e}")
 
@@ -373,7 +429,10 @@ def show_test_config_setup():
         selected_source_paths=[]
         selected_question_indices=[]
         try:
-            files_payload=requests.get(f"{API}/data/files", timeout=30).json()
+
+            files_payload=api_get_json(f"{API}/data/files", timeout=30, error_context="Could not load source document choices")
+            if files_payload is None:
+                files_payload={"files":[]}
             source_files=files_payload.get("files", [])
             source_options=[item.get("path", "") for item in source_files if item.get("path")]
             selected_source_paths=st.multiselect(
@@ -385,7 +444,10 @@ def show_test_config_setup():
         except Exception as e:
             st.warning(f"Could not load source document choices: {e}")
         try:
-            questions_payload=requests.get(f"{API}/data/questions", timeout=30).json()
+
+            questions_payload=api_get_json(f"{API}/data/questions", timeout=30, error_context="Could not load evaluation question choices")
+            if questions_payload is None:
+                questions_payload={"questions":[]}
             questions=questions_payload.get("questions", [])
             question_options=list(range(len(questions)))
             selected_question_indices=st.multiselect(
@@ -405,8 +467,10 @@ def show_test_config_setup():
                 "source_paths":selected_source_paths,
                 "question_indices":selected_question_indices,
             }
-            r=requests.post(f"{API}/benchmarks/run", json=payload, timeout=30)
-            st.success(r.json())
+
+            run_payload=api_post_json(f"{API}/benchmarks/run", json=payload, timeout=30, error_context="Could not start benchmark run")
+            if run_payload is not None:
+                st.success(run_payload)
 
     with editor_col:
         st.subheader("YAML editor")
@@ -420,20 +484,21 @@ def show_test_config_setup():
         st.session_state.config_dirty=edited_content != st.session_state.config_editor_content
         if st.button("Save YAML changes"):
             try:
-                r=requests.put(
+
+                payload=api_put_json(
                     f"{API}/configs/content",
                     json={"config_path":st.session_state.config_path,"content":edited_content},
                     timeout=30,
+                    error_context="Could not save config",
                 )
-                r.raise_for_status()
-                payload=r.json()
+                if payload is None:
+                    return
                 st.session_state.config_path=payload["config_path"]
                 st.session_state.config_editor_content=edited_content
                 st.session_state.config_dirty=False
                 st.success(f"Saved {payload['config_path']}")
             except Exception as e:
-                detail=getattr(getattr(e, "response", None), "text", None)
-                st.error(f"Could not save config: {detail or e}")
+                st.error(f"Could not save config: {e}")
         if st.session_state.config_dirty:
             st.warning("You have unsaved YAML edits. Save before starting a benchmark if you want those edits to be used.")
 
@@ -501,8 +566,12 @@ def show_run_comparison(runs: list[dict]):
     run_results={}
     try:
         for selected_run_id in selected_run_ids:
-            run_payloads[selected_run_id]=requests.get(f"{API}/benchmarks/{selected_run_id}", timeout=30).json()
-            run_results[selected_run_id]=requests.get(f"{API}/benchmarks/{selected_run_id}/results", timeout=60).json()
+            run_payload=api_get_json(f"{API}/benchmarks/{selected_run_id}", timeout=30, error_context=f"Could not load run {selected_run_id}")
+            results_payload=api_get_json(f"{API}/benchmarks/{selected_run_id}/results", timeout=60, error_context=f"Could not load results for run {selected_run_id}")
+            if run_payload is None or results_payload is None:
+                return
+            run_payloads[selected_run_id]=run_payload
+            run_results[selected_run_id]=results_payload
     except Exception as e:
         st.error(f"Could not load comparison data: {e}")
         return
@@ -553,16 +622,22 @@ def show_results_layer():
     st.header("3. Benchmark Results")
     section_intro("Analyze run performance", "Review completed and queued runs, compare metrics, inspect traces, and open the raw JSON when deeper debugging is needed.")
     try:
-        runs=requests.get(f"{API}/benchmarks", timeout=30).json()
+        runs=api_get_json(f"{API}/benchmarks", timeout=30, error_context="API unavailable")
+        if runs is None:
+            return
         if runs:
             st.dataframe(pd.DataFrame(runs), use_container_width=True)
             run_id=st.selectbox("Choose a benchmark run", [r["id"] for r in runs])
             if run_id:
                 summary_tab,results_tab,heatmap_tab,comparison_tab,raw_tab=st.tabs(["📊 Run summary", "🏁 Scored results", "🔥 Retrieval heatmaps", "🔀 Run comparison", "🧾 Raw JSON"])
                 with summary_tab:
-                    st.json(requests.get(f"{API}/benchmarks/{run_id}", timeout=30).json())
+                    run_payload=api_get_json(f"{API}/benchmarks/{run_id}", timeout=30, error_context="Could not load run summary")
+                    if run_payload is not None:
+                        st.json(run_payload)
                 with results_tab:
-                    results=requests.get(f"{API}/benchmarks/{run_id}/results", timeout=60).json()
+                    results=api_get_json(f"{API}/benchmarks/{run_id}/results", timeout=60, error_context="Could not load run results")
+                    if results is None:
+                        return
                     if results:
                         rows=[]
                         for item in results:
@@ -574,12 +649,16 @@ def show_results_layer():
                     else:
                         st.info("No results for this run yet. If the run stays queued, check that the Celery worker is running and consuming the ragbench queue.")
                 with heatmap_tab:
-                    results=requests.get(f"{API}/benchmarks/{run_id}/results", timeout=60).json()
+                    results=api_get_json(f"{API}/benchmarks/{run_id}/results", timeout=60, error_context="Could not load run results")
+                    if results is None:
+                        return
                     show_retrieval_heatmaps(results)
                 with comparison_tab:
                     show_run_comparison(runs)
                 with raw_tab:
-                    results=requests.get(f"{API}/benchmarks/{run_id}/results", timeout=60).json()
+                    results=api_get_json(f"{API}/benchmarks/{run_id}/results", timeout=60, error_context="Could not load run results")
+                    if results is None:
+                        return
                     if results:
                         st.json(results)
                     else:
