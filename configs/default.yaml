@@ -270,3 +270,6 @@ runtime:
   max_combinations: 32
   collection_prefix: "ragbench"
   artifact_dir: "/app/artifacts"
+  embedding_cache:
+    enabled: true
+    backend: file
