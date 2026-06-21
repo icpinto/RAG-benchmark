@@ -448,6 +448,9 @@ def show_test_config_setup():
         st.session_state.config_dirty=False
     if "config_editor_text" not in st.session_state:
         st.session_state.config_editor_text=st.session_state.config_editor_content
+    if "config_validation_preview" not in st.session_state:
+        st.session_state.config_validation_preview=None
+    st.session_state.config_dirty=st.session_state.config_editor_text != st.session_state.config_editor_content
 
     def load_config(path: str, *, sync_path_input: bool = False):
 
@@ -461,6 +464,7 @@ def show_test_config_setup():
         st.session_state.config_editor_text=payload["content"]
 
         st.session_state.config_dirty=False
+        st.session_state.config_validation_preview=None
         return True
 
     try:
@@ -530,9 +534,12 @@ def show_test_config_setup():
             )
         except Exception as e:
             st.warning(f"Could not load evaluation question choices: {e}")
-        if st.button("Start benchmark run"):
-            if st.session_state.config_dirty:
-                st.warning("Unsaved YAML edits were not used. Click Save YAML first to benchmark the edited config.")
+        if st.session_state.config_dirty:
+            st.error("Start is disabled because the YAML editor has unsaved changes. Validate and save, or reset to saved, before launching a run.")
+        else:
+            st.info("Start uses the saved YAML at the config path above.")
+        start_disabled=st.session_state.config_dirty
+        if st.button("Start benchmark run", disabled=start_disabled, help="Disabled while YAML edits are unsaved." if start_disabled else "Launch using the saved YAML file."):
             payload={
                 "config_path":st.session_state.config_path,
                 "source_paths":selected_source_paths,
@@ -546,14 +553,41 @@ def show_test_config_setup():
     with editor_col:
         st.subheader("YAML editor")
         st.caption("Save YAML edits to the shared configs volume before starting a benchmark with that path.")
+        if st.button("Reset to saved", disabled=not st.session_state.config_dirty, help="Restore the editor to the last loaded or saved YAML."):
+            st.session_state.config_editor_text=st.session_state.config_editor_content
+            st.session_state.config_dirty=False
+            st.session_state.config_validation_preview=None
+            st.info("Editor reset to the last saved YAML content.")
         edited_content=st.text_area(
             "Editable YAML configuration",
             value=st.session_state.config_editor_content,
             height=640,
             key="config_editor_text",
         )
+        previous_dirty=st.session_state.config_dirty
         st.session_state.config_dirty=edited_content != st.session_state.config_editor_content
-        if st.button("Save YAML changes"):
+        if st.session_state.config_dirty and not previous_dirty:
+            st.session_state.config_validation_preview=None
+        action_col_a,action_col_b=st.columns(2)
+        with action_col_a:
+            validate_clicked=st.button("Validate YAML")
+        with action_col_b:
+            save_clicked=st.button("Save YAML changes")
+        if validate_clicked:
+            try:
+                payload=api_post_json(
+                    f"{API}/configs/validate",
+                    json={"content":edited_content},
+                    timeout=30,
+                    error_context="Could not validate config",
+                )
+                if payload is not None:
+                    st.session_state.config_validation_preview=payload.get("parsed_config")
+                    st.success(f"YAML is valid. Experiment: {payload.get('experiment_name', 'benchmark')}")
+            except Exception as e:
+                st.session_state.config_validation_preview=None
+                st.error(f"Could not validate config: {e}")
+        if save_clicked:
             try:
 
                 payload=api_put_json(
@@ -567,11 +601,21 @@ def show_test_config_setup():
                 st.session_state.config_path=payload["config_path"]
                 st.session_state.config_editor_content=edited_content
                 st.session_state.config_dirty=False
+                validation=api_post_json(
+                    f"{API}/configs/validate",
+                    json={"content":edited_content},
+                    timeout=30,
+                    error_context="Could not build parsed preview",
+                )
+                st.session_state.config_validation_preview=(validation or {}).get("parsed_config")
                 st.success(f"Saved {payload['config_path']}")
             except Exception as e:
                 st.error(f"Could not save config: {e}")
+        if st.session_state.config_validation_preview is not None:
+            with st.expander("Parsed config preview", expanded=False):
+                st.json(st.session_state.config_validation_preview)
         if st.session_state.config_dirty:
-            st.warning("You have unsaved YAML edits. Save before starting a benchmark if you want those edits to be used.")
+            st.warning("You have unsaved YAML edits. Start benchmark run is disabled until you save or reset these edits.")
 
 
 
