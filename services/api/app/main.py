@@ -159,6 +159,34 @@ def run_benchmark(req: RunRequest):
 def benchmarks():
     return list_runs()
 
+
+@app.get("/benchmarks/compare")
+def compare_benchmarks(run_ids: list[str] = Query(...)):
+    if len(run_ids) < 2:
+        raise HTTPException(status_code=400, detail="At least two run_ids are required")
+    runs=[]
+    results={}
+    for run_id in run_ids:
+        run=get_run(run_id)
+        if not run:
+            raise HTTPException(status_code=404, detail=f"Run not found: {run_id}")
+        runs.append(run)
+        results[run_id]=list_results(run_id)
+    base=run_ids[0]
+    deltas=[]
+    base_lookup={(item.get("case_id"), item.get("question")): item for item in results[base]}
+    for run_id in run_ids[1:]:
+        for item in results[run_id]:
+            key=(item.get("case_id"), item.get("question"))
+            base_item=base_lookup.get(key)
+            if not base_item:
+                continue
+            for metric,value in (item.get("metrics") or {}).items():
+                base_value=(base_item.get("metrics") or {}).get(metric)
+                if isinstance(value, (int,float)) and isinstance(base_value, (int,float)):
+                    deltas.append({"case_id":key[0],"question":key[1],"metric":metric,"baseline_run_id":base,"run_id":run_id,"delta":value-base_value})
+    return {"runs":runs,"results":results,"deltas":deltas,"compare_by":["config_hash","dataset_hash","model_identifiers","metrics"]}
+
 @app.get("/benchmarks/{run_id}")
 def benchmark(run_id: str):
     row=get_run(run_id)

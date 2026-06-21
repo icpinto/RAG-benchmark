@@ -513,11 +513,29 @@ def show_run_comparison(runs: list[dict]):
             payload=run_payloads[selected_run_id]
             st.markdown(f"**{selected_run_id}**")
             st.caption(f"{payload.get('name', 'benchmark')} · {payload.get('status', 'unknown status')}")
+            st.write({
+                "config_hash": payload.get("config_hash"),
+                "dataset_hash": payload.get("dataset_hash"),
+                "models": payload.get("model_identifiers", {}),
+            })
             summary_rows=_run_summary_rows(payload)
             if summary_rows:
                 st.dataframe(pd.DataFrame(summary_rows), use_container_width=True, hide_index=True)
             else:
                 st.info("No aggregate summary metrics available.")
+
+    metadata_rows=[]
+    for selected_run_id,payload in run_payloads.items():
+        metadata_rows.append({
+            "run_id": selected_run_id,
+            "config_hash": payload.get("config_hash"),
+            "dataset_hash": payload.get("dataset_hash"),
+            "models": payload.get("model_identifiers", {}),
+            "artifact_dir": payload.get("artifact_dir"),
+        })
+    if metadata_rows:
+        st.write("Run metadata for grouping by config, dataset, and model")
+        st.dataframe(pd.DataFrame(metadata_rows), use_container_width=True)
 
     comparison_frame=_results_comparison_frame(run_results)
     if comparison_frame.empty:
@@ -525,7 +543,10 @@ def show_run_comparison(runs: list[dict]):
         return
     if len(selected_run_ids) == 2:
         comparison_frame=_add_two_run_deltas(comparison_frame, selected_run_ids[0], selected_run_ids[1])
-    st.write("Joined result metrics by case and question")
+    grouping=st.multiselect("Comparison grouping columns", ["case_id","question","config_hash","dataset_hash","models"], default=["case_id","question"])
+    if any(column in grouping for column in ["config_hash","dataset_hash","models"]):
+        st.caption("Config, dataset, and model identifiers are shown in the metadata table above; metric deltas remain joined by case and question.")
+    st.write("Joined result metrics and metric deltas by case and question")
     st.dataframe(comparison_frame, use_container_width=True)
 
 def show_results_layer():

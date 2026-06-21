@@ -12,20 +12,45 @@ from ragbench_core.components.metrics import RetrievalMetrics
 from ragbench_core.utils.ids import stable_id
 from ragbench_core.utils.timing import timer
 from ragbench_core.utils.clients import consume_client_timings
+from ragbench_core.engine.persistence import (
+    artifact_root,
+    component_versions,
+    dataset_hash,
+    dependency_versions,
+    export_run,
+    model_identifiers,
+    retrieval_results_payload,
+    stable_hash,
+    write_json_artifact,
+)
 
 class BenchmarkRunner:
     def __init__(self):
         self.registry=register_builtin_components()
 
     def run(self, run_id: str, config: dict) -> dict:
-        upsert_run(run_id, config.get("experiment",{}).get("name","benchmark"), "running", config)
+        run_name=config.get("experiment",{}).get("name","benchmark")
+        artifact_dir=str(artifact_root(config, run_id))
+        config_hash=stable_hash(config)
+        models=model_identifiers(config)
+        versions={
+            "config_hash": config_hash,
+            "component_versions": component_versions(self.registry),
+            "dependency_versions": dependency_versions(),
+            "model_identifiers": models,
+            "artifact_dir": artifact_dir,
+        }
+        upsert_run(run_id, run_name, "running", config, **versions)
+        write_json_artifact(config, run_id, "expanded_config.json", payload=config)
         summary={"cases":0,"questions":0,"errors":0}
         try:
             cases=expand_cases(config)
+            write_json_artifact(config, run_id, "expanded_cases.json", payload=[case.__dict__ for case in cases])
             examples=load_ground_truth(config["data"]["ground_truth_file"])
             sources=list_sources(config["data"]["input_dir"], config["data"].get("remote_urls_file"))
             sources=self._select_sources(sources, config.get("input_selection", {}).get("source_paths"))
             examples=self._select_examples(examples, config.get("input_selection", {}).get("question_indices"))
+            versions["dataset_hash"]=dataset_hash(sources, examples)
             all_metric_rows=[]
             for case in cases:
                 try:
@@ -37,10 +62,13 @@ class BenchmarkRunner:
                     summary["errors"] += 1
                     # Continue; a benchmark platform should isolate bad component configs.
             summary["aggregate"] = self._aggregate(all_metric_rows)
-            upsert_run(run_id, config.get("experiment",{}).get("name","benchmark"), "completed", config, summary)
+            exports=export_run(config, run_id, {"id":run_id,"name":run_name,"summary":summary,**versions}, all_metric_rows)
+            versions["exports"]=exports
+            summary["exports"]=exports
+            upsert_run(run_id, run_name, "completed", config, summary, **versions)
             return summary
         except Exception as e:
-            upsert_run(run_id, config.get("experiment",{}).get("name","benchmark"), "failed", config, summary, error=str(e))
+            upsert_run(run_id, run_name, "failed", config, summary, error=str(e), **versions)
             raise
 
     def _run_case(self, run_id, case, sources, examples, full_config):
@@ -134,9 +162,23 @@ class BenchmarkRunner:
                     metrics,
                     answer_text,
                     {"ingestion":ing,"query":qry,"llm":case.llm_config,"evaluation_step":evaluation_step},
+                    artifact_paths=self._write_result_artifacts(full_config, run_id, case.case_id, result_id, {
+                        "expanded_config":{"ingestion":ing,"query":qry,"llm":case.llm_config,"metrics":case.metric_config},
+                        "retrieval_traces":{"raw":retrieval_results_payload(raw_retrieval_results),"reranked":retrieval_results_payload(reranked_results)},
+                        "prompt":{"question":example.question,"rewritten_queries":rewritten_queries,"context":context,"prompt":prompt},
+                        "response":{"answer":answer_text,"metadata":gen.metadata},
+                        "metrics":metrics,
+                    }),
+                    model_identifiers=model_identifiers(full_config),
                 )
             metrics["result_persistence_seconds"]=result_persistence_timer["seconds"]
         return {"questions":len(examples),"metric_rows":metric_rows}
+
+    def _write_result_artifacts(self, config, run_id, case_id, result_id, payloads):
+        paths={}
+        for name,payload in payloads.items():
+            paths[name]=write_json_artifact(config, run_id, "cases", case_id, f"{result_id}_{name}.json", payload=payload)
+        return paths
 
     def _select_sources(self, sources, selected_source_paths):
         if selected_source_paths is None:
