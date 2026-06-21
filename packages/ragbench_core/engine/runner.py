@@ -12,7 +12,13 @@ from ragbench_core.components.metrics import RetrievalMetrics
 from ragbench_core.utils.ids import stable_id
 from ragbench_core.utils.timing import timer
 from ragbench_core.utils.clients import consume_client_timings
-from ragbench_core.engine.cache import build_embedding_cache, embed_chunks_cached, embed_queries_cached
+from ragbench_core.engine.cache import (
+    build_embedding_cache,
+    build_retrieval_cache,
+    embed_chunks_cached,
+    embed_queries_cached,
+    retrieve_batch_cached,
+)
 from ragbench_core.engine.persistence import (
     artifact_root,
     component_versions,
@@ -75,6 +81,7 @@ class BenchmarkRunner:
     def _run_case(self, run_id, case, sources, examples, full_config):
         ing=case.ingestion_config; qry=case.query_config
         embedding_cache=build_embedding_cache(full_config)
+        retrieval_cache=build_retrieval_cache(full_config)
         docs=[]
         extractor_configs = ing.get("extractor_configs", {})
         for source in sources:
@@ -108,7 +115,7 @@ class BenchmarkRunner:
                 with timer() as query_embedding_timer:
                     q_embs=embed_queries_cached(embedding_cache, embedder, rewritten_queries, ing["embedder"])
                 with timer() as retrieval_timer:
-                    result_sets=retriever.retrieve_batch(rewritten_queries, q_embs, index_name, qry["retriever"], max_k)
+                    result_sets=retrieve_batch_cached(retrieval_cache, retriever, rewritten_queries, q_embs, index_name, qry["retriever"], max_k)
                 if qry["retriever"]["type"] == "multi_query_fusion":
                     combined=retriever.fuse(result_sets, qry["retriever"], max_k)
                 else:

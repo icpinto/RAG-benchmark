@@ -1,11 +1,14 @@
 from ragbench_core.engine.cache import (
     FileEmbeddingCache,
+    build_retrieval_cache,
     document_embedding_key,
     embed_chunks_cached,
     embed_queries_cached,
     query_embedding_key,
+    retrieval_cache_key,
+    retrieve_batch_cached,
 )
-from ragbench_core.models.schema import Chunk
+from ragbench_core.models.schema import Chunk, RetrievalResult
 
 
 class CountingEmbedder:
@@ -87,3 +90,76 @@ def test_file_cache_preserves_sparse_embedding_key_types(tmp_path):
             raise AssertionError("expected cache hit")
 
     assert embed_queries_cached(cache, FailingQueryEmbedder(), ["what"], config) == [{3: 1.0}]
+
+
+class CountingRetriever:
+    name = "fake_retriever"
+
+    def __init__(self):
+        self.calls = 0
+        self.requests = []
+
+    def retrieve_batch(self, queries, query_embeddings, index_name, config, top_k):
+        self.calls += 1
+        self.requests.append((queries, query_embeddings, index_name, config, top_k))
+        return [
+            [
+                RetrievalResult(
+                    Chunk(
+                        f"chunk-{query}",
+                        "doc-1",
+                        f"text for {query}",
+                        {"rank_source": idx, "nested": {"value": query}},
+                        [float(idx)],
+                        {7: 0.5},
+                    ),
+                    1.0 - (idx * 0.1),
+                    idx + 1,
+                    "fake_retriever",
+                )
+            ]
+            for idx, query in enumerate(queries)
+        ]
+
+
+def test_retrieve_batch_cached_hits_and_preserves_retrieval_result_payload(tmp_path):
+    cache = build_retrieval_cache(
+        {
+            "runtime": {
+                "artifact_dir": str(tmp_path),
+                "retrieval_cache": {"enabled": True, "backend": "file"},
+            }
+        }
+    )
+    retriever = CountingRetriever()
+    config = {"type": "fake_retriever", "alpha": 0.5}
+
+    first = retrieve_batch_cached(cache, retriever, ["what"], [[0.1, 0.2]], "index-a", config, 3)
+    second = retrieve_batch_cached(cache, retriever, ["what"], [[0.1, 0.2]], "index-a", config, 3)
+
+    assert retriever.calls == 1
+    assert len(second) == 1
+    cached_result = second[0][0]
+    assert cached_result.rank == first[0][0].rank
+    assert cached_result.score == first[0][0].score
+    assert cached_result.retriever == first[0][0].retriever
+    assert cached_result.chunk.chunk_id == "chunk-what"
+    assert cached_result.chunk.text == "text for what"
+    assert cached_result.chunk.metadata == {"rank_source": 0, "nested": {"value": "what"}}
+    assert cached_result.chunk.embedding == [0.0]
+    assert cached_result.chunk.sparse_embedding == {7: 0.5}
+    assert all(isinstance(key, int) for key in cached_result.chunk.sparse_embedding)
+
+
+def test_retrieval_cache_key_includes_required_material():
+    config = {"type": "dense", "strategy": "a"}
+    base = retrieval_cache_key("idx", "dense", config, "query", [0.1], 5)
+
+    assert base != retrieval_cache_key("other", "dense", config, "query", [0.1], 5)
+    assert base != retrieval_cache_key("idx", "bm25", config, "query", [0.1], 5)
+    assert base != retrieval_cache_key(
+        "idx", "dense", {"type": "dense", "strategy": "b"}, "query", [0.1], 5
+    )
+    assert base != retrieval_cache_key("idx", "dense", config, "rewritten", [0.1], 5)
+    assert base != retrieval_cache_key("idx", "dense", config, "query", [0.2], 5)
+    assert base != retrieval_cache_key("idx", "dense", config, "query", [0.1], 10)
