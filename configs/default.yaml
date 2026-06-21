@@ -112,6 +112,21 @@ pipeline:
           - "dense_quantized"
           - "dense_on_disk"
           - "dense_payload_indexed"
+        # To sweep custom Qdrant dense settings, replace the strategies list
+        # above with the example below. List-valued settings are expanded into
+        # benchmark cases via Cartesian product, and the chosen values are
+        # persisted in case metadata and result artifacts.
+        # strategy: "dense_hnsw_custom"
+        # hnsw_m: [16, 32, 64]
+        # ef_construct: [100, 200]
+        # search_ef: [64, 128, 256]
+        # quantization_config:
+        #   type: "int8"
+        #   quantile: [0.95, 0.99]
+        #   always_ram: [true, false]
+        # on_disk: [true, false]
+        # on_disk_payload: [true, false]
+        # hnsw_on_disk: [true, false]
       sparse:
         type: "opensearch"
         strategies:
