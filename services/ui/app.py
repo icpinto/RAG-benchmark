@@ -710,7 +710,7 @@ def show_results_layer():
                 selected_run=next((run for run in runs if run.get("id") == run_id), {})
                 selected_status=selected_run.get("status")
                 st.markdown(
-                    f'<div class="run-guidance-card"><strong>Selected run:</strong> {html.escape(str(run_id))} '&
+                    f'<div class="run-guidance-card"><strong>Selected run:</strong> {html.escape(str(run_id))} '
                     f'{_status_badge_html(selected_status)}</div>',
                     unsafe_allow_html=True,
                 )
