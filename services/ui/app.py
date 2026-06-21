@@ -1,10 +1,61 @@
 from __future__ import annotations
 import os
+import html
 import requests
 import pandas as pd
 import streamlit as st
 
 API=os.getenv("API_BASE_URL", "http://api:8000")
+
+
+STATUS_BADGE_STYLES={
+    "queued": ("#92400E", "#FEF3C7", "#F59E0B", "⏳"),
+    "running": ("#1D4ED8", "#DBEAFE", "#3B82F6", "🔄"),
+    "completed": ("#047857", "#D1FAE5", "#10B981", "✅"),
+    "failed": ("#B91C1C", "#FEE2E2", "#EF4444", "❌"),
+}
+
+def _normalize_run_status(status: str | None) -> str:
+    return (status or "unknown").strip().lower()
+
+def _status_badge_html(status: str | None) -> str:
+    normalized=_normalize_run_status(status)
+    color,background,border,icon=STATUS_BADGE_STYLES.get(
+        normalized,
+        ("#374151", "#F3F4F6", "#9CA3AF", "ℹ️"),
+    )
+    label=html.escape(normalized.title())
+    return (
+        f'<span class="run-status-badge" style="color:{color}; background:{background}; '
+        f'border-color:{border};">{icon} {label}</span>'
+    )
+
+def _status_label(status: str | None) -> str:
+    normalized=_normalize_run_status(status)
+    icon=STATUS_BADGE_STYLES.get(normalized, STATUS_BADGE_STYLES["queued"])[3] if normalized in STATUS_BADGE_STYLES else "ℹ️"
+    return f"{icon} {normalized}"
+
+def _runs_display_frame(runs: list[dict]) -> pd.DataFrame:
+    frame=pd.DataFrame(runs)
+    if frame.empty or "status" not in frame.columns:
+        return frame
+    frame=frame.copy()
+    frame.insert(0, "status_label", frame["status"].map(_status_label))
+    return frame
+
+def _selected_run_guidance(status: str | None, results: list[dict] | None = None):
+    normalized=_normalize_run_status(status)
+    has_results=bool(results)
+    if normalized == "queued":
+        st.info("This run is queued and has not produced results yet. Use **Refresh runs** to check progress. If it remains queued for a long time, verify that the Celery worker is online and consuming the `ragbench` queue.")
+    elif normalized == "running":
+        st.info("This run is currently running. Results may appear incrementally; refresh this view in a moment to load the latest output.")
+    elif normalized == "failed":
+        st.error("This run failed. Open the raw run summary for error details, then check API/worker logs and the benchmark configuration before re-running.")
+    elif normalized == "completed" and not has_results:
+        st.warning("This run is marked completed but no scored results were returned. Check the artifact directory and worker logs for missing or empty result files.")
+    elif not has_results:
+        st.info("No results are available for this run yet. Refresh later or inspect the run summary for current status.")
 
 
 def _response_detail(response: requests.Response | None, max_length: int = 500) -> str:
@@ -83,6 +134,26 @@ def apply_app_theme():
         }
         .section-card h3 {
             margin-top: 0;
+        }
+
+        .run-status-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: .35rem;
+            border: 1px solid;
+            border-radius: 999px;
+            padding: .2rem .65rem;
+            font-weight: 700;
+            font-size: .9rem;
+            line-height: 1.4;
+            white-space: nowrap;
+        }
+        .run-guidance-card {
+            border: 1px solid #D7E3F4;
+            border-radius: .9rem;
+            background: #F8FBFF;
+            padding: .9rem 1rem;
+            margin: .6rem 0 1rem 0;
         }
         </style>
         """,
@@ -626,15 +697,35 @@ def show_results_layer():
         if runs is None:
             return
         if runs:
-            st.dataframe(pd.DataFrame(runs), use_container_width=True)
+            refresh_col,help_col=st.columns([1,3])
+            with refresh_col:
+                if st.button("Refresh runs", help="Reload benchmark run statuses and results from the API."):
+                    st.rerun()
+            with help_col:
+                st.caption("Statuses are loaded from `/benchmarks`; select a run to load its latest summary from `/benchmarks/{run_id}`.")
+
+            st.dataframe(_runs_display_frame(runs), use_container_width=True)
             run_id=st.selectbox("Choose a benchmark run", [r["id"] for r in runs])
             if run_id:
+                selected_run=next((run for run in runs if run.get("id") == run_id), {})
+                selected_status=selected_run.get("status")
+                st.markdown(
+                    f'<div class="run-guidance-card"><strong>Selected run:</strong> {html.escape(str(run_id))} '&
+                    f'{_status_badge_html(selected_status)}</div>',
+                    unsafe_allow_html=True,
+                )
                 summary_tab,results_tab,heatmap_tab,comparison_tab,raw_tab=st.tabs(["📊 Run summary", "🏁 Scored results", "🔥 Retrieval heatmaps", "🔀 Run comparison", "🧾 Raw JSON"])
                 with summary_tab:
                     run_payload=api_get_json(f"{API}/benchmarks/{run_id}", timeout=30, error_context="Could not load run summary")
                     if run_payload is not None:
+                        selected_status=run_payload.get("status", selected_status)
+                        st.markdown(_status_badge_html(selected_status), unsafe_allow_html=True)
+                        _selected_run_guidance(selected_status)
                         st.json(run_payload)
                 with results_tab:
+                    run_payload=api_get_json(f"{API}/benchmarks/{run_id}", timeout=30, error_context="Could not load run summary")
+                    if run_payload is not None:
+                        selected_status=run_payload.get("status", selected_status)
                     results=api_get_json(f"{API}/benchmarks/{run_id}/results", timeout=60, error_context="Could not load run results")
                     if results is None:
                         return
@@ -647,7 +738,8 @@ def show_results_layer():
                         st.dataframe(pd.DataFrame(rows), use_container_width=True)
                         show_evaluation_step_details(results)
                     else:
-                        st.info("No results for this run yet. If the run stays queued, check that the Celery worker is running and consuming the ragbench queue.")
+                        with st.spinner("Waiting for benchmark results…"):
+                            _selected_run_guidance(selected_status, results)
                 with heatmap_tab:
                     results=api_get_json(f"{API}/benchmarks/{run_id}/results", timeout=60, error_context="Could not load run results")
                     if results is None:
