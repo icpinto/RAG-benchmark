@@ -22,7 +22,10 @@ class DenseRetriever(BaseRetriever):
 
         client = get_qdrant_client(settings.qdrant_url)
         hits = client.search(
-            collection_name=index_name, query_vector=(query_embedding.get("dense") if isinstance(query_embedding, dict) and "dense" in query_embedding else query_embedding), limit=top_k
+            collection_name=index_name,
+            query_vector=(query_embedding.get("dense") if isinstance(query_embedding, dict) and "dense" in query_embedding else query_embedding),
+            limit=top_k,
+            **self._search_options(config),
         )
         return self._results_from_hits(hits)
 
@@ -35,7 +38,8 @@ class DenseRetriever(BaseRetriever):
         vectors = [embedding.get("dense") if isinstance(embedding, dict) and "dense" in embedding else embedding for embedding in query_embeddings]
         from qdrant_client.http.models import SearchRequest
 
-        requests = [SearchRequest(vector=vector, limit=top_k) for vector in vectors]
+        search_options = self._search_options(config)
+        requests = [SearchRequest(vector=vector, limit=top_k, **search_options) for vector in vectors]
         search_batch = getattr(client, "search_batch", None)
         if callable(search_batch):
             try:
@@ -43,6 +47,14 @@ class DenseRetriever(BaseRetriever):
             except TypeError:
                 pass
         return [self.retrieve(question, embedding, index_name, config, top_k) for question, embedding in zip(questions, query_embeddings)]
+
+    def _search_options(self, config: dict[str, Any]) -> dict[str, Any]:
+        hnsw_ef = config.get("hnsw_ef", config.get("search_ef"))
+        if hnsw_ef is None:
+            return {}
+        from qdrant_client.http.models import SearchParams
+
+        return {"search_params": SearchParams(hnsw_ef=hnsw_ef)}
 
     def _results_from_hits(self, hits) -> list[RetrievalResult]:
         out = []
@@ -78,6 +90,7 @@ class DenseFilteredRetriever(DenseRetriever):
             query_vector=(query_embedding.get("dense") if isinstance(query_embedding, dict) and "dense" in query_embedding else query_embedding),
             query_filter=self._build_query_filter(config),
             limit=top_k,
+            **self._search_options(config),
         )
         return self._results_from_hits(hits)
 

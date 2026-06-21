@@ -30,6 +30,7 @@ QDRANT_DENSE_STRATEGIES: dict[str, dict[str, Any]] = {
         "hnsw_config": {"on_disk": True},
     },
     # Baseline HNSW plus payload indexes used by filtered retrieval experiments.
+    "dense_hnsw_custom": {},
     "dense_payload_indexed": {
         "payload_indexes": [
             {"field_name": "doc_id", "field_schema": "keyword"},
@@ -106,6 +107,7 @@ class QdrantIndexer(BaseIndexer):
         client.recreate_collection(
             collection_name=index_name,
             vectors_config=self._vector_params(dim, strategy),
+            **self._collection_options(strategy),
         )
         points = []
         for idx, c in enumerate(chunks):
@@ -128,6 +130,7 @@ class QdrantIndexer(BaseIndexer):
             "dim": dim,
             "backend": "qdrant",
             "strategy": strategy_name,
+            "parameters": self._persisted_parameters(strategy),
         }
 
 
@@ -136,7 +139,23 @@ class QdrantIndexer(BaseIndexer):
             supported = ", ".join(sorted(QDRANT_DENSE_STRATEGIES))
             raise ValueError(f"Unsupported Qdrant dense strategy '{strategy_name}'. Supported: {supported}")
         strategy = dict(QDRANT_DENSE_STRATEGIES[strategy_name])
-        for key in ("hnsw_config", "quantization_config", "on_disk", "payload_indexes"):
+        if "hnsw_config" in strategy:
+            strategy["hnsw_config"] = dict(strategy["hnsw_config"])
+        for key in ("hnsw_config", "quantization_config", "on_disk", "on_disk_payload", "payload_indexes"):
+            if key in config:
+                strategy[key] = config[key]
+        hnsw_config = dict(strategy.get("hnsw_config") or {})
+        if "hnsw_m" in config:
+            hnsw_config["m"] = config["hnsw_m"]
+        elif "m" in config:
+            hnsw_config["m"] = config["m"]
+        if "ef_construct" in config:
+            hnsw_config["ef_construct"] = config["ef_construct"]
+        if "hnsw_on_disk" in config:
+            hnsw_config["on_disk"] = config["hnsw_on_disk"]
+        if hnsw_config:
+            strategy["hnsw_config"] = hnsw_config
+        for key in ("search_ef", "hnsw_ef", "payload_on_disk"):
             if key in config:
                 strategy[key] = config[key]
         return strategy
@@ -150,6 +169,20 @@ class QdrantIndexer(BaseIndexer):
             quantization_config=self._quantization_config(strategy.get("quantization_config")),
             on_disk=strategy.get("on_disk"),
         )
+
+    def _collection_options(self, strategy: dict) -> dict[str, Any]:
+        options = {}
+        on_disk_payload = strategy.get("on_disk_payload", strategy.get("payload_on_disk"))
+        if on_disk_payload is not None:
+            options["on_disk_payload"] = on_disk_payload
+        return options
+
+    def _persisted_parameters(self, strategy: dict) -> dict[str, Any]:
+        return {
+            key: strategy[key]
+            for key in ("hnsw_config", "quantization_config", "on_disk", "on_disk_payload", "payload_on_disk", "search_ef", "hnsw_ef", "payload_indexes")
+            if key in strategy
+        }
 
     def _hnsw_config(self, config: dict | None) -> Any | None:
         if not config:
