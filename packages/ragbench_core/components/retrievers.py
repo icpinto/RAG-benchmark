@@ -2,7 +2,7 @@ from __future__ import annotations
 from collections import defaultdict
 from typing import Any
 
-from ragbench_core.utils.clients import close_client
+from ragbench_core.utils.clients import get_opensearch_client, get_qdrant_client
 from ragbench_core.interfaces import BaseRetriever
 from ragbench_core.models.schema import Chunk, RetrievalResult
 
@@ -18,17 +18,31 @@ class DenseRetriever(BaseRetriever):
         config: dict,
         top_k: int,
     ) -> list[RetrievalResult]:
-        from qdrant_client import QdrantClient
         from ragbench_core.settings import settings
 
-        client = QdrantClient(url=settings.qdrant_url)
-        try:
-            hits = client.search(
-                collection_name=index_name, query_vector=(query_embedding.get("dense") if isinstance(query_embedding, dict) and "dense" in query_embedding else query_embedding), limit=top_k
-            )
-            return self._results_from_hits(hits)
-        finally:
-            close_client(client)
+        client = get_qdrant_client(settings.qdrant_url)
+        hits = client.search(
+            collection_name=index_name, query_vector=(query_embedding.get("dense") if isinstance(query_embedding, dict) and "dense" in query_embedding else query_embedding), limit=top_k
+        )
+        return self._results_from_hits(hits)
+
+    def retrieve_batch(
+        self, questions: list[str], query_embeddings: list[Any], index_name: str, config: dict[str, Any], top_k: int
+    ) -> list[list[RetrievalResult]]:
+        from ragbench_core.settings import settings
+
+        client = get_qdrant_client(settings.qdrant_url)
+        vectors = [embedding.get("dense") if isinstance(embedding, dict) and "dense" in embedding else embedding for embedding in query_embeddings]
+        from qdrant_client.http.models import SearchRequest
+
+        requests = [SearchRequest(vector=vector, limit=top_k) for vector in vectors]
+        search_batch = getattr(client, "search_batch", None)
+        if callable(search_batch):
+            try:
+                return [self._results_from_hits(hits) for hits in search_batch(collection_name=index_name, requests=requests)]
+            except TypeError:
+                pass
+        return [self.retrieve(question, embedding, index_name, config, top_k) for question, embedding in zip(questions, query_embeddings)]
 
     def _results_from_hits(self, hits) -> list[RetrievalResult]:
         out = []
@@ -56,20 +70,16 @@ class DenseFilteredRetriever(DenseRetriever):
         config: dict,
         top_k: int,
     ) -> list[RetrievalResult]:
-        from qdrant_client import QdrantClient
         from ragbench_core.settings import settings
 
-        client = QdrantClient(url=settings.qdrant_url)
-        try:
-            hits = client.search(
-                collection_name=index_name,
-                query_vector=(query_embedding.get("dense") if isinstance(query_embedding, dict) and "dense" in query_embedding else query_embedding),
-                query_filter=self._build_query_filter(config),
-                limit=top_k,
-            )
-            return self._results_from_hits(hits)
-        finally:
-            close_client(client)
+        client = get_qdrant_client(settings.qdrant_url)
+        hits = client.search(
+            collection_name=index_name,
+            query_vector=(query_embedding.get("dense") if isinstance(query_embedding, dict) and "dense" in query_embedding else query_embedding),
+            query_filter=self._build_query_filter(config),
+            limit=top_k,
+        )
+        return self._results_from_hits(hits)
 
     def _build_query_filter(self, config: dict[str, Any]) -> dict[str, Any] | None:
         raw_filter = config.get("payload_filter")
@@ -223,57 +233,39 @@ class BM25Retriever(BaseRetriever):
         config: dict,
         top_k: int,
     ) -> list[RetrievalResult]:
-        from opensearchpy import OpenSearch
         from ragbench_core.settings import settings
 
-        client = OpenSearch(settings.opensearch_url, verify_certs=False, ssl_show_warn=False)
-        try:
-            fields, phrase_fields = self._search_fields(client, index_name)
-            should = [
-                {
-                    "multi_match": {
-                        "query": question,
-                        "fields": fields,
-                        "type": "best_fields",
-                    }
-                }
-            ]
-            if phrase_fields:
-                should.append(
-                    {
-                        "multi_match": {
-                            "query": question,
-                            "fields": phrase_fields,
-                            "type": "phrase",
-                        }
-                    }
-                )
-            res = client.search(
-                index=index_name,
-                body={
-                    "query": {
-                        "bool": {
-                            "should": should,
-                            "minimum_should_match": 1,
-                        }
-                    },
-                    "size": top_k,
-                },
-            )
-            out = []
-            for i, h in enumerate(res["hits"]["hits"]):
-                s = h["_source"]
-                out.append(
-                    RetrievalResult(
-                        Chunk(s["chunk_id"], s["doc_id"], s["text"], s.get("metadata", {})),
-                        float(h["_score"]),
-                        i + 1,
-                        self.name,
-                    )
-                )
-            return out
-        finally:
-            close_client(client)
+        client = get_opensearch_client(settings.opensearch_url)
+        fields, phrase_fields = self._search_fields(client, index_name)
+        res = client.search(index=index_name, body={"query": self._query_body(question, fields, phrase_fields), "size": top_k})
+        return self._results_from_response(res)
+
+    def retrieve_batch(self, questions: list[str], query_embeddings: list[Any], index_name: str, config: dict[str, Any], top_k: int) -> list[list[RetrievalResult]]:
+        from ragbench_core.settings import settings
+
+        client = get_opensearch_client(settings.opensearch_url)
+        fields, phrase_fields = self._search_fields(client, index_name)
+        body = []
+        for question in questions:
+            body.append({"index": index_name})
+            body.append({"query": self._query_body(question, fields, phrase_fields), "size": top_k})
+        if hasattr(client, "msearch"):
+            res = client.msearch(body=body)
+            return [self._results_from_response(item) for item in res.get("responses", [])]
+        return [self.retrieve(question, embedding, index_name, config, top_k) for question, embedding in zip(questions, query_embeddings)]
+
+    def _query_body(self, question: str, fields: list[str], phrase_fields: list[str]) -> dict[str, Any]:
+        should = [{"multi_match": {"query": question, "fields": fields, "type": "best_fields"}}]
+        if phrase_fields:
+            should.append({"multi_match": {"query": question, "fields": phrase_fields, "type": "phrase"}})
+        return {"bool": {"should": should, "minimum_should_match": 1}}
+
+    def _results_from_response(self, res: dict[str, Any]) -> list[RetrievalResult]:
+        out = []
+        for i, h in enumerate(res["hits"]["hits"]):
+            s = h["_source"]
+            out.append(RetrievalResult(Chunk(s["chunk_id"], s["doc_id"], s["text"], s.get("metadata", {})), float(h["_score"]), i + 1, self.name))
+        return out
 
     def _search_fields(self, client: Any, index_name: str) -> tuple[list[str], list[str]]:
         mappings = client.indices.get_mapping(index=index_name)
@@ -287,7 +279,6 @@ class BM25Retriever(BaseRetriever):
             if "phrase" in properties.get(field, {}).get("fields", {})
         ]
         return fields or ["text"], phrase_fields
-
 
 def reciprocal_rank_fusion(
     result_sets: list[list[RetrievalResult]],
@@ -539,41 +530,33 @@ class NeuralSparseRetriever(BaseRetriever):
         raise ValueError("Unsupported neural_sparse backend '%s'. Supported: opensearch, qdrant" % backend)
 
     def _retrieve_opensearch(self, query_embedding: dict[int, float], index_name: str, config: dict, top_k: int) -> list[RetrievalResult]:
-        from opensearchpy import OpenSearch
         from ragbench_core.settings import settings
 
-        client = OpenSearch(settings.opensearch_url, verify_certs=False, ssl_show_warn=False)
-        try:
-            field = config.get("field", "sparse_embedding")
-            terms = sorted(query_embedding.items(), key=lambda item: item[1], reverse=True)[: int(config.get("query_terms", 256))]
-            should = [
-                {"rank_feature": {"field": f"{field}.{token_id}", "boost": float(weight)}}
-                for token_id, weight in terms
-                if weight > 0
-            ]
-            res = client.search(index=index_name, body={"query": {"bool": {"should": should or [{"match_none": {}}]}}, "size": top_k})
-            return self._opensearch_results(res)
-        finally:
-            close_client(client)
+        client = get_opensearch_client(settings.opensearch_url)
+        field = config.get("field", "sparse_embedding")
+        terms = sorted(query_embedding.items(), key=lambda item: item[1], reverse=True)[: int(config.get("query_terms", 256))]
+        should = [
+            {"rank_feature": {"field": f"{field}.{token_id}", "boost": float(weight)}}
+            for token_id, weight in terms
+            if weight > 0
+        ]
+        res = client.search(index=index_name, body={"query": {"bool": {"should": should or [{"match_none": {}}]}}, "size": top_k})
+        return self._opensearch_results(res)
 
     def _retrieve_qdrant(self, query_embedding: dict[int, float], index_name: str, config: dict, top_k: int) -> list[RetrievalResult]:
-        from qdrant_client import QdrantClient
         from qdrant_client.http.models import NamedSparseVector, SparseVector
         from ragbench_core.settings import settings
 
         collection_name = config.get("collection_name", f"{index_name}_neural_sparse")
         vector_name = config.get("vector_name", "neural_sparse")
         sparse = dict(sorted(query_embedding.items()))
-        client = QdrantClient(url=settings.qdrant_url)
-        try:
-            hits = client.search(
-                collection_name=collection_name,
-                query_vector=NamedSparseVector(name=vector_name, vector=SparseVector(indices=list(sparse.keys()), values=list(sparse.values()))),
-                limit=top_k,
-            )
-            return DenseRetriever()._results_from_hits(hits)
-        finally:
-            close_client(client)
+        client = get_qdrant_client(settings.qdrant_url)
+        hits = client.search(
+            collection_name=collection_name,
+            query_vector=NamedSparseVector(name=vector_name, vector=SparseVector(indices=list(sparse.keys()), values=list(sparse.values()))),
+            limit=top_k,
+        )
+        return DenseRetriever()._results_from_hits(hits)
 
     def _opensearch_results(self, res: dict[str, Any]) -> list[RetrievalResult]:
         out = []

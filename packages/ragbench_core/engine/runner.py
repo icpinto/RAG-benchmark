@@ -11,6 +11,7 @@ from ragbench_core.models.schema import GeneratedAnswer
 from ragbench_core.components.metrics import RetrievalMetrics
 from ragbench_core.utils.ids import stable_id
 from ragbench_core.utils.timing import timer
+from ragbench_core.utils.clients import consume_client_timings
 
 class BenchmarkRunner:
     def __init__(self):
@@ -57,24 +58,27 @@ class BenchmarkRunner:
             chunks=self.registry.metadata_enrichers[m_conf["type"]].enrich(chunks, m_conf)
         embedder=self.registry.embedders[ing["embedder"]["provider"]]
         with timer() as ingest_timer:
-            chunks=embedder.embed_chunks(chunks, ing["embedder"])
+            with timer() as ingest_embedding_timer:
+                chunks=embedder.embed_chunks(chunks, ing["embedder"])
             index_name=f"{full_config.get('runtime',{}).get('collection_prefix','ragbench')}_{case.case_id}".lower().replace('-', '_')
             dense_indexer_conf=ing.get("indexers",{}).get("dense")
             sparse_indexer_conf=ing.get("indexers",{}).get("sparse")
-            if dense_indexer_conf:
-                self.registry.indexers[dense_indexer_conf.get("type","qdrant")].index(chunks, index_name, dense_indexer_conf)
-            if sparse_indexer_conf:
-                self.registry.indexers[sparse_indexer_conf.get("type","opensearch")].index(chunks, index_name, sparse_indexer_conf)
+            with timer() as persistence_timer:
+                if dense_indexer_conf:
+                    self.registry.indexers[dense_indexer_conf.get("type","qdrant")].index(chunks, index_name, dense_indexer_conf)
+                if sparse_indexer_conf:
+                    self.registry.indexers[sparse_indexer_conf.get("type","opensearch")].index(chunks, index_name, sparse_indexer_conf)
+        ingest_client_timings=consume_client_timings()
         metric_rows=[]
         max_k = max(RetrievalMetrics._validate_retrieval_k(case.metric_config))
         for example in examples:
             with timer() as query_timer:
                 rewritten_queries=self.registry.rewriters[qry["rewriter"]["type"]].rewrite(example.question, qry["rewriter"], case.llm_config)
                 retriever=self.registry.retrievers[qry["retriever"]["type"]]
-                result_sets=[]
-                for q in rewritten_queries:
-                    q_emb=embedder.embed_query(q, ing["embedder"])
-                    result_sets.append(retriever.retrieve(q, q_emb, index_name, qry["retriever"], max_k))
+                with timer() as query_embedding_timer:
+                    q_embs=embedder.embed_queries(rewritten_queries, ing["embedder"])
+                with timer() as retrieval_timer:
+                    result_sets=retriever.retrieve_batch(rewritten_queries, q_embs, index_name, qry["retriever"], max_k)
                 if qry["retriever"]["type"] == "multi_query_fusion":
                     combined=retriever.fuse(result_sets, qry["retriever"], max_k)
                 else:
@@ -82,12 +86,14 @@ class BenchmarkRunner:
                 raw_retrieval_results=self._snapshot_results(combined)
                 for f_conf in qry.get("filters", []):
                     combined=self.registry.filters[f_conf["type"]].filter(combined, f_conf)
-                combined=self.registry.rerankers[qry["reranker"]["type"]].rerank(example.question, combined, qry["reranker"])
+                with timer() as reranking_timer:
+                    combined=self.registry.rerankers[qry["reranker"]["type"]].rerank(example.question, combined, qry["reranker"])
                 reranked_results=self._snapshot_results(combined)
                 combined=self.registry.compressors[qry["compressor"]["type"]].compress(example.question, combined, qry["compressor"])
                 context=self.registry.assemblers[qry["context_assembler"]["type"]].assemble(combined, qry["context_assembler"])
                 prompt=self.registry.prompt_builders[qry["prompt_builder"]["type"]].build(example.question, context, qry["prompt_builder"])
-                answer_text=self.registry.generators[case.llm_config["provider"]].generate(prompt, case.llm_config)
+                with timer() as generation_timer:
+                    answer_text=self.registry.generators[case.llm_config["provider"]].generate(prompt, case.llm_config)
                 gen=GeneratedAnswer(
                     answer_text,
                     prompt,
@@ -99,7 +105,19 @@ class BenchmarkRunner:
                     },
                 )
                 evaluation_step=build_evaluation_step(example.question, rewritten_queries, combined, context, prompt)
-            metrics={"ingestion_latency_seconds":ingest_timer["seconds"],"query_latency_seconds":query_timer["seconds"],"chunk_count":len(chunks)}
+            query_client_timings=consume_client_timings()
+            metrics={
+                "ingestion_latency_seconds":ingest_timer["seconds"],
+                "query_latency_seconds":query_timer["seconds"],
+                "client_initialization_seconds":ingest_client_timings.get("client_initialization_seconds", 0.0) + query_client_timings.get("client_initialization_seconds", 0.0),
+                "ingestion_embedding_seconds":ingest_embedding_timer["seconds"],
+                "query_embedding_seconds":query_embedding_timer["seconds"],
+                "retrieval_seconds":retrieval_timer["seconds"],
+                "reranking_seconds":reranking_timer["seconds"],
+                "generation_seconds":generation_timer["seconds"],
+                "persistence_seconds":persistence_timer["seconds"],
+                "chunk_count":len(chunks),
+            }
             for metric in self.registry.metrics.values():
                 metrics.update(metric.compute(example, combined, gen, case.metric_config))
             val=self.registry.citation_validators[qry["citation_validator"]["type"]].validate(gen, example.expected_citations, qry["citation_validator"])
@@ -107,15 +125,17 @@ class BenchmarkRunner:
             row={"case_id":case.case_id,"question":example.question,"metrics":metrics}
             metric_rows.append(row)
             result_id=stable_id(run_id,case.case_id,example.question)
-            insert_result(
-                result_id,
-                run_id,
-                case.case_id,
-                example.question,
-                metrics,
-                answer_text,
-                {"ingestion":ing,"query":qry,"llm":case.llm_config,"evaluation_step":evaluation_step},
-            )
+            with timer() as result_persistence_timer:
+                insert_result(
+                    result_id,
+                    run_id,
+                    case.case_id,
+                    example.question,
+                    metrics,
+                    answer_text,
+                    {"ingestion":ing,"query":qry,"llm":case.llm_config,"evaluation_step":evaluation_step},
+                )
+            metrics["result_persistence_seconds"]=result_persistence_timer["seconds"]
         return {"questions":len(examples),"metric_rows":metric_rows}
 
     def _select_sources(self, sources, selected_source_paths):

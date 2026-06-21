@@ -123,18 +123,21 @@ class SentenceTransformerEmbedder(BaseEmbedder):
         return chunks
 
     def embed_query(self, query: str, config: dict) -> list[float]:
+        return self.embed_queries([query], config)[0]
+
+    def embed_queries(self, queries: list[str], config: dict) -> list[list[float]]:
         model_name = _resolve_model_name(config["model"])
         model = _load_model(model_name)
         if _is_e5_model(config["model"]):
-            query = _prefixed_query(query, config, "query: ")
+            texts = [_prefixed_query(query, config, "query: ") for query in queries]
         else:
-            query = _prefixed_query(query, config, "")
+            texts = [_prefixed_query(query, config, "") for query in queries]
         vectors = model.encode(
-            [query],
+            texts,
             normalize_embeddings=bool(config.get("normalize", config.get("normalize_embeddings", True))),
             batch_size=_batch_size(config),
         )
-        return _as_list(vectors[0])
+        return [_as_list(vector) for vector in vectors]
 
 
 class BGEM3Embedder(SentenceTransformerEmbedder):
@@ -150,6 +153,9 @@ class BGEM3Embedder(SentenceTransformerEmbedder):
 
     def embed_query(self, query: str, config: dict) -> list[float]:
         return super().embed_query(query, self._config(config))
+
+    def embed_queries(self, queries: list[str], config: dict) -> list[list[float]]:
+        return super().embed_queries(queries, self._config(config))
 
 
 class _HostedEmbedder(BaseEmbedder):
@@ -183,7 +189,10 @@ class _HostedEmbedder(BaseEmbedder):
         return chunks
 
     def embed_query(self, query: str, config: dict) -> list[float]:
-        return self._embed_texts([_prefixed_query(query, config)], config, "query")[0]
+        return self.embed_queries([query], config)[0]
+
+    def embed_queries(self, queries: list[str], config: dict) -> list[list[float]]:
+        return self._embed_texts([_prefixed_query(query, config) for query in queries], config, "query")
 
 
 class OpenAIEmbedder(_HostedEmbedder):
@@ -298,7 +307,10 @@ class BGEM3SparseEmbedder(BaseEmbedder):
         return chunks
 
     def embed_query(self, query: str, config: dict) -> dict[int, float]:
-        return self._encode([_prefixed_query(query, config)], config)[0]
+        return self.embed_queries([query], config)[0]
+
+    def embed_queries(self, queries: list[str], config: dict) -> list[dict[int, float]]:
+        return self._encode([_prefixed_query(query, config) for query in queries], config)
 
 
 class SPLADESparseEmbedder(BaseEmbedder):
@@ -341,7 +353,10 @@ class SPLADESparseEmbedder(BaseEmbedder):
         return chunks
 
     def embed_query(self, query: str, config: dict) -> dict[int, float]:
-        return self._encode([_prefixed_query(query, config)], config)[0]
+        return self.embed_queries([query], config)[0]
+
+    def embed_queries(self, queries: list[str], config: dict) -> list[dict[int, float]]:
+        return self._encode([_prefixed_query(query, config) for query in queries], config)
 
 
 class BGEM3HybridEmbedder(BGEM3SparseEmbedder):
@@ -370,7 +385,16 @@ class BGEM3HybridEmbedder(BGEM3SparseEmbedder):
         return chunks
 
     def embed_query(self, query: str, config: dict) -> dict[str, Any]:
-        encoded = self._encode_hybrid([_prefixed_query(query, config)], config)
-        dense = _maybe_normalize([_as_list(encoded["dense_vecs"][0])], config)[0]
-        sparse = encoded.get("lexical_weights", [{}])[0]
-        return {"dense": dense, "sparse": _top_k_sparse({int(k): float(v) for k, v in sparse.items() if float(v)}, config.get("sparse_top_k"))}
+        return self.embed_queries([query], config)[0]
+
+    def embed_queries(self, queries: list[str], config: dict) -> list[dict[str, Any]]:
+        encoded = self._encode_hybrid([_prefixed_query(query, config) for query in queries], config)
+        dense_vectors = _maybe_normalize(_as_list(encoded["dense_vecs"]), config)
+        sparse_vectors = encoded.get("lexical_weights", [{} for _ in queries])
+        return [
+            {
+                "dense": _as_list(dense),
+                "sparse": _top_k_sparse({int(k): float(v) for k, v in sparse.items() if float(v)}, config.get("sparse_top_k")),
+            }
+            for dense, sparse in zip(dense_vectors, sparse_vectors)
+        ]
