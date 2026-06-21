@@ -590,14 +590,62 @@ def _run_summary_rows(run_payload: dict) -> list[dict]:
     aggregate=summary.get("aggregate", {}) or {}
     return [{"metric":key,"value":value} for key,value in _flatten_mapping(aggregate).items()]
 
-def _results_comparison_frame(run_results: dict[str, list[dict]]) -> pd.DataFrame:
+def _short_run_id(run_id: str, length: int = 8) -> str:
+    run_id=str(run_id or "")
+    return run_id[:length] if run_id else "unknown"
+
+def _compact_identifier(value, max_length: int = 24) -> str:
+    text=str(value or "").strip()
+    if not text:
+        return ""
+    return text[:max_length] + ("…" if len(text)>max_length else "")
+
+def _compact_model_identifiers(model_identifiers: dict, max_items: int = 2) -> str:
+    parts=[]
+    for key,value in (model_identifiers or {}).items():
+        values=value if isinstance(value, list) else [value]
+        for model in values:
+            compact_model=_compact_identifier(model, 18)
+            if compact_model:
+                parts.append(f"{key}:{compact_model}")
+            if len(parts) >= max_items:
+                break
+        if len(parts) >= max_items:
+            break
+    if not parts:
+        return ""
+    suffix="…" if sum(len(value if isinstance(value, list) else [value]) for value in (model_identifiers or {}).values())>max_items else ""
+    return ", ".join(parts) + suffix
+
+def _run_display_label(run_payload: dict, *, include_identifiers: bool = True) -> str:
+    run_id=run_payload.get("id", "")
+    label_parts=[
+        _short_run_id(run_id),
+        _compact_identifier(run_payload.get("name") or "benchmark", 32),
+        _compact_identifier(run_payload.get("status") or "unknown status", 20),
+    ]
+    if include_identifiers:
+        config_hash=_compact_identifier(run_payload.get("config_hash"), 8)
+        model_label=_compact_model_identifiers(run_payload.get("model_identifiers", {}) or {})
+        if config_hash:
+            label_parts.append(f"cfg {config_hash}")
+        if model_label:
+            label_parts.append(model_label)
+    return " · ".join(part for part in label_parts if part)
+
+def _run_label_lookup(run_payloads: dict[str, dict], *, include_identifiers: bool = True) -> dict[str, str]:
+    return {run_id:_run_display_label(payload, include_identifiers=include_identifiers) for run_id,payload in run_payloads.items()}
+
+def _results_comparison_frame(run_results: dict[str, list[dict]], run_labels: dict[str, str] | None = None) -> pd.DataFrame:
     comparison=None
+    run_labels=run_labels or {}
     for run_id,results in run_results.items():
+        run_label=run_labels.get(run_id, _short_run_id(run_id))
         rows=[]
         for item in results:
             row={"case_id":item.get("case_id", ""),"question":item.get("question", "")}
             for metric,value in (item.get("metrics", {}) or {}).items():
-                row[f"{run_id} · {metric}"]=value
+                row[f"{run_label} · {metric}"]=value
             rows.append(row)
         run_frame=pd.DataFrame(rows)
         if run_frame.empty:
@@ -605,10 +653,13 @@ def _results_comparison_frame(run_results: dict[str, list[dict]]) -> pd.DataFram
         comparison=run_frame if comparison is None else comparison.merge(run_frame, on=["case_id","question"], how="outer")
     return comparison if comparison is not None else pd.DataFrame()
 
-def _add_two_run_deltas(frame: pd.DataFrame, first_run_id: str, second_run_id: str) -> pd.DataFrame:
+def _add_two_run_deltas(frame: pd.DataFrame, first_run_id: str, second_run_id: str, run_labels: dict[str, str] | None = None) -> pd.DataFrame:
     delta_frame=frame.copy()
-    first_prefix=f"{first_run_id} · "
-    second_prefix=f"{second_run_id} · "
+    run_labels=run_labels or {}
+    first_label=run_labels.get(first_run_id, _short_run_id(first_run_id))
+    second_label=run_labels.get(second_run_id, _short_run_id(second_run_id))
+    first_prefix=f"{first_label} · "
+    second_prefix=f"{second_label} · "
     for first_column in [column for column in frame.columns if column.startswith(first_prefix)]:
         metric=first_column[len(first_prefix):]
         second_column=f"{second_prefix}{metric}"
@@ -617,17 +668,20 @@ def _add_two_run_deltas(frame: pd.DataFrame, first_run_id: str, second_run_id: s
         first_values=pd.to_numeric(frame[first_column], errors="coerce")
         second_values=pd.to_numeric(frame[second_column], errors="coerce")
         if first_values.notna().any() or second_values.notna().any():
-            delta_frame[f"Δ {metric} ({second_run_id} - {first_run_id})"]=second_values - first_values
+            delta_frame[f"Δ {metric} ({second_label} - {first_label})"]=second_values - first_values
     return delta_frame
 
 def show_run_comparison(runs: list[dict]):
     st.subheader("Compare benchmark runs")
     run_ids=[run["id"] for run in runs]
+    listed_run_payloads={run["id"]:run for run in runs}
+    listed_run_labels=_run_label_lookup(listed_run_payloads)
     default_run_ids=run_ids[:2] if len(run_ids) >= 2 else run_ids
     selected_run_ids=st.multiselect(
-        "Choose two or more run IDs to compare",
+        "Choose two or more runs to compare",
         run_ids,
         default=default_run_ids,
+        format_func=lambda run_id: listed_run_labels.get(run_id, _short_run_id(run_id)),
     )
     if len(selected_run_ids) < 2:
         st.info("Select at least two runs to build a comparison.")
@@ -641,6 +695,7 @@ def show_run_comparison(runs: list[dict]):
             results_payload=api_get_json(f"{API}/benchmarks/{selected_run_id}/results", timeout=60, error_context=f"Could not load results for run {selected_run_id}")
             if run_payload is None or results_payload is None:
                 return
+            run_payload={**run_payload, "id": run_payload.get("id", selected_run_id)}
             run_payloads[selected_run_id]=run_payload
             run_results[selected_run_id]=results_payload
     except Exception as e:
@@ -651,8 +706,8 @@ def show_run_comparison(runs: list[dict]):
     for column,selected_run_id in zip(st.columns(len(selected_run_ids)), selected_run_ids):
         with column:
             payload=run_payloads[selected_run_id]
-            st.markdown(f"**{selected_run_id}**")
-            st.caption(f"{payload.get('name', 'benchmark')} · {payload.get('status', 'unknown status')}")
+            st.markdown(f"**{_run_display_label(payload)}**")
+            st.caption(f"Full run ID: `{selected_run_id}`")
             st.write({
                 "config_hash": payload.get("config_hash"),
                 "dataset_hash": payload.get("dataset_hash"),
@@ -667,7 +722,10 @@ def show_run_comparison(runs: list[dict]):
     metadata_rows=[]
     for selected_run_id,payload in run_payloads.items():
         metadata_rows.append({
+            "run_label": _run_display_label(payload),
             "run_id": selected_run_id,
+            "run_name": payload.get("name"),
+            "status": payload.get("status"),
             "config_hash": payload.get("config_hash"),
             "dataset_hash": payload.get("dataset_hash"),
             "models": payload.get("model_identifiers", {}),
@@ -677,12 +735,13 @@ def show_run_comparison(runs: list[dict]):
         st.write("Run metadata for grouping by config, dataset, and model")
         st.dataframe(pd.DataFrame(metadata_rows), use_container_width=True)
 
-    comparison_frame=_results_comparison_frame(run_results)
+    run_labels=_run_label_lookup(run_payloads)
+    comparison_frame=_results_comparison_frame(run_results, run_labels)
     if comparison_frame.empty:
         st.info("No scored result metrics are available for the selected runs yet.")
         return
     if len(selected_run_ids) == 2:
-        comparison_frame=_add_two_run_deltas(comparison_frame, selected_run_ids[0], selected_run_ids[1])
+        comparison_frame=_add_two_run_deltas(comparison_frame, selected_run_ids[0], selected_run_ids[1], run_labels)
     grouping=st.multiselect("Comparison grouping columns", ["case_id","question","config_hash","dataset_hash","models"], default=["case_id","question"])
     if any(column in grouping for column in ["config_hash","dataset_hash","models"]):
         st.caption("Config, dataset, and model identifiers are shown in the metadata table above; metric deltas remain joined by case and question.")
