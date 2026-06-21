@@ -2,6 +2,11 @@ experiment:
   name: "v1_rag_benchmark"
   description: "Runnable MVP benchmark over ingestion and query variants"
 
+runtime:
+  retrieval_cache:
+    enabled: true
+    backend: file
+
 data:
   input_dir: "/app/data/raw"
   remote_urls_file: "/app/data/raw/urls.txt"
