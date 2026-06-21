@@ -8,6 +8,7 @@ from functools import lru_cache
 from typing import Any
 
 from ragbench_core.interfaces import BaseEmbedder
+from ragbench_core.utils.clients import record_token_usage
 from ragbench_core.models.schema import Chunk
 
 E5_MODEL_ALIASES = {
@@ -179,6 +180,7 @@ class _HostedEmbedder(BaseEmbedder):
                 self._headers(config),
                 float(config.get("timeout", 30)),
             )
+            record_token_usage(embedding_tokens=self._parse_token_usage(response))
             vectors.extend(self._parse_vectors(response))
         return _maybe_normalize(vectors, config)
 
@@ -193,6 +195,19 @@ class _HostedEmbedder(BaseEmbedder):
 
     def embed_queries(self, queries: list[str], config: dict) -> list[list[float]]:
         return self._embed_texts([_prefixed_query(query, config) for query in queries], config, "query")
+
+    def _parse_token_usage(self, response: dict[str, Any]) -> int | None:
+        usage = response.get("usage")
+        if not isinstance(usage, dict):
+            return None
+        for key in ("total_tokens", "tokens", "input_tokens"):
+            value = usage.get(key)
+            if value is not None:
+                try:
+                    return int(value)
+                except (TypeError, ValueError):
+                    return None
+        return None
 
 
 class OpenAIEmbedder(_HostedEmbedder):

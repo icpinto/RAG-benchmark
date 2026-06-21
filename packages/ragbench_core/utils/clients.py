@@ -5,6 +5,7 @@ from functools import lru_cache
 from typing import Any
 
 _CLIENT_TIMINGS: dict[str, float] = {"client_initialization_seconds": 0.0}
+_TOKEN_USAGE: dict[str, int] = {"embedding_tokens": 0, "prompt_tokens": 0, "completion_tokens": 0}
 
 
 def _record_client_init(start: float) -> None:
@@ -16,6 +17,23 @@ def consume_client_timings() -> dict[str, float]:
     for key in _CLIENT_TIMINGS:
         _CLIENT_TIMINGS[key] = 0.0
     return timings
+
+
+def record_token_usage(**usage: int | None) -> None:
+    for key, value in usage.items():
+        if value is None:
+            continue
+        try:
+            _TOKEN_USAGE[key] = _TOKEN_USAGE.get(key, 0) + int(value)
+        except (TypeError, ValueError):
+            continue
+
+
+def consume_token_usage() -> dict[str, int]:
+    usage = dict(_TOKEN_USAGE)
+    for key in _TOKEN_USAGE:
+        _TOKEN_USAGE[key] = 0
+    return usage
 
 
 @lru_cache(maxsize=8)

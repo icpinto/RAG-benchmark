@@ -9,10 +9,10 @@ from ragbench_core.engine.data_loader import list_sources, load_ground_truth
 from ragbench_core.engine.database import upsert_run, insert_result
 from ragbench_core.engine.evaluation_trace import build_evaluation_step
 from ragbench_core.models.schema import GeneratedAnswer
-from ragbench_core.components.metrics import RetrievalMetrics
+from ragbench_core.components.metrics import RetrievalMetrics, count_texts_tokens
 from ragbench_core.utils.ids import stable_id
 from ragbench_core.utils.timing import timer
-from ragbench_core.utils.clients import consume_client_timings
+from ragbench_core.utils.clients import consume_client_timings, consume_token_usage
 from ragbench_core.engine.cache import (
     build_embedding_cache,
     build_retrieval_cache,
@@ -128,8 +128,13 @@ class BenchmarkRunner:
                 if sparse_indexer_conf:
                     self.registry.indexers[sparse_indexer_conf.get("type","opensearch")].index(chunks, index_name, sparse_indexer_conf)
         ingest_client_timings=consume_client_timings()
+        ingest_token_usage=consume_token_usage()
+        estimated_ingest_embedding_tokens = count_texts_tokens([chunk.text for chunk in chunks], ing["embedder"].get("model"))
+        ingest_embedding_tokens = ingest_token_usage.get("embedding_tokens") or estimated_ingest_embedding_tokens
+        per_question_ingest_embedding_tokens = ingest_embedding_tokens / len(examples) if examples else 0
         metric_rows=[]
-        max_k = max(RetrievalMetrics._validate_retrieval_k(case.metric_config))
+        metric_config = {**case.metric_config, "pricing": full_config.get("runtime", {}).get("pricing", {})}
+        max_k = max(RetrievalMetrics._validate_retrieval_k(metric_config))
         for example in examples:
             with timer() as query_timer:
                 rewritten_queries=self.registry.rewriters[qry["rewriter"]["type"]].rewrite(example.question, qry["rewriter"], case.llm_config)
@@ -152,19 +157,33 @@ class BenchmarkRunner:
                 context=self.registry.assemblers[qry["context_assembler"]["type"]].assemble(combined, qry["context_assembler"])
                 prompt=self.registry.prompt_builders[qry["prompt_builder"]["type"]].build(example.question, context, qry["prompt_builder"])
                 with timer() as generation_timer:
-                    answer_text=self.registry.generators[case.llm_config["provider"]].generate(prompt, case.llm_config)
+                    generation_result=self.registry.generators[case.llm_config["provider"]].generate(prompt, case.llm_config)
+                if isinstance(generation_result, dict):
+                    answer_text=str(generation_result.get("answer", ""))
+                    generation_metadata=dict(generation_result.get("metadata") or {})
+                else:
+                    answer_text=str(generation_result)
+                    generation_metadata={}
+                query_embedding_token_estimate=count_texts_tokens(list(rewritten_queries), ing["embedder"].get("model"))
                 gen=GeneratedAnswer(
                     answer_text,
                     prompt,
                     [r.chunk for r in combined],
                     {
+                        **generation_metadata,
                         "rewritten_queries": rewritten_queries,
                         "raw_retrieval_results": raw_retrieval_results,
                         "reranked_results": reranked_results,
+                        "context_text": context,
+                        "embedding_model": ing["embedder"].get("model"),
+                        "embedding_tokens": per_question_ingest_embedding_tokens + query_embedding_token_estimate,
                     },
                 )
                 evaluation_step=build_evaluation_step(example.question, rewritten_queries, combined, context, prompt)
             query_client_timings=consume_client_timings()
+            query_token_usage=consume_token_usage()
+            if query_token_usage.get("embedding_tokens") or ingest_token_usage.get("embedding_tokens"):
+                gen.metadata["embedding_tokens"] = per_question_ingest_embedding_tokens + query_token_usage.get("embedding_tokens", query_embedding_token_estimate)
             metrics={
                 "ingestion_latency_seconds":ingest_timer["seconds"],
                 "query_latency_seconds":query_timer["seconds"],
@@ -178,7 +197,7 @@ class BenchmarkRunner:
                 "chunk_count":len(chunks),
             }
             for metric in self.registry.metrics.values():
-                metrics.update(metric.compute(example, combined, gen, case.metric_config))
+                metrics.update(metric.compute(example, combined, gen, metric_config))
             val=self.registry.citation_validators[qry["citation_validator"]["type"]].validate(gen, example.expected_citations, qry["citation_validator"])
             metrics.update(val)
             row={"case_id":case.case_id,"question":example.question,"metrics":metrics}
@@ -194,7 +213,7 @@ class BenchmarkRunner:
                     answer_text,
                     {"ingestion":ing,"query":qry,"llm":case.llm_config,"evaluation_step":evaluation_step},
                     artifact_paths=self._write_result_artifacts(full_config, run_id, case.case_id, result_id, {
-                        "expanded_config":{"ingestion":ing,"query":qry,"llm":case.llm_config,"metrics":case.metric_config},
+                        "expanded_config":{"ingestion":ing,"query":qry,"llm":case.llm_config,"metrics":metric_config},
                         "retrieval_traces":{"raw":retrieval_results_payload(raw_retrieval_results),"reranked":retrieval_results_payload(reranked_results)},
                         "prompt":{"question":example.question,"rewritten_queries":rewritten_queries,"context":context,"prompt":prompt},
                         "response":{"answer":answer_text,"metadata":gen.metadata},
@@ -239,4 +258,4 @@ class BenchmarkRunner:
             for k,v in row["metrics"].items():
                 if isinstance(v,(int,float)):
                     numeric.setdefault(k,[]).append(float(v))
-        return {k:{"mean":sum(vals)/len(vals),"min":min(vals),"max":max(vals)} for k,vals in numeric.items() if vals}
+        return {k:{"mean":sum(vals)/len(vals),"min":min(vals),"max":max(vals),"sum":sum(vals)} for k,vals in numeric.items() if vals}
