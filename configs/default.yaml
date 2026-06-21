@@ -213,9 +213,11 @@ pipeline:
         # api_key, or local RankLLM-compatible models if dependencies are installed.
         model: "rankllm"
         # api_key: "${OPENAI_API_KEY:}"
-      - type: "colbert"
-        # ColBERT uses late-interaction neural scoring for candidate reranking.
-        model: "colbert"
+      # ColBERT requires the rerankers transformers extra, which conflicts with
+      # FlagEmbedding's pinned transformers version in the base Docker image.
+      # Install compatible optional dependencies separately before enabling.
+      # - type: "colbert"
+      #   model: "colbert"
       # Hosted rerankers are available when API keys are configured. Uncomment
       # the Cohere block and set api_key here, or set COHERE_API_KEY in the
       # environment. top_n defaults to the number of retrieved results.
