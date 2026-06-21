@@ -12,6 +12,7 @@ from ragbench_core.components.metrics import RetrievalMetrics
 from ragbench_core.utils.ids import stable_id
 from ragbench_core.utils.timing import timer
 from ragbench_core.utils.clients import consume_client_timings
+from ragbench_core.engine.cache import build_embedding_cache, embed_chunks_cached, embed_queries_cached
 from ragbench_core.engine.persistence import (
     artifact_root,
     component_versions,
@@ -73,6 +74,7 @@ class BenchmarkRunner:
 
     def _run_case(self, run_id, case, sources, examples, full_config):
         ing=case.ingestion_config; qry=case.query_config
+        embedding_cache=build_embedding_cache(full_config)
         docs=[]
         extractor_configs = ing.get("extractor_configs", {})
         for source in sources:
@@ -87,7 +89,7 @@ class BenchmarkRunner:
         embedder=self.registry.embedders[ing["embedder"]["provider"]]
         with timer() as ingest_timer:
             with timer() as ingest_embedding_timer:
-                chunks=embedder.embed_chunks(chunks, ing["embedder"])
+                chunks=embed_chunks_cached(embedding_cache, embedder, chunks, ing["embedder"])
             index_name=f"{full_config.get('runtime',{}).get('collection_prefix','ragbench')}_{case.case_id}".lower().replace('-', '_')
             dense_indexer_conf=ing.get("indexers",{}).get("dense")
             sparse_indexer_conf=ing.get("indexers",{}).get("sparse")
@@ -104,7 +106,7 @@ class BenchmarkRunner:
                 rewritten_queries=self.registry.rewriters[qry["rewriter"]["type"]].rewrite(example.question, qry["rewriter"], case.llm_config)
                 retriever=self.registry.retrievers[qry["retriever"]["type"]]
                 with timer() as query_embedding_timer:
-                    q_embs=embedder.embed_queries(rewritten_queries, ing["embedder"])
+                    q_embs=embed_queries_cached(embedding_cache, embedder, rewritten_queries, ing["embedder"])
                 with timer() as retrieval_timer:
                     result_sets=retriever.retrieve_batch(rewritten_queries, q_embs, index_name, qry["retriever"], max_k)
                 if qry["retriever"]["type"] == "multi_query_fusion":
