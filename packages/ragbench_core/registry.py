@@ -66,7 +66,14 @@ def register_builtin_components() -> ComponentRegistry:
         SPLADESparseEmbedder,
     )
     from ragbench_core.components.indexers import QdrantIndexer, OpenSearchIndexer, OpenSearchNeuralSparseIndexer, QdrantSparseIndexer
-    from ragbench_core.components.rewriters import NoRewrite, HyDERewrite
+    from ragbench_core.components.rewriters import (
+        DecomposeRewrite,
+        HyDERewrite,
+        MultiQueryRewrite,
+        NoRewrite,
+        StepBackRewrite,
+        SynonymExpandRewrite,
+    )
     from ragbench_core.components.retrievers import DenseRetriever, DenseFilteredRetriever, ParentDocumentRetriever, BM25Retriever, HybridRetriever, NeuralSparseRetriever, WeightedHybridRetriever, MultiQueryFusionRetriever, AdaptiveHybridRetriever
     from ragbench_core.components.filters import NoFilter
     from ragbench_core.components.rerankers import NoReranker, CrossEncoderReranker, FlashRankReranker, RankLLMReranker, ColBERTReranker, CohereReranker, JinaReranker, DiversityMMRReranker
@@ -90,7 +97,7 @@ def register_builtin_components() -> ComponentRegistry:
     REGISTRY.register_metadata_enricher(BasicMetadataEnricher())
     for c in [SentenceTransformerEmbedder(), OpenAIEmbedder(), VoyageEmbedder(), CohereEmbedder(), JinaEmbedder(), BGEM3Embedder(), BGEM3SparseEmbedder(), SPLADESparseEmbedder(), BGEM3HybridEmbedder()]: REGISTRY.register_embedder(c)
     for c in [QdrantIndexer(), OpenSearchIndexer(), OpenSearchNeuralSparseIndexer(), QdrantSparseIndexer()]: REGISTRY.register_indexer(c)
-    for c in [NoRewrite(), HyDERewrite()]: REGISTRY.register_rewriter(c)
+    for c in [NoRewrite(), HyDERewrite(), MultiQueryRewrite(), StepBackRewrite(), DecomposeRewrite(), SynonymExpandRewrite()]: REGISTRY.register_rewriter(c)
     for c in [DenseRetriever(), DenseFilteredRetriever(), ParentDocumentRetriever(), BM25Retriever(), HybridRetriever(), NeuralSparseRetriever(), WeightedHybridRetriever(), MultiQueryFusionRetriever(), AdaptiveHybridRetriever()]: REGISTRY.register_retriever(c)
     REGISTRY.register_filter(NoFilter())
     for c in [NoReranker(), CrossEncoderReranker(), FlashRankReranker(), RankLLMReranker(), ColBERTReranker(), CohereReranker(), JinaReranker(), DiversityMMRReranker()]: REGISTRY.register_reranker(c)
