@@ -79,7 +79,7 @@ class BasePromptBuilder(ABC):
 class BaseGenerator(ABC):
     name: str
     @abstractmethod
-    def generate(self, prompt: str, config: dict[str, Any]) -> str: ...
+    def generate(self, prompt: str, config: dict[str, Any]) -> str | dict[str, Any]: ...
 
 class BaseCitationValidator(ABC):
     name: str

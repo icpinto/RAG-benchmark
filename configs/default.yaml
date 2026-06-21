@@ -3,6 +3,10 @@ experiment:
   description: "Runnable MVP benchmark over ingestion and query variants"
 
 runtime:
+  pricing:
+    generation_input_per_1m: 0.15
+    generation_output_per_1m: 0.60
+    embedding_per_1m: 0.02
   retrieval_cache:
     enabled: true
     backend: file

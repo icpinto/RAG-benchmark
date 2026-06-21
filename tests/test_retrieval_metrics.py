@@ -167,3 +167,38 @@ def test_retrieval_metrics_ignores_post_compression_results_when_stage_sets_are_
     assert metrics["raw_retrieval_failed"] is False
     assert metrics["reranked_failed"] is False
     assert metrics["retrieval_failed"] is False
+
+
+def test_operational_metric_uses_provider_usage_and_pricing():
+    from ragbench_core.components.metrics import OperationalMetric
+
+    answer = GeneratedAnswer(
+        answer="final answer",
+        prompt="prompt text",
+        context_chunks=[Chunk("c1", "d1", "context text")],
+        metadata={
+            "token_usage": {"prompt_tokens": 100, "completion_tokens": 20},
+            "embedding_tokens": 50,
+            "context_text": "context text",
+        },
+    )
+
+    metrics = OperationalMetric().compute(
+        QueryExample(question="q"),
+        [],
+        answer,
+        {
+            "pricing": {
+                "generation_input_per_1m": 0.15,
+                "generation_output_per_1m": 0.60,
+                "embedding_per_1m": 0.02,
+            }
+        },
+    )
+
+    assert metrics["prompt_tokens"] == 100
+    assert metrics["completion_tokens"] == 20
+    assert metrics["embedding_tokens"] == 50
+    assert metrics["estimated_generation_cost"] == pytest.approx(0.000027)
+    assert metrics["estimated_embedding_cost"] == pytest.approx(0.000001)
+    assert metrics["total_estimated_cost"] == pytest.approx(0.000028)

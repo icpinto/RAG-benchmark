@@ -36,3 +36,14 @@ def test_close_client_falls_back_to_transport_close():
     close_client(client)
 
     assert client.transport.closed is True
+
+
+def test_token_usage_accumulates_and_resets():
+    from ragbench_core.utils.clients import consume_token_usage, record_token_usage
+
+    consume_token_usage()
+    record_token_usage(embedding_tokens=3, prompt_tokens="4", completion_tokens=None)
+    record_token_usage(embedding_tokens=2)
+
+    assert consume_token_usage()["embedding_tokens"] == 5
+    assert consume_token_usage()["embedding_tokens"] == 0

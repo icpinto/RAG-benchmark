@@ -1,7 +1,42 @@
 from __future__ import annotations
-import math, os
+import math
+from typing import Any
 from ragbench_core.interfaces import BaseMetric
 from ragbench_core.models.schema import QueryExample, RetrievalResult, GeneratedAnswer
+
+
+def count_text_tokens(text: str, model: str | None = None) -> int:
+    """Count tokens with tiktoken when installed, falling back to a rough char heuristic."""
+    if not text:
+        return 0
+    try:
+        import tiktoken
+        try:
+            encoding = tiktoken.encoding_for_model(model or "gpt-4o-mini")
+        except KeyError:
+            encoding = tiktoken.get_encoding("cl100k_base")
+        return len(encoding.encode(text))
+    except Exception:
+        return max(1, math.ceil(len(text) / 4))
+
+
+def count_texts_tokens(texts: list[str], model: str | None = None) -> int:
+    return sum(count_text_tokens(text, model) for text in texts if text)
+
+
+def _usage_value(usage: dict[str, Any], *keys: str) -> int | None:
+    for key in keys:
+        value = usage.get(key)
+        if value is not None:
+            try:
+                return int(value)
+            except (TypeError, ValueError):
+                return None
+    return None
+
+
+def _cost(tokens: int, price_per_1m: float) -> float:
+    return (tokens / 1_000_000) * price_per_1m
 
 class RetrievalMetrics(BaseMetric):
     name = "retrieval_metrics"
@@ -113,8 +148,66 @@ class OperationalMetric(BaseMetric):
     name = "operational"
     def compute(self, example: QueryExample, results: list[RetrievalResult], answer: GeneratedAnswer | None, config: dict) -> dict:
         text = answer.answer if answer else ""
-        return {"answer_chars":len(text),"context_chunks":len(answer.context_chunks) if answer else 0,"estimated_answer_tokens":max(1, len(text)//4) if text else 0}
+        if not answer:
+            return {
+                "answer_chars": 0,
+                "context_chunks": 0,
+                "estimated_answer_tokens": 0,
+                "prompt_tokens": 0,
+                "completion_tokens": 0,
+                "context_tokens": 0,
+                "embedding_tokens": 0,
+                "estimated_embedding_cost": 0.0,
+                "estimated_generation_cost": 0.0,
+                "total_estimated_cost": 0.0,
+            }
 
+        metadata = answer.metadata or {}
+        usage = metadata.get("token_usage") or {}
+        pricing = config.get("pricing") or {}
+        generation_model = metadata.get("generation_model") or config.get("generation_model")
+        embedding_model = metadata.get("embedding_model") or config.get("embedding_model")
+
+        prompt_tokens = _usage_value(usage, "prompt_tokens", "input_tokens")
+        if prompt_tokens is None:
+            prompt_tokens = count_text_tokens(answer.prompt, generation_model)
+
+        completion_tokens = _usage_value(usage, "completion_tokens", "output_tokens")
+        if completion_tokens is None:
+            completion_tokens = count_text_tokens(text, generation_model)
+
+        context_text = metadata.get("context_text")
+        if context_text is None:
+            context_text = "\n\n".join(chunk.text for chunk in answer.context_chunks)
+        context_tokens = count_text_tokens(str(context_text), generation_model)
+
+        embedding_tokens = metadata.get("embedding_tokens")
+        if embedding_tokens is None:
+            embedding_texts = metadata.get("embedding_texts") or []
+            if not embedding_texts:
+                embedding_texts = [chunk.text for chunk in answer.context_chunks]
+            embedding_tokens = count_texts_tokens([str(item) for item in embedding_texts], embedding_model)
+        else:
+            embedding_tokens = float(embedding_tokens)
+
+        generation_input_price = float(pricing.get("generation_input_per_1m", 0.0) or 0.0)
+        generation_output_price = float(pricing.get("generation_output_per_1m", 0.0) or 0.0)
+        embedding_price = float(pricing.get("embedding_per_1m", 0.0) or 0.0)
+        estimated_generation_cost = _cost(prompt_tokens, generation_input_price) + _cost(completion_tokens, generation_output_price)
+        estimated_embedding_cost = _cost(embedding_tokens, embedding_price)
+
+        return {
+            "answer_chars": len(text),
+            "context_chunks": len(answer.context_chunks),
+            "estimated_answer_tokens": completion_tokens,
+            "prompt_tokens": prompt_tokens,
+            "completion_tokens": completion_tokens,
+            "context_tokens": context_tokens,
+            "embedding_tokens": embedding_tokens,
+            "estimated_embedding_cost": estimated_embedding_cost,
+            "estimated_generation_cost": estimated_generation_cost,
+            "total_estimated_cost": estimated_embedding_cost + estimated_generation_cost,
+        }
 class CitationCoverageMetric(BaseMetric):
     name = "citation_coverage"
     def compute(self, example: QueryExample, results: list[RetrievalResult], answer: GeneratedAnswer | None, config: dict) -> dict:
