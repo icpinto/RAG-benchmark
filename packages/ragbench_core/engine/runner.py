@@ -1,6 +1,7 @@
 from __future__ import annotations
 from dataclasses import replace
 import statistics, time
+import traceback
 from pathlib import Path
 from ragbench_core.registry import register_builtin_components
 from ragbench_core.engine.config_expander import expand_cases
@@ -49,7 +50,7 @@ class BenchmarkRunner:
         }
         upsert_run(run_id, run_name, "running", config, **versions)
         write_json_artifact(config, run_id, "expanded_config.json", payload=config)
-        summary={"cases":0,"questions":0,"errors":0}
+        summary={"cases":0,"questions":0,"errors":0,"case_errors":[]}
         try:
             cases=expand_cases(config)
             write_json_artifact(config, run_id, "expanded_cases.json", payload=[case.__dict__ for case in cases])
@@ -67,6 +68,16 @@ class BenchmarkRunner:
                     all_metric_rows.extend(case_summary["metric_rows"])
                 except Exception as e:
                     summary["errors"] += 1
+                    error_payload=self._case_error_payload(case.case_id, e)
+                    error_payload["artifact_path"]=write_json_artifact(
+                        config,
+                        run_id,
+                        "cases",
+                        case.case_id,
+                        "case_error.json",
+                        payload=error_payload,
+                    )
+                    summary["case_errors"].append(error_payload)
                     # Continue; a benchmark platform should isolate bad component configs.
             summary["aggregate"] = self._aggregate(all_metric_rows)
             exports=export_run(config, run_id, {"id":run_id,"name":run_name,"summary":summary,**versions}, all_metric_rows)
@@ -77,6 +88,17 @@ class BenchmarkRunner:
         except Exception as e:
             upsert_run(run_id, run_name, "failed", config, summary, error=str(e), **versions)
             raise
+
+
+    def _case_error_payload(self, case_id, error):
+        formatted_traceback=traceback.format_exception(type(error), error, error.__traceback__)
+        sanitized_traceback=[line.replace(str(Path.cwd()), ".") for line in formatted_traceback]
+        return {
+            "case_id": case_id,
+            "exception_type": type(error).__name__,
+            "message": str(error),
+            "traceback": sanitized_traceback,
+        }
 
     def _run_case(self, run_id, case, sources, examples, full_config):
         ing=case.ingestion_config; qry=case.query_config
