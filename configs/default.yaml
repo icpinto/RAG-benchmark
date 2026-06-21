@@ -149,6 +149,13 @@ pipeline:
         child_top_k_multiplier: 4
       - type: "bm25"
       - type: "hybrid"
+        # Defaults to dense + BM25. To fetch dense + neural sparse from
+        # bge_m3_hybrid query embeddings, set sources: ["dense", "neural_sparse"]
+        # and configure the nested neural_sparse backend below.
+        sources: ["dense", "bm25"]
+        # neural_sparse:
+        #   backend: "opensearch"
+        #   field: "sparse_embedding"
       # Neural sparse retrieval expects a sparse query embedding from
       # bge_m3_sparse, splade_sparse, or the sparse side of bge_m3_hybrid.
       # - type: "neural_sparse"

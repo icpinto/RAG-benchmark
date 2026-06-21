@@ -326,23 +326,53 @@ def reciprocal_rank_fusion(
 
 class HybridRetriever(BaseRetriever):
     name = "hybrid"
+    supported_sources = {"dense", "bm25", "neural_sparse"}
 
     def retrieve(
         self,
         question: str,
-        query_embedding: list[float] | None,
+        query_embedding: list[float] | dict[str, Any] | None,
         index_name: str,
         config: dict,
         top_k: int,
     ) -> list[RetrievalResult]:
-        dense = DenseRetriever().retrieve(question, query_embedding, index_name, config, top_k)
-        bm25 = BM25Retriever().retrieve(question, query_embedding, index_name, config, top_k)
+        result_sets: list[list[RetrievalResult]] = []
+        for source in self._sources(config):
+            if source == "dense":
+                result_sets.append(DenseRetriever().retrieve(question, query_embedding, index_name, config, top_k))
+            elif source == "bm25":
+                result_sets.append(BM25Retriever().retrieve(question, query_embedding, index_name, config, top_k))
+            elif source == "neural_sparse":
+                result_sets.append(
+                    NeuralSparseRetriever().retrieve(
+                        question,
+                        query_embedding,
+                        index_name,
+                        config.get("neural_sparse", config),
+                        top_k,
+                    )
+                )
         return reciprocal_rank_fusion(
-            [dense, bm25],
+            result_sets,
             rrf_k=int(config.get("rrf_k", 60)),
             top_k=top_k,
             retriever_name=self.name,
         )
+
+    def _sources(self, config: dict[str, Any]) -> list[str]:
+        sources = config.get("sources", config.get("retrievers", ["dense", "bm25"]))
+        if isinstance(sources, str):
+            sources = [sources]
+        source_names = [str(source) for source in sources]
+        unsupported = sorted(set(source_names) - self.supported_sources)
+        if unsupported:
+            supported = ", ".join(sorted(self.supported_sources))
+            raise ValueError(
+                f"Unsupported hybrid source(s) {unsupported}. Supported: {supported}"
+            )
+        if not source_names:
+            raise ValueError("hybrid requires at least one source retriever.")
+        return source_names
 
 
 class MultiQueryFusionRetriever(BaseRetriever):
