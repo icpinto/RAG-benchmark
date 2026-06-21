@@ -23,9 +23,6 @@ class ConfigSaveRequest(BaseModel):
     config_path: str = "/app/configs/default.yaml"
     content: str
 
-class ConfigValidateRequest(BaseModel):
-    content: str
-
 class QuestionRequest(BaseModel):
     question: str
     expected_answer: str = ""
@@ -100,21 +97,16 @@ def get_config_content(config_path: str = Query("/app/configs/default.yaml")):
         raise HTTPException(status_code=404, detail=f"Config not found: {path}")
     return {"config_path":str(path),"content":path.read_text(encoding="utf-8")}
 
-@app.post("/configs/validate")
-def validate_config_content(req: ConfigValidateRequest):
+@app.put("/configs/content")
+def save_config_content(req: ConfigSaveRequest):
+    path=_resolve_config_path(req.config_path)
     try:
         parsed=parse_yaml_text(req.content)
     except Exception as exc:
         raise HTTPException(status_code=400, detail=f"Invalid YAML: {exc}")
-    return {"experiment_name":parsed.get("experiment",{}).get("name","benchmark"),"parsed_config":parsed,"status":"valid"}
-
-@app.put("/configs/content")
-def save_config_content(req: ConfigSaveRequest):
-    path=_resolve_config_path(req.config_path)
-    validation=validate_config_content(ConfigValidateRequest(content=req.content))
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(req.content, encoding="utf-8")
-    return {"config_path":str(path),"experiment_name":validation["experiment_name"],"status":"saved"}
+    return {"config_path":str(path),"experiment_name":parsed.get("experiment",{}).get("name","benchmark"),"status":"saved"}
 
 def _validated_source_paths(source_paths: list[str] | None) -> list[str] | None:
     if source_paths is None:
