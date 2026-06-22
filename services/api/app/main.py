@@ -2,7 +2,7 @@ from __future__ import annotations
 from pathlib import Path
 import json, os, shutil, uuid
 from fastapi import FastAPI, UploadFile, File, HTTPException, Query
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 from ragbench_core.engine.database import init_db, get_run, list_runs, list_results, upsert_run
 from ragbench_core.utils.config import load_yaml, parse_yaml_text
 from services.worker.app.tasks import run_benchmark_task
@@ -13,6 +13,7 @@ DATA_ROOT=Path(os.getenv("RAGBENCH_DATA_DIR", "/app/data")).resolve()
 RAW_DATA_DIR=(DATA_ROOT / "raw").resolve()
 EVAL_DATA_DIR=(DATA_ROOT / "eval").resolve()
 GROUND_TRUTH_PATH=(EVAL_DATA_DIR / "qa.json").resolve()
+MAX_GROUND_TRUTH_UPLOAD_BYTES=10 * 1024 * 1024
 
 class RunRequest(BaseModel):
     config_path: str = "/app/configs/default.yaml"
@@ -208,13 +209,43 @@ async def upload_data(files: list[UploadFile] = File(...)):
         saved.append(str(dest))
     return {"saved":saved}
 
+def _validate_question_request(item: object, index: int) -> dict:
+    try:
+        if hasattr(QuestionRequest, "model_validate"):
+            question=QuestionRequest.model_validate(item)
+        else:
+            question=QuestionRequest.parse_obj(item)
+    except ValidationError as exc:
+        raise HTTPException(
+            status_code=400, detail=f"Invalid question at index {index}: {exc}"
+        )
+    return _question_payload(question)
+
+def _parse_ground_truth_upload(content: bytes) -> list[dict]:
+    try:
+        text=content.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise HTTPException(
+            status_code=400, detail=f"Ground-truth upload must be UTF-8 JSON: {exc}"
+        )
+    try:
+        payload=json.loads(text)
+    except json.JSONDecodeError as exc:
+        raise HTTPException(status_code=400, detail=f"Invalid ground-truth JSON: {exc}")
+    if not isinstance(payload, list):
+        raise HTTPException(
+            status_code=400, detail="Ground-truth JSON must contain a list of questions"
+        )
+    return [_validate_question_request(item, index) for index, item in enumerate(payload)]
+
 @app.post("/data/ground-truth")
 async def upload_ground_truth(file: UploadFile = File(...)):
-    EVAL_DATA_DIR.mkdir(parents=True, exist_ok=True)
-    dest=GROUND_TRUTH_PATH
-    with dest.open("wb") as out:
-        shutil.copyfileobj(file.file, out)
-    return {"saved":str(dest)}
+    content=await file.read(MAX_GROUND_TRUTH_UPLOAD_BYTES + 1)
+    if len(content) > MAX_GROUND_TRUTH_UPLOAD_BYTES:
+        raise HTTPException(status_code=413, detail="Ground-truth upload is too large")
+    questions=_parse_ground_truth_upload(content)
+    _write_ground_truth(questions)
+    return {"saved":str(GROUND_TRUTH_PATH)}
 
 
 @app.get("/data/files")

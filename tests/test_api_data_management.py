@@ -125,3 +125,101 @@ def test_run_benchmark_rejects_invalid_source_and_question_selection(tmp_path, m
     with pytest.raises(HTTPException) as question_exc:
         main.run_benchmark(main.RunRequest(config_path=str(config_path), question_indices=[3]))
     assert question_exc.value.status_code == 400
+
+
+class _UploadBytes:
+    def __init__(self, content: bytes):
+        self.content = content
+
+    async def read(self, size: int = -1):
+        if size is None or size < 0:
+            return self.content
+        return self.content[:size]
+
+
+@pytest.mark.asyncio
+async def test_upload_ground_truth_rejects_invalid_json_without_writing(tmp_path, monkeypatch):
+    eval_dir = tmp_path / "eval"
+    qa_path = eval_dir / "qa.json"
+    original = '[{"question": "Existing?"}]\n'
+    eval_dir.mkdir()
+    qa_path.write_text(original, encoding="utf-8")
+    monkeypatch.setattr(main, "EVAL_DATA_DIR", eval_dir.resolve())
+    monkeypatch.setattr(main, "GROUND_TRUTH_PATH", qa_path.resolve())
+
+    with pytest.raises(HTTPException) as exc:
+        await main.upload_ground_truth(_UploadBytes(b"not-json"))
+
+    assert exc.value.status_code == 400
+    assert qa_path.read_text(encoding="utf-8") == original
+
+
+@pytest.mark.asyncio
+async def test_upload_ground_truth_rejects_non_list_json_without_writing(tmp_path, monkeypatch):
+    eval_dir = tmp_path / "eval"
+    qa_path = eval_dir / "qa.json"
+    original = '[{"question": "Existing?"}]\n'
+    eval_dir.mkdir()
+    qa_path.write_text(original, encoding="utf-8")
+    monkeypatch.setattr(main, "EVAL_DATA_DIR", eval_dir.resolve())
+    monkeypatch.setattr(main, "GROUND_TRUTH_PATH", qa_path.resolve())
+
+    with pytest.raises(HTTPException) as exc:
+        await main.upload_ground_truth(_UploadBytes(b'{"question": "Q?"}'))
+
+    assert exc.value.status_code == 400
+    assert qa_path.read_text(encoding="utf-8") == original
+
+
+@pytest.mark.asyncio
+async def test_upload_ground_truth_rejects_malformed_question_objects_without_writing(tmp_path, monkeypatch):
+    eval_dir = tmp_path / "eval"
+    qa_path = eval_dir / "qa.json"
+    original = '[{"question": "Existing?"}]\n'
+    eval_dir.mkdir()
+    qa_path.write_text(original, encoding="utf-8")
+    monkeypatch.setattr(main, "EVAL_DATA_DIR", eval_dir.resolve())
+    monkeypatch.setattr(main, "GROUND_TRUTH_PATH", qa_path.resolve())
+
+    with pytest.raises(HTTPException) as exc:
+        await main.upload_ground_truth(
+            _UploadBytes(json.dumps([{"expected_answer": "Missing question"}]).encode("utf-8"))
+        )
+
+    assert exc.value.status_code == 400
+    assert qa_path.read_text(encoding="utf-8") == original
+
+
+@pytest.mark.asyncio
+async def test_upload_ground_truth_writes_valid_upload_after_validation(tmp_path, monkeypatch):
+    eval_dir = tmp_path / "eval"
+    qa_path = eval_dir / "qa.json"
+    eval_dir.mkdir()
+    monkeypatch.setattr(main, "EVAL_DATA_DIR", eval_dir.resolve())
+    monkeypatch.setattr(main, "GROUND_TRUTH_PATH", qa_path.resolve())
+    payload = [
+        {
+            "question": "What is the refund window?",
+            "expected_answer": "14 days.",
+            "ground_truth_doc_ids": ["policy.md"],
+            "ground_truth_chunk_ids": ["policy.md:1"],
+            "expected_citations": ["policy.md"],
+        },
+        {"question": "What is covered?"},
+    ]
+
+    response = await main.upload_ground_truth(
+        _UploadBytes(json.dumps(payload).encode("utf-8"))
+    )
+
+    assert response == {"saved": str(qa_path.resolve())}
+    assert json.loads(qa_path.read_text(encoding="utf-8")) == [
+        payload[0],
+        {
+            "question": "What is covered?",
+            "expected_answer": "",
+            "ground_truth_doc_ids": [],
+            "ground_truth_chunk_ids": [],
+            "expected_citations": [],
+        },
+    ]
