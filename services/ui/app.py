@@ -859,7 +859,7 @@ def show_results_layer():
                 if results is None:
                     return
 
-                summary_tab,results_tab,heatmap_tab,raw_tab=st.tabs(["📊 Run summary", "🏁 Scored results", "🔥 Retrieval heatmaps", "🔀 Compare benchmark runs", "🧾 Raw JSON"])
+                summary_tab,results_tab,heatmap_tab,compare_tab,raw_tab=st.tabs(["📊 Run summary", "🏁 Scored results", "🔥 Retrieval heatmaps", "🔀 Compare benchmark runs", "🧾 Raw JSON"])
                 with summary_tab:
                     st.markdown(_status_badge_html(selected_status), unsafe_allow_html=True)
                     _selected_run_guidance(selected_status)
@@ -878,6 +878,8 @@ def show_results_layer():
                             _selected_run_guidance(selected_status, results)
                 with heatmap_tab:
                     show_retrieval_heatmaps(results)
+                with compare_tab:
+                    show_run_comparison(runs)
                 with raw_tab:
                     if results:
                         st.json(results)
