@@ -145,15 +145,16 @@ def _apply_input_selection(config: dict, source_paths: list[str] | None, questio
 
 @app.post("/benchmarks/run")
 def run_benchmark(req: RunRequest):
-    if not Path(req.config_path).exists():
-        raise HTTPException(status_code=404, detail=f"Config not found: {req.config_path}")
-    config=load_yaml(req.config_path)
+    config_path=_resolve_config_path(req.config_path)
+    if not config_path.exists():
+        raise HTTPException(status_code=404, detail=f"Config not found: {config_path}")
+    config=load_yaml(str(config_path))
     source_paths=_validated_source_paths(req.source_paths)
     question_indices=_validated_question_indices(req.question_indices)
     config=_apply_input_selection(config, source_paths, question_indices)
     run_id=str(uuid.uuid4())
     upsert_run(run_id, config.get("experiment",{}).get("name","benchmark"), "queued", config)
-    run_benchmark_task.delay(run_id, req.config_path, {"input_selection":config.get("input_selection", {})})
+    run_benchmark_task.delay(run_id, str(config_path), {"input_selection":config.get("input_selection", {})})
     return {"run_id":run_id,"status":"queued"}
 
 @app.get("/benchmarks")
