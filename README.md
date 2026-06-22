@@ -260,6 +260,18 @@ pipeline:
       - type: my_chunker
 ```
 
+## Contributing
+
+Contributions are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, local run instructions, test commands, coding style, and issue/PR expectations. All participants are expected to follow the [Code of Conduct](CODE_OF_CONDUCT.md).
+
+## Security
+
+Please report suspected vulnerabilities privately instead of opening a public issue. See [SECURITY.md](SECURITY.md) for supported versions and vulnerability-reporting instructions.
+
+## License
+
+This project is licensed under the MIT License. See [LICENSE](LICENSE) for the full license text.
+
 ## Design notes
 
 This repo deliberately avoids a blind Cartesian product explosion. The runner expands configured variants into benchmark cases, but you should keep early experiments small and controlled. Test retrieval first, then generation. If retrieval fails, answer metrics become noise.
