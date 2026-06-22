@@ -1,3 +1,4 @@
+# Pinned runtime install set for Docker builds; keep in sync with [project.dependencies] in pyproject.toml.
 fastapi==0.115.6
 uvicorn[standard]==0.34.0
 celery==5.4.0
