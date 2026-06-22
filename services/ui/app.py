@@ -852,18 +852,17 @@ def show_results_layer():
                 with st.expander("🔀 Compare benchmark runs", expanded=False):
                     show_run_comparison(runs)
 
+                run_payload=api_get_json(f"{API}/benchmarks/{run_id}", timeout=30, error_context="Could not load run summary")
+                if run_payload is None:
+                    return
+                selected_status=run_payload.get("status", selected_status)
+
                 summary_tab,results_tab,heatmap_tab,raw_tab=st.tabs(["📊 Run summary", "🏁 Scored results", "🔥 Retrieval heatmaps", "🧾 Raw JSON"])
                 with summary_tab:
-                    run_payload=api_get_json(f"{API}/benchmarks/{run_id}", timeout=30, error_context="Could not load run summary")
-                    if run_payload is not None:
-                        selected_status=run_payload.get("status", selected_status)
-                        st.markdown(_status_badge_html(selected_status), unsafe_allow_html=True)
-                        _selected_run_guidance(selected_status)
-                        st.json(run_payload)
+                    st.markdown(_status_badge_html(selected_status), unsafe_allow_html=True)
+                    _selected_run_guidance(selected_status)
+                    st.json(run_payload)
                 with results_tab:
-                    run_payload=api_get_json(f"{API}/benchmarks/{run_id}", timeout=30, error_context="Could not load run summary")
-                    if run_payload is not None:
-                        selected_status=run_payload.get("status", selected_status)
                     results=api_get_json(f"{API}/benchmarks/{run_id}/results", timeout=60, error_context="Could not load run results")
                     if results is None:
                         return
