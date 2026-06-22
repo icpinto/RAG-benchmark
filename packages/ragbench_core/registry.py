@@ -1,6 +1,6 @@
 from __future__ import annotations
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, ClassVar
 from ragbench_core.interfaces import *
 
 @dataclass
@@ -22,22 +22,32 @@ class ComponentRegistry:
     citation_validators: dict[str, BaseCitationValidator] = field(default_factory=dict)
     metrics: dict[str, BaseMetric] = field(default_factory=dict)
 
-    def register_extractor(self, x): self.extractors[x.name] = x
-    def register_cleaner(self, x): self.cleaners[x.name] = x
-    def register_chunker(self, x): self.chunkers[x.name] = x
-    def register_metadata_enricher(self, x): self.metadata_enrichers[x.name] = x
-    def register_embedder(self, x): self.embedders[x.name] = x
-    def register_indexer(self, x): self.indexers[x.name] = x
-    def register_rewriter(self, x): self.rewriters[x.name] = x
-    def register_retriever(self, x): self.retrievers[x.name] = x
-    def register_filter(self, x): self.filters[x.name] = x
-    def register_reranker(self, x): self.rerankers[x.name] = x
-    def register_compressor(self, x): self.compressors[x.name] = x
-    def register_assembler(self, x): self.assemblers[x.name] = x
-    def register_prompt_builder(self, x): self.prompt_builders[x.name] = x
-    def register_generator(self, x): self.generators[x.name] = x
-    def register_citation_validator(self, x): self.citation_validators[x.name] = x
-    def register_metric(self, x): self.metrics[x.name] = x
+    _REGISTER_METHOD_GROUPS: ClassVar[dict[str, str]] = {
+        "register_extractor": "extractors",
+        "register_cleaner": "cleaners",
+        "register_chunker": "chunkers",
+        "register_metadata_enricher": "metadata_enrichers",
+        "register_embedder": "embedders",
+        "register_indexer": "indexers",
+        "register_rewriter": "rewriters",
+        "register_retriever": "retrievers",
+        "register_filter": "filters",
+        "register_reranker": "rerankers",
+        "register_compressor": "compressors",
+        "register_assembler": "assemblers",
+        "register_prompt_builder": "prompt_builders",
+        "register_generator": "generators",
+        "register_citation_validator": "citation_validators",
+        "register_metric": "metrics",
+    }
+
+    def register(self, group: str, component: Any) -> None:
+        getattr(self, group)[component.name] = component
+
+    def __getattr__(self, name: str):
+        if name in self._REGISTER_METHOD_GROUPS:
+            return lambda component: self.register(self._REGISTER_METHOD_GROUPS[name], component)
+        raise AttributeError(f"{type(self).__name__!s} object has no attribute {name!r}")
 
 REGISTRY = ComponentRegistry()
 
@@ -83,28 +93,69 @@ def register_builtin_components() -> ComponentRegistry:
     from ragbench_core.components.validators import SimpleCitationValidator
     from ragbench_core.components.metrics import RetrievalMetrics, OperationalMetric, CitationCoverageMetric, PlaceholderAnswerMetric, PlaceholderFaithfulnessMetric
 
-    for c in [TxtExtractor(), MarkdownExtractor(), PdfExtractor(), HtmlUrlExtractor(), DoclingExtractor()]: REGISTRY.register_extractor(c)
-    REGISTRY.register_cleaner(BasicCleaner())
-    for c in [
-        FixedSizeChunker(),
-        RecursiveChunker(),
-        LlamaIndexFixedSizeChunker(),
-        LlamaIndexSentenceChunker(),
-        LlamaIndexHierarchicalChunker(),
-        LlamaIndexSemanticChunker(),
-        LlamaIndexDocumentStructureChunker(),
-    ]: REGISTRY.register_chunker(c)
-    REGISTRY.register_metadata_enricher(BasicMetadataEnricher())
-    for c in [SentenceTransformerEmbedder(), OpenAIEmbedder(), VoyageEmbedder(), CohereEmbedder(), JinaEmbedder(), BGEM3Embedder(), BGEM3SparseEmbedder(), SPLADESparseEmbedder(), BGEM3HybridEmbedder()]: REGISTRY.register_embedder(c)
-    for c in [QdrantIndexer(), OpenSearchIndexer(), OpenSearchNeuralSparseIndexer(), QdrantSparseIndexer()]: REGISTRY.register_indexer(c)
-    for c in [NoRewrite(), HyDERewrite(), MultiQueryRewrite(), StepBackRewrite(), DecomposeRewrite(), SynonymExpandRewrite()]: REGISTRY.register_rewriter(c)
-    for c in [DenseRetriever(), DenseFilteredRetriever(), ParentDocumentRetriever(), BM25Retriever(), HybridRetriever(), NeuralSparseRetriever(), WeightedHybridRetriever(), MultiQueryFusionRetriever(), AdaptiveHybridRetriever()]: REGISTRY.register_retriever(c)
-    REGISTRY.register_filter(NoFilter())
-    for c in [NoReranker(), CrossEncoderReranker(), FlashRankReranker(), RankLLMReranker(), ColBERTReranker(), CohereReranker(), JinaReranker(), DiversityMMRReranker()]: REGISTRY.register_reranker(c)
-    for c in [NoCompressor(), TopNCompressor()]: REGISTRY.register_compressor(c)
-    REGISTRY.register_assembler(DefaultContextAssembler())
-    REGISTRY.register_prompt_builder(DefaultPromptBuilder())
-    REGISTRY.register_generator(OllamaGenerator())
-    REGISTRY.register_citation_validator(SimpleCitationValidator())
-    for m in [RetrievalMetrics(), OperationalMetric(), CitationCoverageMetric(), PlaceholderAnswerMetric(), PlaceholderFaithfulnessMetric()]: REGISTRY.register_metric(m)
+    builtin_components = {
+        "extractors": [TxtExtractor(), MarkdownExtractor(), PdfExtractor(), HtmlUrlExtractor(), DoclingExtractor()],
+        "cleaners": [BasicCleaner()],
+        "chunkers": [
+            FixedSizeChunker(),
+            RecursiveChunker(),
+            LlamaIndexFixedSizeChunker(),
+            LlamaIndexSentenceChunker(),
+            LlamaIndexHierarchicalChunker(),
+            LlamaIndexSemanticChunker(),
+            LlamaIndexDocumentStructureChunker(),
+        ],
+        "metadata_enrichers": [BasicMetadataEnricher()],
+        "embedders": [
+            SentenceTransformerEmbedder(),
+            OpenAIEmbedder(),
+            VoyageEmbedder(),
+            CohereEmbedder(),
+            JinaEmbedder(),
+            BGEM3Embedder(),
+            BGEM3SparseEmbedder(),
+            SPLADESparseEmbedder(),
+            BGEM3HybridEmbedder(),
+        ],
+        "indexers": [QdrantIndexer(), OpenSearchIndexer(), OpenSearchNeuralSparseIndexer(), QdrantSparseIndexer()],
+        "rewriters": [NoRewrite(), HyDERewrite(), MultiQueryRewrite(), StepBackRewrite(), DecomposeRewrite(), SynonymExpandRewrite()],
+        "retrievers": [
+            DenseRetriever(),
+            DenseFilteredRetriever(),
+            ParentDocumentRetriever(),
+            BM25Retriever(),
+            HybridRetriever(),
+            NeuralSparseRetriever(),
+            WeightedHybridRetriever(),
+            MultiQueryFusionRetriever(),
+            AdaptiveHybridRetriever(),
+        ],
+        "filters": [NoFilter()],
+        "rerankers": [
+            NoReranker(),
+            CrossEncoderReranker(),
+            FlashRankReranker(),
+            RankLLMReranker(),
+            ColBERTReranker(),
+            CohereReranker(),
+            JinaReranker(),
+            DiversityMMRReranker(),
+        ],
+        "compressors": [NoCompressor(), TopNCompressor()],
+        "assemblers": [DefaultContextAssembler()],
+        "prompt_builders": [DefaultPromptBuilder()],
+        "generators": [OllamaGenerator()],
+        "citation_validators": [SimpleCitationValidator()],
+        "metrics": [
+            RetrievalMetrics(),
+            OperationalMetric(),
+            CitationCoverageMetric(),
+            PlaceholderAnswerMetric(),
+            PlaceholderFaithfulnessMetric(),
+        ],
+    }
+
+    for group, components in builtin_components.items():
+        for component in components:
+            REGISTRY.register(group, component)
     return REGISTRY
