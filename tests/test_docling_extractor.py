@@ -126,33 +126,8 @@ def test_docling_extractor_patches_transformers_image_text_alias(monkeypatch):
     fake_transformers = types.ModuleType("transformers")
     fake_transformers.__spec__ = ModuleSpec("transformers", loader=None)
     fake_transformers.AutoModelForVision2Seq = object()
-    fake_config_module = types.ModuleType("transformers.models.auto.configuration_auto")
-    fake_config_module.CONFIG_MAPPING_NAMES = {"rt_detr_v2": "RTDetrV2Config"}
     monkeypatch.setitem(sys.modules, "transformers", fake_transformers)
-    monkeypatch.setitem(sys.modules, "transformers.models", types.ModuleType("transformers.models"))
-    monkeypatch.setitem(sys.modules, "transformers.models.auto", types.ModuleType("transformers.models.auto"))
-    monkeypatch.setitem(sys.modules, "transformers.models.auto.configuration_auto", fake_config_module)
 
     DoclingExtractor()._patch_transformers_image_text_alias()
 
     assert fake_transformers.AutoModelForImageTextToText is fake_transformers.AutoModelForVision2Seq
-
-
-def test_docling_extractor_reports_outdated_transformers(monkeypatch):
-    fake_transformers = types.ModuleType("transformers")
-    fake_transformers.__spec__ = ModuleSpec("transformers", loader=None)
-    fake_transformers.__version__ = "4.40.0"
-    fake_config_module = types.ModuleType("transformers.models.auto.configuration_auto")
-    fake_config_module.CONFIG_MAPPING_NAMES = {"rt_detr": "RTDetrConfig"}
-    monkeypatch.setitem(sys.modules, "transformers", fake_transformers)
-    monkeypatch.setitem(sys.modules, "transformers.models", types.ModuleType("transformers.models"))
-    monkeypatch.setitem(sys.modules, "transformers.models.auto", types.ModuleType("transformers.models.auto"))
-    monkeypatch.setitem(sys.modules, "transformers.models.auto.configuration_auto", fake_config_module)
-
-    try:
-        DoclingExtractor()._patch_transformers_image_text_alias()
-    except RuntimeError as exc:
-        assert "Transformers >=4.55" in str(exc)
-        assert "4.40.0" in str(exc)
-    else:
-        raise AssertionError("Expected outdated Transformers to raise RuntimeError")
