@@ -849,7 +849,10 @@ def show_results_layer():
                     f'{_status_badge_html(selected_status)}</div>',
                     unsafe_allow_html=True,
                 )
-                summary_tab,results_tab,heatmap_tab,comparison_tab,raw_tab=st.tabs(["📊 Run summary", "🏁 Scored results", "🔥 Retrieval heatmaps", "🔀 Run comparison", "🧾 Raw JSON"])
+                with st.expander("🔀 Compare benchmark runs", expanded=False):
+                    show_run_comparison(runs)
+
+                summary_tab,results_tab,heatmap_tab,raw_tab=st.tabs(["📊 Run summary", "🏁 Scored results", "🔥 Retrieval heatmaps", "🧾 Raw JSON"])
                 with summary_tab:
                     run_payload=api_get_json(f"{API}/benchmarks/{run_id}", timeout=30, error_context="Could not load run summary")
                     if run_payload is not None:
@@ -880,8 +883,6 @@ def show_results_layer():
                     if results is None:
                         return
                     show_retrieval_heatmaps(results)
-                with comparison_tab:
-                    show_run_comparison(runs)
                 with raw_tab:
                     results=api_get_json(f"{API}/benchmarks/{run_id}/results", timeout=60, error_context="Could not load run results")
                     if results is None:
