@@ -67,7 +67,9 @@ def test_run_benchmark_validates_and_embeds_input_selection(tmp_path, monkeypatc
         {"question": "Q1?"},
         {"question": "Q2?"},
     ]), encoding="utf-8")
-    config_path = tmp_path / "config.yaml"
+    config_root = (tmp_path / "configs").resolve()
+    config_root.mkdir()
+    config_path = config_root / "config.yaml"
     config_path.write_text("experiment:\n  name: selected\ndata: {}\n", encoding="utf-8")
 
     queued = {}
@@ -79,6 +81,7 @@ def test_run_benchmark_validates_and_embeds_input_selection(tmp_path, monkeypatc
             queued["config_path"] = config_path_arg
             queued["overrides"] = overrides
 
+    monkeypatch.setattr(main, "CONFIG_ROOT", config_root)
     monkeypatch.setattr(main, "RAW_DATA_DIR", raw_dir)
     monkeypatch.setattr(main, "EVAL_DATA_DIR", eval_dir)
     monkeypatch.setattr(main, "GROUND_TRUTH_PATH", qa_path)
@@ -94,6 +97,7 @@ def test_run_benchmark_validates_and_embeds_input_selection(tmp_path, monkeypatc
     )
 
     assert response["status"] == "queued"
+    assert queued["config_path"] == str(config_path)
     assert queued["overrides"] == {
         "input_selection": {
             "source_paths": [str(source)],
@@ -104,6 +108,72 @@ def test_run_benchmark_validates_and_embeds_input_selection(tmp_path, monkeypatc
     assert saved_config["input_selection"]["source_paths"] == [str(source)]
 
 
+def test_run_benchmark_resolves_relative_valid_config_for_load_and_queue(tmp_path, monkeypatch):
+    config_root = (tmp_path / "configs").resolve()
+    config_root.mkdir()
+    config_path = config_root / "nested" / "config.yaml"
+    config_path.parent.mkdir()
+    config_path.write_text("experiment:\n  name: relative\n", encoding="utf-8")
+    calls = {}
+
+    class DummyTask:
+        @staticmethod
+        def delay(run_id, config_path_arg, overrides=None):
+            calls["queued_config_path"] = config_path_arg
+
+    def fake_load_yaml(config_path_arg):
+        calls["loaded_config_path"] = config_path_arg
+        return {"experiment": {"name": "relative"}}
+
+    monkeypatch.setattr(main, "CONFIG_ROOT", config_root)
+    monkeypatch.setattr(main, "load_yaml", fake_load_yaml)
+    monkeypatch.setattr(main, "run_benchmark_task", DummyTask)
+    monkeypatch.setattr(main, "upsert_run", lambda *args, **kwargs: calls.setdefault("upsert", args))
+
+    response = main.run_benchmark(main.RunRequest(config_path="nested/config.yaml"))
+
+    assert response["status"] == "queued"
+    assert calls["loaded_config_path"] == str(config_path)
+    assert calls["queued_config_path"] == str(config_path)
+
+
+def test_run_benchmark_rejects_absolute_config_outside_config_root(tmp_path, monkeypatch):
+    config_root = (tmp_path / "configs").resolve()
+    config_root.mkdir()
+    outside_config = (tmp_path / "outside.yaml").resolve()
+    outside_config.write_text("experiment:\n  name: outside\n", encoding="utf-8")
+    monkeypatch.setattr(main, "CONFIG_ROOT", config_root)
+
+    with pytest.raises(HTTPException) as exc:
+        main.run_benchmark(main.RunRequest(config_path=str(outside_config)))
+
+    assert exc.value.status_code == 400
+
+
+def test_run_benchmark_rejects_relative_config_traversal(tmp_path, monkeypatch):
+    config_root = (tmp_path / "configs").resolve()
+    config_root.mkdir()
+    other_config = (tmp_path / "other.yaml").resolve()
+    other_config.write_text("experiment:\n  name: other\n", encoding="utf-8")
+    monkeypatch.setattr(main, "CONFIG_ROOT", config_root)
+
+    with pytest.raises(HTTPException) as exc:
+        main.run_benchmark(main.RunRequest(config_path="../other.yaml"))
+
+    assert exc.value.status_code == 400
+
+
+def test_run_benchmark_rejects_nonexistent_config_inside_config_root(tmp_path, monkeypatch):
+    config_root = (tmp_path / "configs").resolve()
+    config_root.mkdir()
+    monkeypatch.setattr(main, "CONFIG_ROOT", config_root)
+
+    with pytest.raises(HTTPException) as exc:
+        main.run_benchmark(main.RunRequest(config_path="missing.yaml"))
+
+    assert exc.value.status_code == 404
+
+
 def test_run_benchmark_rejects_invalid_source_and_question_selection(tmp_path, monkeypatch):
     raw_dir = (tmp_path / "raw").resolve()
     eval_dir = (tmp_path / "eval").resolve()
@@ -111,9 +181,12 @@ def test_run_benchmark_rejects_invalid_source_and_question_selection(tmp_path, m
     eval_dir.mkdir()
     qa_path = eval_dir / "qa.json"
     qa_path.write_text(json.dumps([{"question": "Q1?"}]), encoding="utf-8")
-    config_path = tmp_path / "config.yaml"
+    config_root = (tmp_path / "configs").resolve()
+    config_root.mkdir()
+    config_path = config_root / "config.yaml"
     config_path.write_text("experiment:\n  name: selected\n", encoding="utf-8")
 
+    monkeypatch.setattr(main, "CONFIG_ROOT", config_root)
     monkeypatch.setattr(main, "RAW_DATA_DIR", raw_dir)
     monkeypatch.setattr(main, "EVAL_DATA_DIR", eval_dir)
     monkeypatch.setattr(main, "GROUND_TRUTH_PATH", qa_path)
