@@ -96,3 +96,78 @@ def test_runner_records_case_errors_and_continues(monkeypatch, tmp_path):
     assert artifact_payload["exception_type"] == "ValueError"
     assert artifact_payload["message"] == "boom"
     assert case_error["artifact_path"] == str(artifact_path)
+
+
+def test_run_case_delegates_to_ingest_answer_and_persist(monkeypatch, tmp_path):
+    case = BenchmarkCase(
+        "case-1",
+        {"embedder": {"provider": "fake", "model": "fake-model"}},
+        {},
+        {},
+        {"retrieval_k": 1},
+    )
+    examples = [QueryExample(question="Q1?"), QueryExample(question="Q2?")]
+    calls = []
+    ingestion = {"embedding_cache": object(), "embedding_tokens": 6, "chunks": [], "index_name": "idx"}
+
+    runner = BenchmarkRunner.__new__(BenchmarkRunner)
+    runner.registry = types.SimpleNamespace()
+
+    def ingest_case(received_case, sources, full_config):
+        calls.append(("ingest", received_case.case_id, tuple(sources), full_config["runtime"]["collection_prefix"]))
+        return ingestion
+
+    def answer_question(example, received_case, chunks, index_name, caches, metric_config):
+        calls.append(
+            (
+                "answer",
+                example.question,
+                received_case.case_id,
+                chunks,
+                index_name,
+                caches["embedding"] is ingestion["embedding_cache"],
+                metric_config["pricing"],
+            )
+        )
+        return {"question": example.question}
+
+    def persist_result(run_id, example, received_case, full_config, metric_config, received_ingestion, answer_payload):
+        calls.append(
+            (
+                "persist",
+                run_id,
+                example.question,
+                received_case.case_id,
+                received_ingestion["per_question_embedding_tokens"],
+                answer_payload["question"],
+            )
+        )
+        return {"case_id": received_case.case_id, "question": example.question, "metrics": {}}
+
+    monkeypatch.setattr(runner, "_ingest_case", ingest_case)
+    monkeypatch.setattr(runner, "_answer_question", answer_question)
+    monkeypatch.setattr(runner, "_compute_and_persist_result", persist_result)
+    monkeypatch.setattr(runner_module, "build_retrieval_cache", lambda config: "retrieval-cache")
+
+    summary = runner._run_case(
+        "run-1",
+        case,
+        [str(tmp_path / "doc.md")],
+        examples,
+        {"runtime": {"collection_prefix": "test", "pricing": {"prompt": 1}}},
+    )
+
+    assert summary == {
+        "questions": 2,
+        "metric_rows": [
+            {"case_id": "case-1", "question": "Q1?", "metrics": {}},
+            {"case_id": "case-1", "question": "Q2?", "metrics": {}},
+        ],
+    }
+    assert calls == [
+        ("ingest", "case-1", (str(tmp_path / "doc.md"),), "test"),
+        ("answer", "Q1?", "case-1", [], "idx", True, {"prompt": 1}),
+        ("persist", "run-1", "Q1?", "case-1", 3, "Q1?"),
+        ("answer", "Q2?", "case-1", [], "idx", True, {"prompt": 1}),
+        ("persist", "run-1", "Q2?", "case-1", 3, "Q2?"),
+    ]

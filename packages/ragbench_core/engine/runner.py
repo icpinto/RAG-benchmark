@@ -101,9 +101,38 @@ class BenchmarkRunner:
         }
 
     def _run_case(self, run_id, case, sources, examples, full_config):
-        ing=case.ingestion_config; qry=case.query_config
+        ingestion = self._ingest_case(case, sources, full_config)
+        ingestion["per_question_embedding_tokens"] = ingestion["embedding_tokens"] / len(examples) if examples else 0
+        caches = {
+            "embedding": ingestion["embedding_cache"],
+            "retrieval": build_retrieval_cache(full_config),
+        }
+        metric_config = {**case.metric_config, "pricing": full_config.get("runtime", {}).get("pricing", {})}
+        metric_rows=[]
+        for example in examples:
+            answer_payload = self._answer_question(
+                example,
+                case,
+                ingestion["chunks"],
+                ingestion["index_name"],
+                caches,
+                metric_config,
+            )
+            row = self._compute_and_persist_result(
+                run_id,
+                example,
+                case,
+                full_config,
+                metric_config,
+                ingestion,
+                answer_payload,
+            )
+            metric_rows.append(row)
+        return {"questions":len(examples),"metric_rows":metric_rows}
+
+    def _ingest_case(self, case, sources, full_config):
+        ing=case.ingestion_config
         embedding_cache=build_embedding_cache(full_config)
-        retrieval_cache=build_retrieval_cache(full_config)
         docs=[]
         extractor_configs = ing.get("extractor_configs", {})
         for source in sources:
@@ -131,98 +160,134 @@ class BenchmarkRunner:
         ingest_token_usage=consume_token_usage()
         estimated_ingest_embedding_tokens = count_texts_tokens([chunk.text for chunk in chunks], ing["embedder"].get("model"))
         ingest_embedding_tokens = ingest_token_usage.get("embedding_tokens") or estimated_ingest_embedding_tokens
-        per_question_ingest_embedding_tokens = ingest_embedding_tokens / len(examples) if examples else 0
-        metric_rows=[]
-        metric_config = {**case.metric_config, "pricing": full_config.get("runtime", {}).get("pricing", {})}
+        return {
+            "chunks": chunks,
+            "index_name": index_name,
+            "embedder": embedder,
+            "embedding_cache": embedding_cache,
+            "client_timings": ingest_client_timings,
+            "token_usage": ingest_token_usage,
+            "embedding_tokens": ingest_embedding_tokens,
+            "timings": {
+                "ingestion_latency_seconds": ingest_timer["seconds"],
+                "ingestion_embedding_seconds": ingest_embedding_timer["seconds"],
+                "persistence_seconds": persistence_timer["seconds"],
+            },
+        }
+
+    def _answer_question(self, example, case, chunks, index_name, caches, metric_config):
+        ing=case.ingestion_config; qry=case.query_config
         max_k = max(RetrievalMetrics._validate_retrieval_k(metric_config))
-        for example in examples:
-            with timer() as query_timer:
-                rewritten_queries=self.registry.rewriters[qry["rewriter"]["type"]].rewrite(example.question, qry["rewriter"], case.llm_config)
-                retriever=self.registry.retrievers[qry["retriever"]["type"]]
-                with timer() as query_embedding_timer:
-                    q_embs=embed_queries_cached(embedding_cache, embedder, rewritten_queries, ing["embedder"])
-                with timer() as retrieval_timer:
-                    result_sets=retrieve_batch_cached(retrieval_cache, retriever, rewritten_queries, q_embs, index_name, qry["retriever"], max_k)
-                if qry["retriever"]["type"] == "multi_query_fusion":
-                    combined=retriever.fuse(result_sets, qry["retriever"], max_k)
-                else:
-                    combined=self._dedupe([result for result_set in result_sets for result in result_set])[:max_k]
-                raw_retrieval_results=self._snapshot_results(combined)
-                for f_conf in qry.get("filters", []):
-                    combined=self.registry.filters[f_conf["type"]].filter(combined, f_conf)
-                with timer() as reranking_timer:
-                    combined=self.registry.rerankers[qry["reranker"]["type"]].rerank(example.question, combined, qry["reranker"])
-                reranked_results=self._snapshot_results(combined)
-                combined=self.registry.compressors[qry["compressor"]["type"]].compress(example.question, combined, qry["compressor"])
-                context=self.registry.assemblers[qry["context_assembler"]["type"]].assemble(combined, qry["context_assembler"])
-                prompt=self.registry.prompt_builders[qry["prompt_builder"]["type"]].build(example.question, context, qry["prompt_builder"])
-                with timer() as generation_timer:
-                    generation_result=self.registry.generators[case.llm_config["provider"]].generate(prompt, case.llm_config)
-                if isinstance(generation_result, dict):
-                    answer_text=str(generation_result.get("answer", ""))
-                    generation_metadata=dict(generation_result.get("metadata") or {})
-                else:
-                    answer_text=str(generation_result)
-                    generation_metadata={}
-                query_embedding_token_estimate=count_texts_tokens(list(rewritten_queries), ing["embedder"].get("model"))
-                gen=GeneratedAnswer(
-                    answer_text,
-                    prompt,
-                    [r.chunk for r in combined],
-                    {
-                        **generation_metadata,
-                        "rewritten_queries": rewritten_queries,
-                        "raw_retrieval_results": raw_retrieval_results,
-                        "reranked_results": reranked_results,
-                        "context_text": context,
-                        "embedding_model": ing["embedder"].get("model"),
-                        "embedding_tokens": per_question_ingest_embedding_tokens + query_embedding_token_estimate,
-                    },
-                )
-                evaluation_step=build_evaluation_step(example.question, rewritten_queries, combined, context, prompt)
-            query_client_timings=consume_client_timings()
-            query_token_usage=consume_token_usage()
-            if query_token_usage.get("embedding_tokens") or ingest_token_usage.get("embedding_tokens"):
-                gen.metadata["embedding_tokens"] = per_question_ingest_embedding_tokens + query_token_usage.get("embedding_tokens", query_embedding_token_estimate)
-            metrics={
-                "ingestion_latency_seconds":ingest_timer["seconds"],
+        embedder=self.registry.embedders[ing["embedder"]["provider"]]
+        with timer() as query_timer:
+            rewritten_queries=self.registry.rewriters[qry["rewriter"]["type"]].rewrite(example.question, qry["rewriter"], case.llm_config)
+            retriever=self.registry.retrievers[qry["retriever"]["type"]]
+            with timer() as query_embedding_timer:
+                q_embs=embed_queries_cached(caches["embedding"], embedder, rewritten_queries, ing["embedder"])
+            with timer() as retrieval_timer:
+                result_sets=retrieve_batch_cached(caches["retrieval"], retriever, rewritten_queries, q_embs, index_name, qry["retriever"], max_k)
+            if qry["retriever"]["type"] == "multi_query_fusion":
+                combined=retriever.fuse(result_sets, qry["retriever"], max_k)
+            else:
+                combined=self._dedupe([result for result_set in result_sets for result in result_set])[:max_k]
+            raw_retrieval_results=self._snapshot_results(combined)
+            for f_conf in qry.get("filters", []):
+                combined=self.registry.filters[f_conf["type"]].filter(combined, f_conf)
+            with timer() as reranking_timer:
+                combined=self.registry.rerankers[qry["reranker"]["type"]].rerank(example.question, combined, qry["reranker"])
+            reranked_results=self._snapshot_results(combined)
+            combined=self.registry.compressors[qry["compressor"]["type"]].compress(example.question, combined, qry["compressor"])
+            context=self.registry.assemblers[qry["context_assembler"]["type"]].assemble(combined, qry["context_assembler"])
+            prompt=self.registry.prompt_builders[qry["prompt_builder"]["type"]].build(example.question, context, qry["prompt_builder"])
+            with timer() as generation_timer:
+                generation_result=self.registry.generators[case.llm_config["provider"]].generate(prompt, case.llm_config)
+            if isinstance(generation_result, dict):
+                answer_text=str(generation_result.get("answer", ""))
+                generation_metadata=dict(generation_result.get("metadata") or {})
+            else:
+                answer_text=str(generation_result)
+                generation_metadata={}
+            query_embedding_token_estimate=count_texts_tokens(list(rewritten_queries), ing["embedder"].get("model"))
+            gen=GeneratedAnswer(
+                answer_text,
+                prompt,
+                [r.chunk for r in combined],
+                {
+                    **generation_metadata,
+                    "rewritten_queries": rewritten_queries,
+                    "raw_retrieval_results": raw_retrieval_results,
+                    "reranked_results": reranked_results,
+                    "context_text": context,
+                    "embedding_model": ing["embedder"].get("model"),
+                    "embedding_tokens": query_embedding_token_estimate,
+                },
+            )
+            evaluation_step=build_evaluation_step(example.question, rewritten_queries, combined, context, prompt)
+        query_client_timings=consume_client_timings()
+        query_token_usage=consume_token_usage()
+        return {
+            "generated_answer": gen,
+            "answer_text": answer_text,
+            "selected_results": combined,
+            "raw_retrieval_results": raw_retrieval_results,
+            "reranked_results": reranked_results,
+            "rewritten_queries": rewritten_queries,
+            "context": context,
+            "prompt": prompt,
+            "evaluation_step": evaluation_step,
+            "client_timings": query_client_timings,
+            "token_usage": query_token_usage,
+            "query_embedding_token_estimate": query_embedding_token_estimate,
+            "timings": {
                 "query_latency_seconds":query_timer["seconds"],
-                "client_initialization_seconds":ingest_client_timings.get("client_initialization_seconds", 0.0) + query_client_timings.get("client_initialization_seconds", 0.0),
-                "ingestion_embedding_seconds":ingest_embedding_timer["seconds"],
                 "query_embedding_seconds":query_embedding_timer["seconds"],
                 "retrieval_seconds":retrieval_timer["seconds"],
                 "reranking_seconds":reranking_timer["seconds"],
                 "generation_seconds":generation_timer["seconds"],
-                "persistence_seconds":persistence_timer["seconds"],
-                "chunk_count":len(chunks),
-            }
-            for metric in self.registry.metrics.values():
-                metrics.update(metric.compute(example, combined, gen, metric_config))
-            val=self.registry.citation_validators[qry["citation_validator"]["type"]].validate(gen, example.expected_citations, qry["citation_validator"])
-            metrics.update(val)
-            row={"case_id":case.case_id,"question":example.question,"metrics":metrics}
-            metric_rows.append(row)
-            result_id=stable_id(run_id,case.case_id,example.question)
-            with timer() as result_persistence_timer:
-                insert_result(
-                    result_id,
-                    run_id,
-                    case.case_id,
-                    example.question,
-                    metrics,
-                    answer_text,
-                    {"ingestion":ing,"query":qry,"llm":case.llm_config,"evaluation_step":evaluation_step},
-                    artifact_paths=self._write_result_artifacts(full_config, run_id, case.case_id, result_id, {
-                        "expanded_config":{"ingestion":ing,"query":qry,"llm":case.llm_config,"metrics":metric_config},
-                        "retrieval_traces":{"raw":retrieval_results_payload(raw_retrieval_results),"reranked":retrieval_results_payload(reranked_results)},
-                        "prompt":{"question":example.question,"rewritten_queries":rewritten_queries,"context":context,"prompt":prompt},
-                        "response":{"answer":answer_text,"metadata":gen.metadata},
-                        "metrics":metrics,
-                    }),
-                    model_identifiers=model_identifiers(full_config),
-                )
-            metrics["result_persistence_seconds"]=result_persistence_timer["seconds"]
-        return {"questions":len(examples),"metric_rows":metric_rows}
+            },
+        }
+
+    def _compute_and_persist_result(self, run_id, example, case, full_config, metric_config, ingestion, answer_payload):
+        ing=case.ingestion_config; qry=case.query_config
+        gen=answer_payload["generated_answer"]
+        query_token_usage=answer_payload["token_usage"]
+        per_question_ingest_embedding_tokens = ingestion.get("per_question_embedding_tokens", 0)
+        if query_token_usage.get("embedding_tokens") or ingestion["token_usage"].get("embedding_tokens"):
+            gen.metadata["embedding_tokens"] = per_question_ingest_embedding_tokens + query_token_usage.get("embedding_tokens", answer_payload["query_embedding_token_estimate"])
+        else:
+            gen.metadata["embedding_tokens"] = per_question_ingest_embedding_tokens + answer_payload["query_embedding_token_estimate"]
+        metrics={
+            **ingestion["timings"],
+            **answer_payload["timings"],
+            "client_initialization_seconds":ingestion["client_timings"].get("client_initialization_seconds", 0.0) + answer_payload["client_timings"].get("client_initialization_seconds", 0.0),
+            "chunk_count":len(ingestion["chunks"]),
+        }
+        for metric in self.registry.metrics.values():
+            metrics.update(metric.compute(example, answer_payload["selected_results"], gen, metric_config))
+        val=self.registry.citation_validators[qry["citation_validator"]["type"]].validate(gen, example.expected_citations, qry["citation_validator"])
+        metrics.update(val)
+        row={"case_id":case.case_id,"question":example.question,"metrics":metrics}
+        result_id=stable_id(run_id,case.case_id,example.question)
+        with timer() as result_persistence_timer:
+            insert_result(
+                result_id,
+                run_id,
+                case.case_id,
+                example.question,
+                metrics,
+                answer_payload["answer_text"],
+                {"ingestion":ing,"query":qry,"llm":case.llm_config,"evaluation_step":answer_payload["evaluation_step"]},
+                artifact_paths=self._write_result_artifacts(full_config, run_id, case.case_id, result_id, {
+                    "expanded_config":{"ingestion":ing,"query":qry,"llm":case.llm_config,"metrics":metric_config},
+                    "retrieval_traces":{"raw":retrieval_results_payload(answer_payload["raw_retrieval_results"]),"reranked":retrieval_results_payload(answer_payload["reranked_results"])},
+                    "prompt":{"question":example.question,"rewritten_queries":answer_payload["rewritten_queries"],"context":answer_payload["context"],"prompt":answer_payload["prompt"]},
+                    "response":{"answer":answer_payload["answer_text"],"metadata":gen.metadata},
+                    "metrics":metrics,
+                }),
+                model_identifiers=model_identifiers(full_config),
+            )
+        metrics["result_persistence_seconds"]=result_persistence_timer["seconds"]
+        return row
 
     def _write_result_artifacts(self, config, run_id, case_id, result_id, payloads):
         paths={}
