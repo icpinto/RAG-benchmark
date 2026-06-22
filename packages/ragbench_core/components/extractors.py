@@ -197,18 +197,27 @@ class DoclingExtractor(BaseExtractor):
             raise RuntimeError(f"Docling failed to extract {p}: {exc}") from exc
 
     def _patch_transformers_image_text_alias(self) -> None:
-        """Backfill a Transformers auto-model alias expected by Docling.
+        """Backfill compatible Transformers features expected by Docling.
 
-        Some compatible Transformers releases expose the image-to-text auto
-        class as ``AutoModelForVision2Seq`` but not yet as
-        ``AutoModelForImageTextToText``. Docling imports the newer name during
-        converter setup, so add the alias before importing Docling when the
-        installed Transformers package supports the older equivalent.
+        Docling imports newer Transformers APIs during converter setup. Keep a
+        small compatibility shim for releases that expose the vision-to-text
+        auto class under its previous name, and fail fast with an actionable
+        dependency error when a release is too old for Docling's RT-DETRv2 layout
+        checkpoints.
         """
         if "transformers" not in sys.modules and importlib.util.find_spec("transformers") is None:
             return
 
         import transformers
+        from transformers.models.auto.configuration_auto import CONFIG_MAPPING_NAMES
+
+        if "rt_detr_v2" not in CONFIG_MAPPING_NAMES:
+            version = getattr(transformers, "__version__", "unknown")
+            raise RuntimeError(
+                "Docling requires Transformers >=4.55 for RT-DETRv2 layout model "
+                f"support, but found Transformers {version}. Upgrade the "
+                "transformers package."
+            )
 
         if hasattr(transformers, "AutoModelForImageTextToText"):
             return
