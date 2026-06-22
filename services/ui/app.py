@@ -857,15 +857,16 @@ def show_results_layer():
                     return
                 selected_status=run_payload.get("status", selected_status)
 
+                results=api_get_json(f"{API}/benchmarks/{run_id}/results", timeout=60, error_context="Could not load run results")
+                if results is None:
+                    return
+
                 summary_tab,results_tab,heatmap_tab,raw_tab=st.tabs(["📊 Run summary", "🏁 Scored results", "🔥 Retrieval heatmaps", "🧾 Raw JSON"])
                 with summary_tab:
                     st.markdown(_status_badge_html(selected_status), unsafe_allow_html=True)
                     _selected_run_guidance(selected_status)
                     st.json(run_payload)
                 with results_tab:
-                    results=api_get_json(f"{API}/benchmarks/{run_id}/results", timeout=60, error_context="Could not load run results")
-                    if results is None:
-                        return
                     if results:
                         rows=[]
                         for item in results:
@@ -878,14 +879,8 @@ def show_results_layer():
                         with st.spinner("Waiting for benchmark results…"):
                             _selected_run_guidance(selected_status, results)
                 with heatmap_tab:
-                    results=api_get_json(f"{API}/benchmarks/{run_id}/results", timeout=60, error_context="Could not load run results")
-                    if results is None:
-                        return
                     show_retrieval_heatmaps(results)
                 with raw_tab:
-                    results=api_get_json(f"{API}/benchmarks/{run_id}/results", timeout=60, error_context="Could not load run results")
-                    if results is None:
-                        return
                     if results:
                         st.json(results)
                     else:
