@@ -1,6 +1,5 @@
 import sys
 import types
-from importlib.machinery import ModuleSpec
 
 from ragbench_core.components.extractors import DoclingExtractor
 
@@ -120,14 +119,3 @@ def test_docling_extractor_converts_supported_file_with_structured_table_and_ima
     )[0]
     assert "A diagram showing request flow" in doc_with_descriptions.text
     assert doc_with_descriptions.metadata["images"][0]["description"] == "A diagram showing request flow"
-
-
-def test_docling_extractor_patches_transformers_image_text_alias(monkeypatch):
-    fake_transformers = types.ModuleType("transformers")
-    fake_transformers.__spec__ = ModuleSpec("transformers", loader=None)
-    fake_transformers.AutoModelForVision2Seq = object()
-    monkeypatch.setitem(sys.modules, "transformers", fake_transformers)
-
-    DoclingExtractor()._patch_transformers_image_text_alias()
-
-    assert fake_transformers.AutoModelForImageTextToText is fake_transformers.AutoModelForVision2Seq

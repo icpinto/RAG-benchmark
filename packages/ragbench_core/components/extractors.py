@@ -1,9 +1,7 @@
 from __future__ import annotations
 from pathlib import Path
 from datetime import datetime, timezone
-import importlib.util
 import mimetypes
-import sys
 
 from ragbench_core.interfaces import BaseExtractor
 from ragbench_core.models.schema import Document
@@ -181,7 +179,6 @@ class DoclingExtractor(BaseExtractor):
             return []
 
         try:
-            self._patch_transformers_image_text_alias()
             from docling.document_converter import DocumentConverter
 
             converter = DocumentConverter()
@@ -195,27 +192,6 @@ class DoclingExtractor(BaseExtractor):
             if config.get("ignore_errors"):
                 return []
             raise RuntimeError(f"Docling failed to extract {p}: {exc}") from exc
-
-    def _patch_transformers_image_text_alias(self) -> None:
-        """Backfill a Transformers auto-model alias expected by Docling.
-
-        Some compatible Transformers releases expose the image-to-text auto
-        class as ``AutoModelForVision2Seq`` but not yet as
-        ``AutoModelForImageTextToText``. Docling imports the newer name during
-        converter setup, so add the alias before importing Docling when the
-        installed Transformers package supports the older equivalent.
-        """
-        if "transformers" not in sys.modules and importlib.util.find_spec("transformers") is None:
-            return
-
-        import transformers
-
-        if hasattr(transformers, "AutoModelForImageTextToText"):
-            return
-
-        vision_model = getattr(transformers, "AutoModelForVision2Seq", None)
-        if vision_model is not None:
-            transformers.AutoModelForImageTextToText = vision_model
 
     def _export_text(self, document, config: dict) -> str:
         export_format = config.get("export_format", "markdown")
