@@ -99,6 +99,18 @@ def apply_app_theme():
     st.markdown(
         """
         <style>
+        :root {
+            --rag-bg: var(--background-color, #FFFFFF);
+            --rag-card-bg: color-mix(in srgb, var(--background-color, #FFFFFF) 92%, var(--primary-color, #2563EB) 8%);
+            --rag-card-border: color-mix(in srgb, var(--text-color, #111827) 18%, transparent);
+            --rag-hero-bg: linear-gradient(135deg,
+                color-mix(in srgb, var(--primary-color, #2563EB) 18%, var(--background-color, #FFFFFF)) 0%,
+                var(--background-color, #FFFFFF) 52%,
+                color-mix(in srgb, var(--primary-color, #2563EB) 10%, var(--background-color, #FFFFFF)) 100%);
+            --rag-text: var(--text-color, #111827);
+            --rag-muted-text: color-mix(in srgb, var(--text-color, #111827) 76%, var(--background-color, #FFFFFF));
+            --rag-control-gap: 1rem;
+        }
         .block-container {
             padding-top: 2rem;
             padding-bottom: 3rem;
@@ -106,34 +118,66 @@ def apply_app_theme():
         [data-testid="stMetricValue"] {
             font-size: 1.35rem;
         }
-        div[data-testid="stExpander"] details {
-            border-radius: 0.75rem;
-        }
-        .rag-hero {
-            background: linear-gradient(135deg, #EEF5FF 0%, #F8FBFF 48%, #F3EFFF 100%);
-            border: 1px solid #DCE8FF;
-            border-radius: 1.25rem;
-            padding: 1.35rem 1.5rem;
+        div[data-testid="stTabs"] {
+            margin-top: .75rem;
             margin-bottom: 1.25rem;
         }
+        div[data-testid="stTabs"] [role="tablist"] {
+            gap: .35rem;
+            margin-bottom: .75rem;
+        }
+        div[data-testid="stExpander"] {
+            margin: .85rem 0 1.1rem;
+        }
+        div[data-testid="stExpander"] details {
+            border-radius: 0.75rem;
+            border-color: var(--rag-card-border);
+        }
+        div[data-testid="stDataFrame"],
+        div[data-testid="stForm"] {
+            margin: .85rem 0 1.15rem;
+        }
+        div[data-testid="stForm"] {
+            border-color: var(--rag-card-border);
+            border-radius: .9rem;
+            padding: 1rem;
+        }
+        .rag-hero {
+            background: var(--rag-hero-bg);
+            border: 1px solid var(--rag-card-border);
+            border-radius: 1.25rem;
+            padding: 1.45rem 1.55rem;
+            margin-bottom: 1.35rem;
+            color: var(--rag-text);
+            box-shadow: 0 0.5rem 1.5rem color-mix(in srgb, var(--text-color, #111827) 10%, transparent);
+        }
         .rag-hero h1 {
-            margin: 0 0 .35rem 0;
-            color: #12263F;
+            margin: 0 0 .4rem 0;
+            color: var(--rag-text);
+            letter-spacing: -0.02em;
         }
         .rag-hero p {
             margin: 0;
-            color: #486581;
+            color: var(--rag-muted-text);
             font-size: 1.05rem;
+            line-height: 1.55;
         }
         .section-card {
-            border: 1px solid #E6ECF5;
+            border: 1px solid var(--rag-card-border);
             border-radius: 1rem;
-            padding: 1rem 1.1rem;
-            background: #FFFFFF;
-            margin-bottom: 1rem;
+            padding: 1.05rem 1.15rem;
+            background: var(--rag-card-bg);
+            color: var(--rag-text);
+            margin-bottom: 1.1rem;
         }
         .section-card h3 {
-            margin-top: 0;
+            margin: 0 0 .35rem 0;
+            color: var(--rag-text);
+        }
+        .section-card p {
+            margin: 0;
+            color: var(--rag-muted-text);
+            line-height: 1.55;
         }
 
         .run-status-badge {
@@ -149,11 +193,12 @@ def apply_app_theme():
             white-space: nowrap;
         }
         .run-guidance-card {
-            border: 1px solid #D7E3F4;
+            border: 1px solid var(--rag-card-border);
             border-radius: .9rem;
-            background: #F8FBFF;
-            padding: .9rem 1rem;
-            margin: .6rem 0 1rem 0;
+            background: var(--rag-card-bg);
+            color: var(--rag-text);
+            padding: .95rem 1rem;
+            margin: .75rem 0 1.1rem 0;
         }
         </style>
         """,
@@ -222,7 +267,7 @@ def show_retrieval_heatmaps(results: list[dict]):
         st.info("No retrieval-oriented numeric metrics were found. Expected metric names containing terms such as recall, precision, mrr, ndcg, hit, retrieval, or citation.")
         return
 
-    selected_metric=st.selectbox("Heatmap metric", retrieval_metrics)
+    selected_metric=st.selectbox("Retrieval heatmap metric", retrieval_metrics, help="Choose the numeric retrieval metric to color by benchmark case and question.")
     heatmap_frame=frame.copy()
     heatmap_frame[selected_metric]=pd.to_numeric(heatmap_frame[selected_metric], errors="coerce")
     pivot=heatmap_frame.pivot_table(
@@ -257,11 +302,38 @@ def _split_csv(value: str) -> list[str]:
 def _question_form_payload(prefix: str, question: dict | None = None) -> dict:
     question=question or {}
     return {
-        "question":st.text_area("Question", value=question.get("question", ""), height=90, key=f"{prefix}_question"),
-        "expected_answer":st.text_area("Expected answer", value=question.get("expected_answer", ""), height=120, key=f"{prefix}_expected_answer"),
-        "ground_truth_doc_ids":_split_csv(st.text_input("Ground-truth document IDs (comma-separated)", value=", ".join(question.get("ground_truth_doc_ids", [])), key=f"{prefix}_doc_ids")),
-        "ground_truth_chunk_ids":_split_csv(st.text_input("Ground-truth chunk IDs (comma-separated)", value=", ".join(question.get("ground_truth_chunk_ids", [])), key=f"{prefix}_chunk_ids")),
-        "expected_citations":_split_csv(st.text_input("Expected citations (comma-separated)", value=", ".join(question.get("expected_citations", [])), key=f"{prefix}_citations")),
+        "question":st.text_area(
+            "Evaluation question text",
+            value=question.get("question", ""),
+            height=90,
+            key=f"{prefix}_question",
+            help="Enter the exact user-facing question that the benchmark should ask the RAG system.",
+        ),
+        "expected_answer":st.text_area(
+            "Expected reference answer",
+            value=question.get("expected_answer", ""),
+            height=120,
+            key=f"{prefix}_expected_answer",
+            help="Provide the ideal answer used by evaluators when judging response quality.",
+        ),
+        "ground_truth_doc_ids":_split_csv(st.text_input(
+            "Ground-truth document IDs (comma-separated)",
+            value=", ".join(question.get("ground_truth_doc_ids", [])),
+            key=f"{prefix}_doc_ids",
+            help="List document IDs that should support the answer; separate multiple IDs with commas.",
+        )),
+        "ground_truth_chunk_ids":_split_csv(st.text_input(
+            "Ground-truth chunk IDs (comma-separated)",
+            value=", ".join(question.get("ground_truth_chunk_ids", [])),
+            key=f"{prefix}_chunk_ids",
+            help="List specific chunk IDs expected in retrieval results; separate multiple IDs with commas.",
+        )),
+        "expected_citations":_split_csv(st.text_input(
+            "Expected answer citations (comma-separated)",
+            value=", ".join(question.get("expected_citations", [])),
+            key=f"{prefix}_citations",
+            help="List citation labels or source references that a correct answer should include.",
+        )),
     }
 
 
@@ -271,6 +343,7 @@ def render_quick_uploads(key_prefix: str, *, rerun_after_upload: bool = False):
         accept_multiple_files=True,
         type=["txt","md","markdown","pdf","html"],
         key=f"{key_prefix}_source_documents",
+        help="Choose one or more text, Markdown, PDF, or HTML documents to add to the benchmark knowledge base.",
     )
     if st.button("Upload source documents", key=f"{key_prefix}_upload_source_documents"):
         if not data_files:
@@ -288,6 +361,7 @@ def render_quick_uploads(key_prefix: str, *, rerun_after_upload: bool = False):
         "Replace ground-truth qa.json",
         type=["json"],
         key=f"{key_prefix}_ground_truth_json",
+        help="Upload a qa.json file to replace the current ground-truth evaluation questions.",
     )
     if st.button("Upload ground-truth JSON", key=f"{key_prefix}_upload_ground_truth_json"):
         if not gt:
@@ -317,13 +391,13 @@ def show_data_library():
             st.caption(f"Raw data directory: {listing.get('data_root', 'unknown')}")
             if files:
                 st.dataframe(pd.DataFrame(files), use_container_width=True)
-                selected_file=st.selectbox("Choose a source file to preview", [f["path"] for f in files])
+                selected_file=st.selectbox("Source file to preview", [f["path"] for f in files], help="Select an uploaded source document and view its extracted text below.")
                 if selected_file:
                     try:
 
                         content=api_get_json(f"{API}/data/files/content", params={"path":selected_file}, timeout=30, error_context="Could not preview file")
                         if content is not None:
-                            st.text_area("Source file preview", value=content.get("content", ""), height=360, disabled=True)
+                            st.text_area("Read-only source file preview", value=content.get("content", ""), height=360, disabled=True, help="Preview of the selected source file content; this field cannot be edited here.")
                     except Exception as e:
                         st.warning(f"Could not preview file: {e}")
             else:
@@ -349,7 +423,7 @@ def show_data_library():
                         "expected_citations":", ".join(item.get("expected_citations", [])),
                     })
                 st.dataframe(pd.DataFrame(rows), use_container_width=True)
-                selected_index=st.selectbox("Choose a question to review", range(len(questions)), format_func=lambda i: f"{i + 1}. {questions[i].get('question', '')[:90]}")
+                selected_index=st.selectbox("Ground-truth question to review", range(len(questions)), format_func=lambda i: f"{i + 1}. {questions[i].get('question', '')[:90]}", help="Select an existing evaluation question to edit or delete.")
                 with st.form(f"edit_question_{selected_index}"):
                     edited=_question_form_payload(f"edit_{selected_index}", questions[selected_index])
                     edit_col,delete_col=st.columns(2)
@@ -388,9 +462,10 @@ def show_data_library():
 def show_evaluation_step_details(results: list[dict]):
     st.subheader("Trace Explorer")
     detail_index=st.selectbox(
-        "Choose a result to inspect",
+        "Scored result to inspect",
         range(len(results)),
         format_func=lambda index: _result_label(results[index], index),
+        help="Choose the individual scored answer whose context, prompt, chunks, and case config you want to inspect.",
     )
     selected=results[detail_index]
     widget_key=f"{selected.get('case_id')}_{detail_index}"
@@ -474,7 +549,7 @@ def show_test_config_setup():
         st.subheader("Saved configurations")
         config_files=config_listing.get("files",[])
         if config_files:
-            selected_config=st.selectbox("Choose a saved YAML config", config_files, index=0)
+            selected_config=st.selectbox("Saved YAML configuration", config_files, index=0, help="Select a configuration file discovered in the configs directory.")
             if st.button("Load selected YAML"):
                 try:
 
@@ -485,7 +560,7 @@ def show_test_config_setup():
         else:
             st.info("No saved configs were found.")
 
-        config_path=st.text_input("Config path in container", key="config_path_input")
+        config_path=st.text_input("Configuration file path in the container", key="config_path_input", help="Enter the absolute path to the YAML config the API should load or save.")
         st.session_state.config_path=config_path
         if st.button("Load from path"):
             try:
@@ -678,10 +753,11 @@ def show_run_comparison(runs: list[dict]):
     listed_run_labels=_run_label_lookup(listed_run_payloads)
     default_run_ids=run_ids[:2] if len(run_ids) >= 2 else run_ids
     selected_run_ids=st.multiselect(
-        "Choose two or more runs to compare",
+        "Benchmark runs to compare",
         run_ids,
         default=default_run_ids,
         format_func=lambda run_id: listed_run_labels.get(run_id, _short_run_id(run_id)),
+        help="Select at least two run IDs to load their summaries and joined result metrics.",
     )
     if len(selected_run_ids) < 2:
         st.info("Select at least two runs to build a comparison.")
@@ -742,7 +818,7 @@ def show_run_comparison(runs: list[dict]):
         return
     if len(selected_run_ids) == 2:
         comparison_frame=_add_two_run_deltas(comparison_frame, selected_run_ids[0], selected_run_ids[1], run_labels)
-    grouping=st.multiselect("Comparison grouping columns", ["case_id","question","config_hash","dataset_hash","models"], default=["case_id","question"])
+    grouping=st.multiselect("Comparison grouping columns", ["case_id","question","config_hash","dataset_hash","models"], default=["case_id","question"], help="Choose metadata fields to use when reviewing side-by-side run metrics.")
     if any(column in grouping for column in ["config_hash","dataset_hash","models"]):
         st.caption("Config, dataset, and model identifiers are shown in the metadata table above; metric deltas remain joined by case and question.")
     st.write("Joined result metrics and metric deltas by case and question")
@@ -764,7 +840,7 @@ def show_results_layer():
                 st.caption("Statuses are loaded from `/benchmarks`; select a run to load its latest summary from `/benchmarks/{run_id}`.")
 
             st.dataframe(_runs_display_frame(runs), use_container_width=True)
-            run_id=st.selectbox("Choose a benchmark run", [r["id"] for r in runs])
+            run_id=st.selectbox("Benchmark run to inspect", [r["id"] for r in runs], help="Select a run ID to load its summary, scored results, heatmaps, and raw JSON.")
             if run_id:
                 selected_run=next((run for run in runs if run.get("id") == run_id), {})
                 selected_status=selected_run.get("status")
@@ -840,10 +916,11 @@ navigation_options={
 with st.sidebar:
     st.markdown("### 🧭 Workflow")
     selected_label=st.radio(
-        "Choose a workspace",
+        "Workspace navigation",
         list(navigation_options),
         format_func=lambda label: f"{navigation_options[label]['icon']} {label}",
         label_visibility="collapsed",
+        help="Switch between data preparation, benchmark setup, and results exploration workspaces.",
     )
     st.caption(navigation_options[selected_label]["description"])
 
