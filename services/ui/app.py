@@ -216,6 +216,138 @@ def section_intro(title: str, description: str):
 
 RETRIEVAL_METRIC_KEYWORDS=("recall","precision","mrr","ndcg","hit","retrieval","citation")
 
+ANSWER_METRIC_KEYWORDS=("answer","faithfulness","groundedness","relevance","correctness","similarity","f1","rouge","bleu","exact_match","score")
+RESULT_METADATA_COLUMNS={"case_id","question","answer","question_index","question_label","result_index"}
+
+def _numeric_metric_columns(frame: pd.DataFrame) -> list[str]:
+    metric_columns=[]
+    for column in frame.columns:
+        if column in RESULT_METADATA_COLUMNS:
+            continue
+        numeric_values=pd.to_numeric(frame[column], errors="coerce")
+        if numeric_values.notna().any():
+            metric_columns.append(column)
+    return metric_columns
+
+def _answer_metric_columns(frame: pd.DataFrame) -> list[str]:
+    answer_columns=[]
+    for column in _numeric_metric_columns(frame):
+        column_name=str(column).lower()
+        if any(keyword in column_name for keyword in ANSWER_METRIC_KEYWORDS):
+            answer_columns.append(column)
+    return answer_columns
+
+def _results_table_frame(results: list[dict]) -> pd.DataFrame:
+    rows=[]
+    for index,item in enumerate(results):
+        row={
+            "result_index":index,
+            "case_id":item.get("case_id", ""),
+            "question":item.get("question", ""),
+            "answer":item.get("answer", ""),
+        }
+        row.update(item.get("metrics", {}) or {})
+        rows.append(row)
+    return pd.DataFrame(rows)
+
+def _filter_results_frame(frame: pd.DataFrame, key_prefix: str) -> pd.DataFrame:
+    if frame.empty:
+        return frame
+
+    filtered_frame=frame.copy()
+    numeric_metric_columns=_numeric_metric_columns(filtered_frame)
+    retrieval_metric_columns=_retrieval_metric_columns(filtered_frame)
+    answer_metric_columns=_answer_metric_columns(filtered_frame)
+
+    st.subheader("Result filters")
+    search_text=st.text_input(
+        "Search question, answer, or case ID",
+        key=f"{key_prefix}_search",
+        help="Filter scored results by matching text in the question, generated answer, or case ID.",
+    ).strip()
+    if search_text:
+        searchable=filtered_frame[["case_id","question","answer"]].fillna("").astype(str).agg(" ".join, axis=1)
+        filtered_frame=filtered_frame[searchable.str.contains(search_text, case=False, na=False, regex=False)]
+
+    case_options=sorted(str(value) for value in frame.get("case_id", pd.Series(dtype=str)).dropna().unique())
+    selected_case_ids=st.multiselect(
+        "Case IDs",
+        case_options,
+        default=case_options,
+        key=f"{key_prefix}_case_ids",
+        help="Select which benchmark case IDs should remain visible in the results table and trace explorer.",
+    )
+    if selected_case_ids:
+        filtered_frame=filtered_frame[filtered_frame["case_id"].astype(str).isin(selected_case_ids)]
+    else:
+        filtered_frame=filtered_frame.iloc[0:0]
+
+    if numeric_metric_columns:
+        with st.expander("Metric range filters", expanded=False):
+            selected_range_metrics=st.multiselect(
+                "Numeric metrics to constrain",
+                numeric_metric_columns,
+                key=f"{key_prefix}_range_metrics",
+                help="Choose numeric metric columns and set inclusive min/max ranges for each.",
+            )
+            for metric in selected_range_metrics:
+                metric_values=pd.to_numeric(frame[metric], errors="coerce")
+                minimum=float(metric_values.min())
+                maximum=float(metric_values.max())
+                if minimum == maximum:
+                    st.caption(f"{metric}: all numeric values are {minimum:g}; no range slider needed.")
+                    continue
+                selected_min,selected_max=st.slider(
+                    f"{metric} range",
+                    min_value=minimum,
+                    max_value=maximum,
+                    value=(minimum, maximum),
+                    key=f"{key_prefix}_range_{metric}",
+                )
+                filtered_values=pd.to_numeric(filtered_frame[metric], errors="coerce")
+                filtered_frame=filtered_frame[filtered_values.between(selected_min, selected_max, inclusive="both")]
+    else:
+        st.caption("No numeric metric columns are available for range filtering or sorting.")
+
+    low_score_columns=sorted(set(retrieval_metric_columns + answer_metric_columns))
+    if low_score_columns:
+        show_low_scores=st.checkbox(
+            "Show only failures / low scores",
+            key=f"{key_prefix}_low_scores_only",
+            help="Keep rows where at least one retrieval or answer metric is at or below the selected threshold.",
+        )
+        if show_low_scores:
+            low_score_threshold=st.slider(
+                "Low-score threshold",
+                min_value=0.0,
+                max_value=1.0,
+                value=0.5,
+                step=0.05,
+                key=f"{key_prefix}_low_score_threshold",
+            )
+            low_score_mask=pd.Series(False, index=filtered_frame.index)
+            for metric in low_score_columns:
+                metric_values=pd.to_numeric(filtered_frame[metric], errors="coerce")
+                low_score_mask=low_score_mask | metric_values.le(low_score_threshold)
+            filtered_frame=filtered_frame[low_score_mask]
+
+    if numeric_metric_columns:
+        sort_columns=st.multiselect(
+            "Sort by metric columns",
+            numeric_metric_columns,
+            key=f"{key_prefix}_sort_metrics",
+            help="Choose one or more numeric metric columns to sort the filtered results.",
+        )
+        if sort_columns:
+            ascending=st.checkbox("Sort ascending", value=False, key=f"{key_prefix}_sort_ascending")
+            sortable_frame=filtered_frame.copy()
+            for metric in sort_columns:
+                sortable_frame[metric]=pd.to_numeric(sortable_frame[metric], errors="coerce")
+            filtered_frame=sortable_frame.sort_values(by=sort_columns, ascending=ascending, na_position="last")
+
+    st.caption(f"Showing {len(filtered_frame)} of {len(frame)} scored results after filters.")
+    return filtered_frame
+
 def _short_question_label(question: str, index: int, max_length: int = 48) -> str:
     question_text=(question or "").strip().replace("\n", " ")
     if not question_text:
@@ -865,13 +997,16 @@ def show_results_layer():
                     if results is None:
                         return
                     if results:
-                        rows=[]
-                        for item in results:
-                            row={"case_id":item["case_id"],"question":item["question"],"answer":item["answer"]}
-                            row.update(item.get("metrics",{}))
-                            rows.append(row)
-                        st.dataframe(pd.DataFrame(rows), use_container_width=True)
-                        show_evaluation_step_details(results)
+                        results_frame=_results_table_frame(results)
+                        filtered_results_frame=_filter_results_frame(results_frame, f"results_{run_id}")
+                        display_frame=filtered_results_frame.drop(columns=["result_index"], errors="ignore")
+                        st.dataframe(display_frame, use_container_width=True)
+                        filtered_result_indices=filtered_results_frame.get("result_index", pd.Series(dtype=int)).astype(int).tolist()
+                        filtered_results=[results[index] for index in filtered_result_indices]
+                        if filtered_results:
+                            show_evaluation_step_details(filtered_results)
+                        else:
+                            st.info("No filtered results are available to inspect in the trace explorer.")
                     else:
                         with st.spinner("Waiting for benchmark results…"):
                             _selected_run_guidance(selected_status, results)
