@@ -155,6 +155,8 @@ The benchmark YAML is organized around top-level experiment, data, pipeline, LLM
 
 ### Ingestion components
 
+![Ingestion Pipeline](docs/images/ingestion_pipeline.png)
+
 | Component | Built-in variants | Parameters | Restrictions / notes |
 |---|---|---|---|
 | Extractors | `txt`, `markdown`, `pdf`, `html_url` | In YAML, `pipeline.ingestion.extractors` is a list of extractor names, not objects. | File extensions must match extractor; `html_url` requires HTTP(S). |
@@ -165,6 +167,8 @@ The benchmark YAML is organized around top-level experiment, data, pipeline, LLM
 | Indexers | `qdrant`, `opensearch` | `pipeline.ingestion.indexers.dense.type`, `pipeline.ingestion.indexers.dense.strategy`, `pipeline.ingestion.indexers.dense.strategies`, `pipeline.ingestion.indexers.sparse.type`, `pipeline.ingestion.indexers.sparse.strategy`, `pipeline.ingestion.indexers.sparse.strategies`, `pipeline.ingestion.indexers.sparse.synonyms` | Defaults: Qdrant dense and OpenSearch sparse. Use `strategy`/`strategies` to expand cases. |
 
 ### Query components
+
+![Query Pipeline](docs/images/query_pipeline.png)
 
 | Component | Built-in variants | Parameters | Restrictions / notes |
 |---|---|---|---|
