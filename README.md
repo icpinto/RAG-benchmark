@@ -248,11 +248,8 @@ pipeline:
 
 ## Contributing
 
-Contributions are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, local run instructions, test commands, coding style, and issue/PR expectations. All participants are expected to follow the [Code of Conduct](CODE_OF_CONDUCT.md).
+Contributions are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, local run instructions, test commands, coding style, and issue/PR expectations.
 
-## Security
-
-Please report suspected vulnerabilities privately instead of opening a public issue. See [SECURITY.md](SECURITY.md) for supported versions and vulnerability-reporting instructions.
 
 ## License
 
