@@ -50,6 +50,10 @@ User question
 
 ## Architecture
 
+For a detailed walkthrough of the operator journey, service interactions, case
+expansion, ingestion/query execution, persistence, artifacts, failure behavior,
+and extension points, see [Platform flow](docs/platform-flow.md).
+
 ```text
 rag-benchmark-platform/
   docker-compose.yml
@@ -82,8 +86,8 @@ Host-accessible services:
 
 | Service | URL |
 |---|---|
-| Streamlit UI | http://localhost:8501 |
-| FastAPI docs | http://localhost:8000/docs |
+| Streamlit UI | http://localhost:8499 |
+| FastAPI docs | http://localhost:7800/docs |
 
 Supporting services such as Postgres, Redis, Qdrant, OpenSearch, MinIO, and Ollama are available only on the Docker Compose network and are not published to the host by default.
 
