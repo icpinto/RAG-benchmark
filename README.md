@@ -4,6 +4,90 @@ A runnable Python MVP for benchmarking advanced RAG pipelines across ingestion a
 
 This project is intentionally modular. Every stage is implemented behind a small interface and registered through a plugin registry, so new chunkers, extractors, embedders, retrievers, rerankers, compressors, validators, and metrics can be added without rewriting the benchmark runner.
 
+## Project status
+
+This repository is an MVP benchmark platform intended for local experimentation and comparative RAG prototyping. APIs, YAML schema fields, built-in component names, default models, metric outputs, Docker service wiring, and persisted artifacts should be treated as experimental and may change in breaking ways between releases. Pin a commit or tag before using results for longitudinal comparisons, and keep benchmark configs with any reported results.
+
+## System requirements
+
+Recommended local resources depend heavily on corpus size, benchmark grid size, and enabled ML components. For the checked-in sample corpus and the smallest quick-start path below, start with:
+
+| Resource | Practical minimum | Recommended for default config | Notes |
+|---|---:|---:|---|
+| CPU | 4 cores | 8+ cores | Embedding, PDF extraction, OpenSearch, and reranking are CPU-intensive without GPU acceleration. |
+| RAM | 8 GB | 16-32 GB | OpenSearch, Qdrant, Ollama, workers, and local models all share memory. Larger corpora and rerankers need more. |
+| Disk | 15 GB free | 30+ GB free | Docker images, OpenSearch/Qdrant data, artifacts, Hugging Face caches, and Ollama model files can grow quickly. |
+
+Local ML backends download model weights on first use. SentenceTransformers, CrossEncoder, FlashRank, Jina, BGE-M3, SPLADE, and similar optional components may populate Hugging Face or package-specific caches; Ollama models must be pulled explicitly and can require multiple gigabytes per model. If you are offline, pre-populate these caches or use already-downloaded models.
+
+## Security notes
+
+This project is designed for local development and trusted networks, not direct internet exposure. The Streamlit UI and FastAPI service do not provide production authentication or authorization, and supporting services may use development defaults inside Docker Compose. Review and rotate any credentials in `.env`, service configs, object-storage settings, or database settings before sharing an environment.
+
+Do not publish the Compose stack, Docker socket, API port, UI port, OpenSearch, Qdrant, Postgres, Redis, MinIO, or Ollama directly to the internet. Put any shared deployment behind your own authenticated reverse proxy, network firewall, TLS termination, secret-management process, and resource limits.
+
+## Minimal quick start
+
+The fastest path is to run one benchmark case against the checked-in sample corpus and evaluation file, using the default local SentenceTransformers embedder and Ollama generator. This still requires Docker and an Ollama model pull.
+
+```bash
+cp .env.example .env
+docker compose up --build -d
+docker compose exec ollama ollama pull gpt-oss:20b
+python3 - <<'PY'
+import json
+from pathlib import Path
+
+config = Path('configs/default.yaml').read_text()
+config = config.replace('max_combinations: 32', 'max_combinations: 1')
+Path('/tmp/ragbench-quickstart.yaml').write_text(config)
+print(json.dumps({
+    'config_path': '/app/configs/quickstart.yaml',
+    'content': config,
+}))
+PY
+```
+
+Save the one-case config through the API, then start the benchmark:
+
+```bash
+curl -X PUT http://localhost:8000/configs/content \
+  -H 'Content-Type: application/json' \
+  -d @<(python3 - <<'PY'
+import json
+from pathlib import Path
+print(json.dumps({
+    'config_path': '/app/configs/quickstart.yaml',
+    'content': Path('/tmp/ragbench-quickstart.yaml').read_text(),
+}))
+PY
+)
+
+curl -X POST http://localhost:8000/benchmarks/run \
+  -H 'Content-Type: application/json' \
+  -d '{"config_path":"/app/configs/quickstart.yaml"}'
+```
+
+Use the returned job ID to check status:
+
+```bash
+curl http://localhost:8000/benchmarks/<job_id>
+```
+
+## Known limitations
+
+- Answer correctness and faithfulness metrics are lightweight lexical placeholders, not semantic LLM judges; use retrieval metrics and manual review before drawing quality conclusions.
+- Several embedders, rerankers, parsers, and neural sparse components depend on optional packages, API keys, or downloadable local model weights that may not be present in the base environment.
+- Default local runs require Docker Compose services such as Qdrant, OpenSearch, Postgres, Redis, MinIO, and Ollama to be healthy; individual components can fail if their backing service is unavailable.
+- Benchmark results are sensitive to model versions, caches, corpus contents, and expanded YAML combinations, so preserve exact configs and commits with any comparison.
+
+## Project links
+
+- [License](LICENSE)
+- [Contributing guide](CONTRIBUTING.md)
+- [Security policy](SECURITY.md)
+- [Issue templates / new issue chooser](../../issues/new/choose)
+
 ## What v1 supports
 
 ### Ingestion pipeline
