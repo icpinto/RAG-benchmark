@@ -11,10 +11,14 @@ services:
       - ./data:/app/data
       - ./artifacts:/app/artifacts
     depends_on:
-      - postgres
-      - redis
-      - qdrant
-      - opensearch
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+      qdrant:
+        condition: service_started
+      opensearch:
+        condition: service_started
     command: uvicorn services.api.app.main:app --host 0.0.0.0 --port 8000 --reload
 
   worker:
@@ -27,11 +31,16 @@ services:
       - ./data:/app/data
       - ./artifacts:/app/artifacts
     depends_on:
-      - postgres
-      - redis
-      - qdrant
-      - opensearch
-      - ollama
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+      qdrant:
+        condition: service_started
+      opensearch:
+        condition: service_started
+      ollama:
+        condition: service_started
     command: celery -A services.worker.app.celery_app worker --loglevel=INFO --concurrency=1 -Q ragbench
 
   ui:
@@ -57,6 +66,13 @@ services:
       POSTGRES_DB: ragbench
       POSTGRES_USER: ragbench
       POSTGRES_PASSWORD: ragbench
+    healthcheck:
+      # Use TCP so the temporary socket-only initialization server cannot pass.
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
     volumes:
       - postgres_data:/var/lib/postgresql/data
 

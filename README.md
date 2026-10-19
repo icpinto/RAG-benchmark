@@ -79,8 +79,14 @@ The core package keeps its own small interfaces while exposing LlamaIndex chunki
 ## Run with Docker Compose
 
 ```bash
+cp .env.example .env
 docker compose up --build
 ```
+
+The API and worker wait for Postgres to pass its TCP readiness check before
+starting. This prevents an API startup `connection refused` error while Postgres
+initializes. If Postgres does not become healthy, inspect it with
+`docker compose logs postgres`.
 
 Host-accessible services:
 
