@@ -91,6 +91,11 @@ Host-accessible services:
 
 Supporting services such as Postgres, Redis, Qdrant, OpenSearch, MinIO, and Ollama are available only on the Docker Compose network and are not published to the host by default.
 
+MinIO is reserved for future object storage and is excluded from normal startup
+by the `minio` Compose profile. The application currently writes artifacts to the
+shared `artifacts/` directory. The retained MinIO image may no longer be publicly
+pullable; normal startup does not require it.
+
 Ollama is included as a service. Pull the model after containers start:
 
 ```bash
