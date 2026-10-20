@@ -26,6 +26,9 @@ services:
       context: .
       dockerfile: services/worker/Dockerfile
     env_file: .env
+    extra_hosts:
+      # Resolve host Ollama on Linux Engine as well as Docker Desktop.
+      - "host.docker.internal:host-gateway"
     volumes:
       - ./configs:/app/configs
       - ./data:/app/data

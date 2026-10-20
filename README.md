@@ -108,7 +108,36 @@ Ollama is included as a service. Pull the model after containers start:
 docker compose exec ollama ollama pull gpt-oss:20b
 ```
 
-If your machine already runs Ollama locally, set `OLLAMA_BASE_URL=http://host.docker.internal:11434` in `.env` and remove/ignore the Ollama service.
+### Use Ollama on the host
+
+If your machine already runs Ollama locally, set
+`OLLAMA_BASE_URL=http://host.docker.internal:11434` in `.env`. The worker includes
+an `extra_hosts` mapping to Docker's `host-gateway`, so this hostname also resolves
+on Linux Docker Engine. The bundled Ollama service can remain unused.
+
+After changing `.env` or the Compose host mapping, recreate the worker:
+
+```bash
+docker compose up -d --no-deps --force-recreate worker
+```
+
+A plain `docker compose restart` does not apply these changes. Verify the host
+connection from inside the worker before starting a new benchmark:
+
+```bash
+docker compose exec worker python -c "import os, requests; r = requests.get(os.environ['OLLAMA_BASE_URL'].rstrip('/') + '/api/tags', timeout=10); r.raise_for_status(); print(r.json())"
+```
+
+If the hostname resolves but the connection is refused, ensure the host Ollama
+service listens on an address reachable from Docker. On Linux Engine, the default
+`127.0.0.1:11434` listener cannot accept connections through the bridge gateway;
+configure `OLLAMA_HOST` on the host service and restart Ollama as described in the
+[Ollama server configuration guide](https://docs.ollama.com/faq#how-do-i-configure-ollama-server).
+
+Keep `llm.base_url` in your benchmark YAML set to
+`${OLLAMA_BASE_URL:http://ollama:11434}` to use the environment setting. If you
+instead use the bundled Ollama container, set `OLLAMA_BASE_URL=http://ollama:11434`.
+For a benchmark running directly on the host, use `http://localhost:11434`.
 
 ## Run a sample benchmark
 
