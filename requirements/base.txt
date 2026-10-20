@@ -23,7 +23,6 @@ scikit-learn==1.5.2
 tiktoken==0.8.0
 llama-index-core==0.12.11
 pandas==2.2.3
-streamlit==1.41.1
 httpx==0.28.1
 minio==7.2.12
 flashrank==0.2.10

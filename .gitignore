@@ -8,3 +8,10 @@ artifacts/
 .minio/
 .venv/
 .pytest_cache/
+.tools/
+node_modules/
+dist/
+.npm-cache/
+*.tsbuildinfo
+playwright-report/
+test-results/

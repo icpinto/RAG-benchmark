@@ -1,10 +1,12 @@
-FROM python:3.11-slim
+FROM node:22-alpine AS build
 WORKDIR /app
-RUN apt-get update && apt-get install -y --no-install-recommends curl && rm -rf /var/lib/apt/lists/*
-COPY requirements/base.txt /app/requirements.txt
-RUN pip install --no-cache-dir -r /app/requirements.txt
-COPY packages /app/packages
-COPY services /app/services
-ENV PYTHONPATH=/app/packages:/app
-ENV STREAMLIT_BROWSER_GATHER_USAGE_STATS=false
-CMD ["streamlit", "run", "services/ui/app.py", "--server.address=0.0.0.0", "--server.port=8501", "--browser.gatherUsageStats=false"]
+COPY services/ui/package.json services/ui/package-lock.json ./
+RUN npm ci --no-audit --no-fund
+COPY services/ui/ ./
+RUN npm run build
+
+FROM nginx:stable-alpine
+COPY services/ui/nginx.conf.template /etc/nginx/templates/default.conf.template
+COPY --from=build /app/dist /usr/share/nginx/html
+ENV API_BASE_URL=http://api:8000
+EXPOSE 80

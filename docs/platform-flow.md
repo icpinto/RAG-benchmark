@@ -18,7 +18,7 @@ The configuration expander turns those choices into bounded benchmark cases. Eac
 
 ```mermaid
 flowchart LR
-    Operator[Operator] -->|browser :8499| UI[Streamlit UI]
+    Operator[Operator] -->|browser :8499| UI[React UI]
     Operator -->|HTTP :7800| API[FastAPI API]
     UI -->|REST on Docker network| API
     API -->|create queued run| PG[(Postgres)]
@@ -30,12 +30,11 @@ flowchart LR
     Worker --> Ollama[Ollama]
     Worker --> Shared[(configs / data / artifacts)]
     API --> Shared
-    UI --> Shared
 ```
 
 | Service | Responsibility | Durable/shared state |
 |---|---|---|
-| Streamlit UI | Guides data preparation, YAML editing, run launch, status inspection, result exploration, and run comparison. | Calls the API; the shared volumes make the same configuration, data, and artifacts visible in all application containers. |
+| React UI | Guides data preparation, component forms/YAML editing, run launch, status inspection, result exploration, and run comparison. | Static assets served by Nginx; calls the API through `/api`. Configuration drafts stay in browser memory. Shared files are accessed only by the API and worker. |
 | FastAPI API | Validates paths and input selections, manages files/questions/configuration, creates run records, enqueues work, and returns runs/results. | Postgres plus the `configs/` and `data/` volumes. |
 | Celery worker | Loads the saved YAML and executes `BenchmarkRunner`. The default worker concurrency is one, so queued runs execute serially in that worker. | Postgres, vector/search indexes, embedding/retrieval caches, and `artifacts/`. |
 | Redis | Celery broker and result backend; it can also back configured caches. | Redis data for the lifetime of the service. |
@@ -92,7 +91,7 @@ The launch request follows this path:
 ```mermaid
 sequenceDiagram
     actor O as Operator
-    participant U as Streamlit
+    participant U as React
     participant A as FastAPI
     participant P as Postgres
     participant R as Redis/Celery

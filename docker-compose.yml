@@ -50,18 +50,12 @@ services:
     build:
       context: .
       dockerfile: services/ui/Dockerfile
-    env_file: .env
     ports:
-      - "8499:8501"
-    volumes:
-      - ./configs:/app/configs
-      - ./data:/app/data
-      - ./artifacts:/app/artifacts
+      - "8499:80"
     depends_on:
       - api
     environment:
-      STREAMLIT_BROWSER_GATHER_USAGE_STATS: "false"
-    command: streamlit run services/ui/app.py --server.address=0.0.0.0 --server.port=8501 --browser.gatherUsageStats=false
+      API_BASE_URL: ${API_BASE_URL:-http://api:8000}
 
   postgres:
     image: postgres:16

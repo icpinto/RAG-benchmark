@@ -1,0 +1,2310 @@
+{
+  "version": 1,
+  "sections": [
+    {
+      "key": "experiment",
+      "label": "Experiment",
+      "fields": [
+        {
+          "key": "name",
+          "label": "Name",
+          "type": "string",
+          "default": "benchmark"
+        },
+        {
+          "key": "description",
+          "label": "Description",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "key": "data",
+      "label": "Dataset paths",
+      "fields": [
+        {
+          "key": "input_dir",
+          "label": "Input dir",
+          "type": "string",
+          "required": true
+        },
+        {
+          "key": "remote_urls_file",
+          "label": "Remote urls file",
+          "type": "string"
+        },
+        {
+          "key": "ground_truth_file",
+          "label": "Ground truth file",
+          "type": "string",
+          "required": true
+        }
+      ]
+    },
+    {
+      "key": "metrics",
+      "label": "Evaluation metrics",
+      "fields": [
+        {
+          "key": "retrieval_k",
+          "label": "Retrieval k",
+          "type": "array",
+          "items": {
+            "key": "item",
+            "label": "Item",
+            "type": "integer"
+          },
+          "default": [3, 5, 10],
+          "help": "Non-empty positive integers. Also controls retrieval depth."
+        },
+        {
+          "key": "enabled",
+          "label": "Enabled",
+          "type": "array",
+          "items": {
+            "key": "item",
+            "label": "Item",
+            "type": "string"
+          },
+          "help": "Informational in the current engine: all metrics are computed."
+        },
+        {
+          "key": "generation_model",
+          "label": "Generation model",
+          "type": "string",
+          "help": "Optional pricing model fallback when result metadata has no generation model."
+        },
+        {
+          "key": "embedding_model",
+          "label": "Embedding model",
+          "type": "string",
+          "help": "Optional pricing model fallback when result metadata has no embedding model."
+        }
+      ]
+    },
+    {
+      "key": "runtime",
+      "label": "Runtime",
+      "fields": [
+        {
+          "key": "max_combinations",
+          "label": "Max combinations",
+          "type": "number",
+          "default": 32,
+          "minimum": 1
+        },
+        {
+          "key": "collection_prefix",
+          "label": "Collection prefix",
+          "type": "string",
+          "default": "ragbench"
+        },
+        {
+          "key": "artifact_dir",
+          "label": "Artifact dir",
+          "type": "string",
+          "default": "/app/artifacts"
+        },
+        {
+          "key": "embedding_cache",
+          "label": "Embedding cache",
+          "type": "object",
+          "fields": [
+            {
+              "key": "enabled",
+              "label": "Enabled",
+              "type": "boolean",
+              "default": false
+            },
+            {
+              "key": "backend",
+              "label": "Backend",
+              "type": "string",
+              "default": "file",
+              "choices": ["file", "redis"]
+            },
+            {
+              "key": "path",
+              "label": "Path",
+              "type": "string"
+            },
+            {
+              "key": "redis_url",
+              "label": "Redis url",
+              "type": "string",
+              "secret": true
+            }
+          ]
+        },
+        {
+          "key": "retrieval_cache",
+          "label": "Retrieval cache",
+          "type": "object",
+          "fields": [
+            {
+              "key": "enabled",
+              "label": "Enabled",
+              "type": "boolean",
+              "default": false
+            },
+            {
+              "key": "backend",
+              "label": "Backend",
+              "type": "string",
+              "default": "file",
+              "choices": ["file", "redis"]
+            },
+            {
+              "key": "path",
+              "label": "Path",
+              "type": "string"
+            },
+            {
+              "key": "redis_url",
+              "label": "Redis url",
+              "type": "string",
+              "secret": true
+            }
+          ]
+        },
+        {
+          "key": "pricing",
+          "label": "Pricing",
+          "type": "object",
+          "fields": [
+            {
+              "key": "generation_input_per_1m",
+              "label": "Generation input per 1m",
+              "type": "number",
+              "minimum": 0
+            },
+            {
+              "key": "generation_output_per_1m",
+              "label": "Generation output per 1m",
+              "type": "number",
+              "minimum": 0
+            },
+            {
+              "key": "embedding_per_1m",
+              "label": "Embedding per 1m",
+              "type": "number",
+              "minimum": 0
+            }
+          ]
+        },
+        {
+          "key": "exports",
+          "label": "Exports",
+          "type": "object",
+          "fields": [
+            {
+              "key": "sqlite",
+              "label": "Sqlite",
+              "type": "boolean",
+              "default": true
+            },
+            {
+              "key": "parquet",
+              "label": "Parquet",
+              "type": "boolean",
+              "default": false
+            },
+            {
+              "key": "mlflow",
+              "label": "Mlflow",
+              "type": "boolean",
+              "default": false
+            },
+            {
+              "key": "wandb",
+              "label": "Wandb",
+              "type": "boolean",
+              "default": false
+            },
+            {
+              "key": "wandb_project",
+              "label": "Wandb project",
+              "type": "string",
+              "default": "ragbench"
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "stages": [
+    {
+      "key": "extractors",
+      "label": "Document extraction",
+      "path": ["pipeline", "ingestion", "extractors"],
+      "mode": "extractors",
+      "discriminator": "type",
+      "components": [
+        {
+          "name": "txt",
+          "fields": []
+        },
+        {
+          "name": "markdown",
+          "fields": []
+        },
+        {
+          "name": "pdf",
+          "fields": []
+        },
+        {
+          "name": "html_url",
+          "fields": []
+        },
+        {
+          "name": "docling",
+          "fields": [
+            {
+              "key": "export_format",
+              "label": "Export format",
+              "type": "string",
+              "default": "markdown",
+              "choices": ["markdown", "text"]
+            },
+            {
+              "key": "ignore_errors",
+              "label": "Ignore errors",
+              "type": "boolean",
+              "default": false
+            },
+            {
+              "key": "image_descriptions",
+              "label": "Image descriptions",
+              "type": "value",
+              "default": false,
+              "help": "Boolean or an object with enabled. Uses descriptions already attached by Docling; no vision API call."
+            }
+          ]
+        }
+      ],
+      "help": "Extractor options are stored in ingestion.extractor_configs. The current case expander does not forward that mapping to cases; changing these options does not change execution until the engine supports forwarding."
+    },
+    {
+      "key": "cleaners",
+      "label": "Cleaning",
+      "path": ["pipeline", "ingestion", "cleaners"],
+      "mode": "variants",
+      "discriminator": "type",
+      "components": [
+        {
+          "name": "basic",
+          "fields": []
+        }
+      ]
+    },
+    {
+      "key": "chunkers",
+      "label": "Chunking",
+      "path": ["pipeline", "ingestion", "chunkers"],
+      "mode": "variants",
+      "discriminator": "type",
+      "components": [
+        {
+          "name": "fixed",
+          "fields": [
+            {
+              "key": "chunk_size",
+              "label": "Chunk size",
+              "type": "number",
+              "default": 512,
+              "minimum": 1,
+              "sweepable": true
+            },
+            {
+              "key": "overlap",
+              "label": "Overlap",
+              "type": "number",
+              "default": 0,
+              "minimum": 0,
+              "sweepable": true,
+              "help": "Fraction below 1, otherwise character count."
+            }
+          ]
+        },
+        {
+          "name": "recursive",
+          "fields": [
+            {
+              "key": "chunk_size",
+              "label": "Chunk size",
+              "type": "number",
+              "default": 512,
+              "minimum": 1,
+              "sweepable": true
+            },
+            {
+              "key": "overlap",
+              "label": "Overlap",
+              "type": "number",
+              "default": 0,
+              "minimum": 0,
+              "sweepable": true,
+              "help": "Fraction below 1, otherwise character count."
+            }
+          ]
+        },
+        {
+          "name": "llamaindex_fixed",
+          "fields": [
+            {
+              "key": "chunk_size",
+              "label": "Chunk size",
+              "type": "number",
+              "default": 512,
+              "minimum": 1,
+              "sweepable": true
+            },
+            {
+              "key": "overlap",
+              "label": "Overlap",
+              "type": "number",
+              "default": 0,
+              "minimum": 0,
+              "sweepable": true,
+              "help": "Fraction below 1, otherwise character count."
+            }
+          ]
+        },
+        {
+          "name": "llamaindex_sentence",
+          "fields": [
+            {
+              "key": "chunk_size",
+              "label": "Chunk size",
+              "type": "number",
+              "default": 512,
+              "minimum": 1,
+              "sweepable": true
+            },
+            {
+              "key": "overlap",
+              "label": "Overlap",
+              "type": "number",
+              "default": 0,
+              "minimum": 0,
+              "sweepable": true,
+              "help": "Fraction below 1, otherwise character count."
+            }
+          ]
+        },
+        {
+          "name": "llamaindex_structure",
+          "fields": [
+            {
+              "key": "chunk_size",
+              "label": "Chunk size",
+              "type": "number",
+              "default": 512,
+              "minimum": 1,
+              "sweepable": true
+            },
+            {
+              "key": "overlap",
+              "label": "Overlap",
+              "type": "number",
+              "default": 0,
+              "minimum": 0,
+              "sweepable": true,
+              "help": "Fraction below 1, otherwise character count."
+            }
+          ]
+        },
+        {
+          "name": "llamaindex_hierarchical",
+          "fields": [
+            {
+              "key": "chunk_size",
+              "label": "Chunk size",
+              "type": "number",
+              "default": 512,
+              "minimum": 1,
+              "sweepable": true
+            },
+            {
+              "key": "overlap",
+              "label": "Overlap",
+              "type": "number",
+              "default": 0,
+              "minimum": 0,
+              "sweepable": true,
+              "help": "Fraction below 1, otherwise character count."
+            },
+            {
+              "key": "child_chunk_size",
+              "label": "Child chunk size",
+              "type": "number",
+              "minimum": 1
+            },
+            {
+              "key": "parent_chunk_size",
+              "label": "Parent chunk size",
+              "type": "number",
+              "minimum": 1,
+              "help": "Defaults to twice the child size. This field is not expanded as a sweep."
+            }
+          ]
+        },
+        {
+          "name": "llamaindex_semantic",
+          "fields": [
+            {
+              "key": "chunk_size",
+              "label": "Chunk size",
+              "type": "number",
+              "default": 512,
+              "minimum": 1,
+              "sweepable": true
+            },
+            {
+              "key": "overlap",
+              "label": "Overlap",
+              "type": "number",
+              "default": 0,
+              "minimum": 0,
+              "sweepable": true,
+              "help": "Fraction below 1, otherwise character count."
+            },
+            {
+              "key": "breakpoint_percentile_threshold",
+              "label": "Breakpoint percentile threshold",
+              "type": "number",
+              "default": 95,
+              "minimum": 0,
+              "maximum": 100
+            },
+            {
+              "key": "buffer_size",
+              "label": "Buffer size",
+              "type": "number",
+              "default": 1,
+              "minimum": 1
+            },
+            {
+              "key": "embed_dim",
+              "label": "Embed dim",
+              "type": "number",
+              "default": 384,
+              "minimum": 1
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "key": "metadata_enrichers",
+      "label": "Metadata enrichment",
+      "path": ["pipeline", "ingestion", "metadata_enrichers"],
+      "mode": "variants",
+      "discriminator": "type",
+      "components": [
+        {
+          "name": "basic",
+          "fields": []
+        }
+      ]
+    },
+    {
+      "key": "embedders",
+      "label": "Embedding models",
+      "path": ["pipeline", "ingestion", "embeddings"],
+      "mode": "variants",
+      "discriminator": "provider",
+      "components": [
+        {
+          "name": "sentence_transformers",
+          "fields": [
+            {
+              "key": "model",
+              "label": "Model",
+              "type": "string",
+              "required": true
+            },
+            {
+              "key": "batch_size",
+              "label": "Batch size",
+              "type": "number",
+              "default": 32,
+              "minimum": 1
+            },
+            {
+              "key": "normalize",
+              "label": "Normalize",
+              "type": "boolean",
+              "default": true,
+              "aliases": ["normalize_embeddings"]
+            },
+            {
+              "key": "document_prefix",
+              "label": "Document prefix",
+              "type": "string",
+              "aliases": ["passage_prefix"]
+            },
+            {
+              "key": "query_prefix",
+              "label": "Query prefix",
+              "type": "string"
+            }
+          ]
+        },
+        {
+          "name": "bge_m3",
+          "fields": [
+            {
+              "key": "model",
+              "label": "Model",
+              "type": "string",
+              "required": false,
+              "default": "BAAI/bge-m3"
+            },
+            {
+              "key": "batch_size",
+              "label": "Batch size",
+              "type": "number",
+              "default": 32,
+              "minimum": 1
+            },
+            {
+              "key": "normalize",
+              "label": "Normalize",
+              "type": "boolean",
+              "default": true,
+              "aliases": ["normalize_embeddings"]
+            },
+            {
+              "key": "document_prefix",
+              "label": "Document prefix",
+              "type": "string",
+              "aliases": ["passage_prefix"]
+            },
+            {
+              "key": "query_prefix",
+              "label": "Query prefix",
+              "type": "string"
+            }
+          ]
+        },
+        {
+          "name": "openai",
+          "fields": [
+            {
+              "key": "model",
+              "label": "Model",
+              "type": "string",
+              "default": "text-embedding-3-small"
+            },
+            {
+              "key": "api_key",
+              "label": "Api key",
+              "type": "string",
+              "secret": true,
+              "help": "An environment reference such as ${COHERE_API_KEY} is supported. Provider environment variables are used when omitted."
+            },
+            {
+              "key": "base_url",
+              "label": "Base url",
+              "type": "string",
+              "default": "https://api.jina.ai/v1"
+            },
+            {
+              "key": "timeout",
+              "label": "Timeout",
+              "type": "number",
+              "default": 30
+            },
+            {
+              "key": "batch_size",
+              "label": "Batch size",
+              "type": "number",
+              "default": 32,
+              "minimum": 1
+            },
+            {
+              "key": "normalize",
+              "label": "Normalize",
+              "type": "boolean",
+              "default": false,
+              "aliases": ["normalize_embeddings"]
+            },
+            {
+              "key": "document_prefix",
+              "label": "Document prefix",
+              "type": "string",
+              "aliases": ["passage_prefix"]
+            },
+            {
+              "key": "query_prefix",
+              "label": "Query prefix",
+              "type": "string"
+            }
+          ]
+        },
+        {
+          "name": "voyage",
+          "fields": [
+            {
+              "key": "model",
+              "label": "Model",
+              "type": "string",
+              "default": "voyage-3"
+            },
+            {
+              "key": "api_key",
+              "label": "Api key",
+              "type": "string",
+              "secret": true,
+              "help": "An environment reference such as ${COHERE_API_KEY} is supported. Provider environment variables are used when omitted."
+            },
+            {
+              "key": "base_url",
+              "label": "Base url",
+              "type": "string",
+              "default": "https://api.jina.ai/v1"
+            },
+            {
+              "key": "timeout",
+              "label": "Timeout",
+              "type": "number",
+              "default": 30
+            },
+            {
+              "key": "batch_size",
+              "label": "Batch size",
+              "type": "number",
+              "default": 32,
+              "minimum": 1
+            },
+            {
+              "key": "normalize",
+              "label": "Normalize",
+              "type": "boolean",
+              "default": false,
+              "aliases": ["normalize_embeddings"]
+            },
+            {
+              "key": "document_prefix",
+              "label": "Document prefix",
+              "type": "string",
+              "aliases": ["passage_prefix"]
+            },
+            {
+              "key": "query_prefix",
+              "label": "Query prefix",
+              "type": "string"
+            }
+          ]
+        },
+        {
+          "name": "cohere",
+          "fields": [
+            {
+              "key": "model",
+              "label": "Model",
+              "type": "string",
+              "default": "embed-v4.0"
+            },
+            {
+              "key": "api_key",
+              "label": "Api key",
+              "type": "string",
+              "secret": true,
+              "help": "An environment reference such as ${COHERE_API_KEY} is supported. Provider environment variables are used when omitted."
+            },
+            {
+              "key": "base_url",
+              "label": "Base url",
+              "type": "string",
+              "default": "https://api.jina.ai/v1"
+            },
+            {
+              "key": "timeout",
+              "label": "Timeout",
+              "type": "number",
+              "default": 30
+            },
+            {
+              "key": "batch_size",
+              "label": "Batch size",
+              "type": "number",
+              "default": 32,
+              "minimum": 1
+            },
+            {
+              "key": "normalize",
+              "label": "Normalize",
+              "type": "boolean",
+              "default": false,
+              "aliases": ["normalize_embeddings"]
+            },
+            {
+              "key": "document_prefix",
+              "label": "Document prefix",
+              "type": "string",
+              "aliases": ["passage_prefix"]
+            },
+            {
+              "key": "query_prefix",
+              "label": "Query prefix",
+              "type": "string"
+            }
+          ]
+        },
+        {
+          "name": "jina",
+          "fields": [
+            {
+              "key": "model",
+              "label": "Model",
+              "type": "string",
+              "default": "jina-embeddings-v3"
+            },
+            {
+              "key": "api_key",
+              "label": "Api key",
+              "type": "string",
+              "secret": true,
+              "help": "An environment reference such as ${COHERE_API_KEY} is supported. Provider environment variables are used when omitted."
+            },
+            {
+              "key": "base_url",
+              "label": "Base url",
+              "type": "string",
+              "default": "https://api.jina.ai/v1"
+            },
+            {
+              "key": "timeout",
+              "label": "Timeout",
+              "type": "number",
+              "default": 30
+            },
+            {
+              "key": "batch_size",
+              "label": "Batch size",
+              "type": "number",
+              "default": 32,
+              "minimum": 1
+            },
+            {
+              "key": "normalize",
+              "label": "Normalize",
+              "type": "boolean",
+              "default": false,
+              "aliases": ["normalize_embeddings"]
+            },
+            {
+              "key": "document_prefix",
+              "label": "Document prefix",
+              "type": "string",
+              "aliases": ["passage_prefix"]
+            },
+            {
+              "key": "query_prefix",
+              "label": "Query prefix",
+              "type": "string"
+            },
+            {
+              "key": "query_task",
+              "label": "Query task",
+              "type": "string",
+              "default": "retrieval.query"
+            },
+            {
+              "key": "document_task",
+              "label": "Document task",
+              "type": "string",
+              "default": "retrieval.passage"
+            }
+          ]
+        },
+        {
+          "name": "bge_m3_sparse",
+          "fields": [
+            {
+              "key": "model",
+              "label": "Model",
+              "type": "string",
+              "default": "BAAI/bge-m3"
+            },
+            {
+              "key": "use_fp16",
+              "label": "Use fp16",
+              "type": "boolean",
+              "default": true
+            },
+            {
+              "key": "batch_size",
+              "label": "Batch size",
+              "type": "number",
+              "default": 32,
+              "minimum": 1
+            },
+            {
+              "key": "sparse_top_k",
+              "label": "Sparse top k",
+              "type": "number",
+              "minimum": 1
+            }
+          ]
+        },
+        {
+          "name": "bge_m3_hybrid",
+          "fields": [
+            {
+              "key": "model",
+              "label": "Model",
+              "type": "string",
+              "default": "BAAI/bge-m3"
+            },
+            {
+              "key": "use_fp16",
+              "label": "Use fp16",
+              "type": "boolean",
+              "default": true
+            },
+            {
+              "key": "batch_size",
+              "label": "Batch size",
+              "type": "number",
+              "default": 32,
+              "minimum": 1
+            },
+            {
+              "key": "sparse_top_k",
+              "label": "Sparse top k",
+              "type": "number",
+              "minimum": 1
+            },
+            {
+              "key": "normalize",
+              "label": "Normalize",
+              "type": "boolean",
+              "default": false
+            }
+          ]
+        },
+        {
+          "name": "splade_sparse",
+          "fields": [
+            {
+              "key": "model",
+              "label": "Model",
+              "type": "string",
+              "default": "naver/splade-cocondenser-ensembledistil"
+            },
+            {
+              "key": "batch_size",
+              "label": "Batch size",
+              "type": "number",
+              "default": 32,
+              "minimum": 1
+            },
+            {
+              "key": "max_length",
+              "label": "Max length",
+              "type": "number",
+              "default": 512,
+              "minimum": 1
+            },
+            {
+              "key": "sparse_top_k",
+              "label": "Sparse top k",
+              "type": "number",
+              "minimum": 1
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "key": "dense_indexer",
+      "label": "Dense index",
+      "path": ["pipeline", "ingestion", "indexers", "dense"],
+      "mode": "indexer",
+      "discriminator": "type",
+      "components": [
+        {
+          "name": "qdrant",
+          "fields": [
+            {
+              "key": "strategy",
+              "label": "Strategy",
+              "type": "string",
+              "default": "dense_hnsw",
+              "choices": [
+                "dense_hnsw",
+                "dense_hnsw_tuned",
+                "dense_exact",
+                "dense_quantized",
+                "dense_on_disk",
+                "dense_payload_indexed",
+                "dense_hnsw_custom"
+              ]
+            },
+            {
+              "key": "strategies",
+              "label": "Strategies",
+              "type": "array",
+              "items": {
+                "key": "item",
+                "label": "Item",
+                "type": "value"
+              },
+              "help": "Strings or strategy override objects; each entry expands into cases."
+            },
+            {
+              "key": "hnsw_m",
+              "label": "Hnsw m",
+              "type": "number",
+              "minimum": 0,
+              "aliases": ["m"],
+              "sweepable": true
+            },
+            {
+              "key": "ef_construct",
+              "label": "Ef construct",
+              "type": "number",
+              "minimum": 1,
+              "sweepable": true
+            },
+            {
+              "key": "search_ef",
+              "label": "Search ef",
+              "type": "number",
+              "minimum": 1,
+              "aliases": ["hnsw_ef"],
+              "sweepable": true
+            },
+            {
+              "key": "on_disk",
+              "label": "On disk",
+              "type": "boolean",
+              "default": false,
+              "sweepable": true
+            },
+            {
+              "key": "on_disk_payload",
+              "label": "On disk payload",
+              "type": "boolean",
+              "default": false,
+              "aliases": ["payload_on_disk"],
+              "sweepable": true
+            },
+            {
+              "key": "hnsw_on_disk",
+              "label": "Hnsw on disk",
+              "type": "boolean",
+              "default": false,
+              "sweepable": true
+            },
+            {
+              "key": "hnsw_config",
+              "label": "Hnsw config",
+              "type": "object",
+              "fields": [
+                {
+                  "key": "m",
+                  "label": "M",
+                  "type": "number",
+                  "minimum": 0,
+                  "sweepable": true
+                },
+                {
+                  "key": "ef_construct",
+                  "label": "Ef construct",
+                  "type": "number",
+                  "minimum": 1,
+                  "sweepable": true
+                },
+                {
+                  "key": "full_scan_threshold",
+                  "label": "Full scan threshold",
+                  "type": "number",
+                  "minimum": 0,
+                  "sweepable": true
+                },
+                {
+                  "key": "max_indexing_threads",
+                  "label": "Max indexing threads",
+                  "type": "number",
+                  "minimum": 0,
+                  "sweepable": true
+                },
+                {
+                  "key": "on_disk",
+                  "label": "On disk",
+                  "type": "boolean",
+                  "default": false,
+                  "sweepable": true
+                },
+                {
+                  "key": "payload_m",
+                  "label": "Payload m",
+                  "type": "number",
+                  "minimum": 0,
+                  "sweepable": true
+                }
+              ]
+            },
+            {
+              "key": "quantization_config",
+              "label": "Quantization config",
+              "type": "object",
+              "fields": [
+                {
+                  "key": "type",
+                  "label": "Type",
+                  "type": "string",
+                  "default": "int8",
+                  "choices": ["int8"],
+                  "sweepable": true
+                },
+                {
+                  "key": "quantile",
+                  "label": "Quantile",
+                  "type": "number",
+                  "minimum": 0,
+                  "maximum": 1,
+                  "sweepable": true
+                },
+                {
+                  "key": "always_ram",
+                  "label": "Always ram",
+                  "type": "boolean",
+                  "default": false,
+                  "sweepable": true
+                }
+              ],
+              "sweepable": true
+            },
+            {
+              "key": "payload_indexes",
+              "label": "Payload indexes",
+              "type": "array",
+              "items": {
+                "key": "item",
+                "label": "Item",
+                "type": "object",
+                "fields": [
+                  {
+                    "key": "field_name",
+                    "label": "Field name",
+                    "type": "string"
+                  },
+                  {
+                    "key": "field_schema",
+                    "label": "Field schema",
+                    "type": "string",
+                    "choices": [
+                      "keyword",
+                      "integer",
+                      "float",
+                      "bool",
+                      "text",
+                      "geo",
+                      "datetime"
+                    ]
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "key": "sparse_indexer",
+      "label": "Sparse index",
+      "path": ["pipeline", "ingestion", "indexers", "sparse"],
+      "mode": "indexer",
+      "discriminator": "type",
+      "components": [
+        {
+          "name": "opensearch",
+          "fields": [
+            {
+              "key": "strategy",
+              "label": "Strategy",
+              "type": "string",
+              "default": "bm25_standard",
+              "choices": [
+                "bm25_standard",
+                "bm25_field_weighted",
+                "bm25_custom_analyzer",
+                "bm25_phrase"
+              ]
+            },
+            {
+              "key": "strategies",
+              "label": "Strategies",
+              "type": "array",
+              "items": {
+                "key": "item",
+                "label": "Item",
+                "type": "value"
+              }
+            },
+            {
+              "key": "synonyms",
+              "label": "Synonyms",
+              "type": "array",
+              "items": {
+                "key": "item",
+                "label": "Item",
+                "type": "string"
+              }
+            }
+          ]
+        },
+        {
+          "name": "opensearch_neural_sparse",
+          "fields": [
+            {
+              "key": "strategy",
+              "label": "Strategy",
+              "type": "string",
+              "default": "neural_sparse_rank_features",
+              "choices": ["neural_sparse_rank_features"]
+            },
+            {
+              "key": "strategies",
+              "label": "Strategies",
+              "type": "array",
+              "items": {
+                "key": "item",
+                "label": "Item",
+                "type": "value"
+              }
+            },
+            {
+              "key": "field",
+              "label": "Field",
+              "type": "string",
+              "default": "sparse_embedding"
+            }
+          ]
+        },
+        {
+          "name": "qdrant_sparse",
+          "fields": [
+            {
+              "key": "collection_name",
+              "label": "Collection name",
+              "type": "string"
+            },
+            {
+              "key": "vector_name",
+              "label": "Vector name",
+              "type": "string",
+              "default": "neural_sparse"
+            },
+            {
+              "key": "on_disk",
+              "label": "On disk",
+              "type": "boolean",
+              "default": false
+            }
+          ]
+        }
+      ],
+      "help": "Omitting dense or sparse while the other is present disables that backend. An empty indexers mapping uses both engine defaults."
+    },
+    {
+      "key": "rewriters",
+      "label": "Query rewriting",
+      "path": ["pipeline", "query", "rewriters"],
+      "mode": "variants",
+      "discriminator": "type",
+      "components": [
+        {
+          "name": "none",
+          "fields": []
+        },
+        {
+          "name": "hyde",
+          "fields": []
+        },
+        {
+          "name": "multi_query",
+          "fields": [
+            {
+              "key": "count",
+              "label": "Count",
+              "type": "number",
+              "default": 4,
+              "minimum": 1,
+              "aliases": ["num_queries"]
+            },
+            {
+              "key": "temperature",
+              "label": "Temperature",
+              "type": "number",
+              "default": 0.2
+            }
+          ]
+        },
+        {
+          "name": "step_back",
+          "fields": [
+            {
+              "key": "temperature",
+              "label": "Temperature",
+              "type": "number",
+              "default": 0
+            }
+          ]
+        },
+        {
+          "name": "decompose",
+          "fields": [
+            {
+              "key": "max_subquestions",
+              "label": "Max subquestions",
+              "type": "number",
+              "default": 4,
+              "minimum": 1
+            },
+            {
+              "key": "temperature",
+              "label": "Temperature",
+              "type": "number",
+              "default": 0
+            }
+          ]
+        },
+        {
+          "name": "synonym_expand",
+          "fields": [
+            {
+              "key": "synonyms",
+              "label": "Synonyms",
+              "type": "object",
+              "fields": []
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "key": "retrievers",
+      "label": "Retrieval",
+      "path": ["pipeline", "query", "retrievers"],
+      "mode": "variants",
+      "discriminator": "type",
+      "components": [
+        {
+          "name": "dense",
+          "fields": [
+            {
+              "key": "hnsw_ef",
+              "label": "Hnsw ef",
+              "type": "number",
+              "aliases": ["search_ef"],
+              "minimum": 1
+            }
+          ]
+        },
+        {
+          "name": "dense_filtered",
+          "fields": [
+            {
+              "key": "hnsw_ef",
+              "label": "Hnsw ef",
+              "type": "number",
+              "aliases": ["search_ef"],
+              "minimum": 1
+            },
+            {
+              "key": "metadata_filters",
+              "label": "Metadata filters",
+              "type": "object",
+              "fields": [],
+              "aliases": ["metadata_filter"],
+              "help": "Metadata keys map to values, lists, or range conditions such as gte/lte."
+            },
+            {
+              "key": "payload_filter",
+              "label": "Payload filter",
+              "type": "object",
+              "fields": [],
+              "help": "Qdrant filter object with must, should, and must_not conditions."
+            },
+            {
+              "key": "doc_id",
+              "label": "Doc id",
+              "type": "string"
+            },
+            {
+              "key": "doc_ids",
+              "label": "Doc ids",
+              "type": "array",
+              "items": {
+                "key": "item",
+                "label": "Item",
+                "type": "string"
+              }
+            }
+          ]
+        },
+        {
+          "name": "bm25",
+          "fields": []
+        },
+        {
+          "name": "parent_document",
+          "fields": [
+            {
+              "key": "base_retriever",
+              "label": "Base retriever",
+              "type": "string",
+              "default": "dense",
+              "choices": ["dense", "dense_filtered"]
+            },
+            {
+              "key": "child_top_k_multiplier",
+              "label": "Child top k multiplier",
+              "type": "number",
+              "default": 4,
+              "minimum": 1
+            },
+            {
+              "key": "child_top_k",
+              "label": "Child top k",
+              "type": "number",
+              "minimum": 1
+            },
+            {
+              "key": "hnsw_ef",
+              "label": "Hnsw ef",
+              "type": "number",
+              "aliases": ["search_ef"],
+              "minimum": 1
+            },
+            {
+              "key": "metadata_filters",
+              "label": "Metadata filters",
+              "type": "object",
+              "fields": [],
+              "aliases": ["metadata_filter"],
+              "help": "Metadata keys map to values, lists, or range conditions such as gte/lte."
+            },
+            {
+              "key": "payload_filter",
+              "label": "Payload filter",
+              "type": "object",
+              "fields": [],
+              "help": "Qdrant filter object with must, should, and must_not conditions."
+            },
+            {
+              "key": "doc_id",
+              "label": "Doc id",
+              "type": "string"
+            },
+            {
+              "key": "doc_ids",
+              "label": "Doc ids",
+              "type": "array",
+              "items": {
+                "key": "item",
+                "label": "Item",
+                "type": "string"
+              }
+            }
+          ]
+        },
+        {
+          "name": "hybrid",
+          "fields": [
+            {
+              "key": "hnsw_ef",
+              "label": "Hnsw ef",
+              "type": "number",
+              "aliases": ["search_ef"],
+              "minimum": 1
+            },
+            {
+              "key": "rrf_k",
+              "label": "Rrf k",
+              "type": "number",
+              "default": 60,
+              "minimum": 1
+            },
+            {
+              "key": "sources",
+              "label": "Sources",
+              "type": "array",
+              "items": {
+                "key": "item",
+                "label": "Item",
+                "type": "string"
+              },
+              "default": ["dense", "bm25"],
+              "aliases": ["retrievers"]
+            },
+            {
+              "key": "neural_sparse",
+              "label": "Neural sparse",
+              "type": "object",
+              "fields": [
+                {
+                  "key": "backend",
+                  "label": "Backend",
+                  "type": "string",
+                  "default": "opensearch",
+                  "choices": ["opensearch", "qdrant"]
+                },
+                {
+                  "key": "field",
+                  "label": "Field",
+                  "type": "string",
+                  "default": "sparse_embedding"
+                },
+                {
+                  "key": "query_terms",
+                  "label": "Query terms",
+                  "type": "number",
+                  "default": 256,
+                  "minimum": 1
+                },
+                {
+                  "key": "collection_name",
+                  "label": "Collection name",
+                  "type": "string"
+                },
+                {
+                  "key": "vector_name",
+                  "label": "Vector name",
+                  "type": "string",
+                  "default": "neural_sparse"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "neural_sparse",
+          "fields": [
+            {
+              "key": "backend",
+              "label": "Backend",
+              "type": "string",
+              "default": "opensearch",
+              "choices": ["opensearch", "qdrant"]
+            },
+            {
+              "key": "field",
+              "label": "Field",
+              "type": "string",
+              "default": "sparse_embedding"
+            },
+            {
+              "key": "query_terms",
+              "label": "Query terms",
+              "type": "number",
+              "default": 256,
+              "minimum": 1
+            },
+            {
+              "key": "collection_name",
+              "label": "Collection name",
+              "type": "string"
+            },
+            {
+              "key": "vector_name",
+              "label": "Vector name",
+              "type": "string",
+              "default": "neural_sparse"
+            }
+          ]
+        },
+        {
+          "name": "weighted_hybrid",
+          "fields": [
+            {
+              "key": "hnsw_ef",
+              "label": "Hnsw ef",
+              "type": "number",
+              "aliases": ["search_ef"],
+              "minimum": 1
+            },
+            {
+              "key": "rrf_k",
+              "label": "Rrf k",
+              "type": "number",
+              "default": 60,
+              "minimum": 1
+            },
+            {
+              "key": "weights",
+              "label": "Weights",
+              "type": "object",
+              "fields": [
+                {
+                  "key": "dense",
+                  "label": "Dense",
+                  "type": "number",
+                  "default": 1
+                },
+                {
+                  "key": "bm25",
+                  "label": "Bm25",
+                  "type": "number",
+                  "default": 1
+                },
+                {
+                  "key": "neural_sparse",
+                  "label": "Neural sparse",
+                  "type": "number",
+                  "default": 1
+                }
+              ]
+            },
+            {
+              "key": "neural_sparse",
+              "label": "Neural sparse",
+              "type": "object",
+              "fields": [
+                {
+                  "key": "backend",
+                  "label": "Backend",
+                  "type": "string",
+                  "default": "opensearch",
+                  "choices": ["opensearch", "qdrant"]
+                },
+                {
+                  "key": "field",
+                  "label": "Field",
+                  "type": "string",
+                  "default": "sparse_embedding"
+                },
+                {
+                  "key": "query_terms",
+                  "label": "Query terms",
+                  "type": "number",
+                  "default": 256,
+                  "minimum": 1
+                },
+                {
+                  "key": "collection_name",
+                  "label": "Collection name",
+                  "type": "string"
+                },
+                {
+                  "key": "vector_name",
+                  "label": "Vector name",
+                  "type": "string",
+                  "default": "neural_sparse"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "multi_query_fusion",
+          "fields": [
+            {
+              "key": "base_retriever",
+              "label": "Base retriever",
+              "type": "string",
+              "default": "dense",
+              "choices": [
+                "dense",
+                "dense_filtered",
+                "bm25",
+                "hybrid",
+                "neural_sparse",
+                "weighted_hybrid"
+              ]
+            },
+            {
+              "key": "fusion",
+              "label": "Fusion",
+              "type": "string",
+              "default": "rrf",
+              "choices": ["rrf"]
+            },
+            {
+              "key": "hnsw_ef",
+              "label": "Hnsw ef",
+              "type": "number",
+              "aliases": ["search_ef"],
+              "minimum": 1
+            },
+            {
+              "key": "metadata_filters",
+              "label": "Metadata filters",
+              "type": "object",
+              "fields": [],
+              "aliases": ["metadata_filter"],
+              "help": "Metadata keys map to values, lists, or range conditions such as gte/lte."
+            },
+            {
+              "key": "payload_filter",
+              "label": "Payload filter",
+              "type": "object",
+              "fields": [],
+              "help": "Qdrant filter object with must, should, and must_not conditions."
+            },
+            {
+              "key": "doc_id",
+              "label": "Doc id",
+              "type": "string"
+            },
+            {
+              "key": "doc_ids",
+              "label": "Doc ids",
+              "type": "array",
+              "items": {
+                "key": "item",
+                "label": "Item",
+                "type": "string"
+              }
+            },
+            {
+              "key": "rrf_k",
+              "label": "Rrf k",
+              "type": "number",
+              "default": 60,
+              "minimum": 1
+            },
+            {
+              "key": "sources",
+              "label": "Sources",
+              "type": "array",
+              "items": {
+                "key": "item",
+                "label": "Item",
+                "type": "string"
+              },
+              "default": ["dense", "bm25"],
+              "aliases": ["retrievers"]
+            },
+            {
+              "key": "neural_sparse",
+              "label": "Neural sparse",
+              "type": "object",
+              "fields": [
+                {
+                  "key": "backend",
+                  "label": "Backend",
+                  "type": "string",
+                  "default": "opensearch",
+                  "choices": ["opensearch", "qdrant"]
+                },
+                {
+                  "key": "field",
+                  "label": "Field",
+                  "type": "string",
+                  "default": "sparse_embedding"
+                },
+                {
+                  "key": "query_terms",
+                  "label": "Query terms",
+                  "type": "number",
+                  "default": 256,
+                  "minimum": 1
+                },
+                {
+                  "key": "collection_name",
+                  "label": "Collection name",
+                  "type": "string"
+                },
+                {
+                  "key": "vector_name",
+                  "label": "Vector name",
+                  "type": "string",
+                  "default": "neural_sparse"
+                }
+              ]
+            },
+            {
+              "key": "weights",
+              "label": "Weights",
+              "type": "object",
+              "fields": [
+                {
+                  "key": "dense",
+                  "label": "Dense",
+                  "type": "number",
+                  "default": 1
+                },
+                {
+                  "key": "bm25",
+                  "label": "Bm25",
+                  "type": "number",
+                  "default": 1
+                },
+                {
+                  "key": "neural_sparse",
+                  "label": "Neural sparse",
+                  "type": "number",
+                  "default": 1
+                }
+              ]
+            },
+            {
+              "key": "backend",
+              "label": "Backend",
+              "type": "string",
+              "default": "opensearch",
+              "choices": ["opensearch", "qdrant"]
+            },
+            {
+              "key": "field",
+              "label": "Field",
+              "type": "string",
+              "default": "sparse_embedding"
+            },
+            {
+              "key": "query_terms",
+              "label": "Query terms",
+              "type": "number",
+              "default": 256,
+              "minimum": 1
+            },
+            {
+              "key": "collection_name",
+              "label": "Collection name",
+              "type": "string"
+            },
+            {
+              "key": "vector_name",
+              "label": "Vector name",
+              "type": "string",
+              "default": "neural_sparse"
+            }
+          ]
+        },
+        {
+          "name": "adaptive_hybrid",
+          "fields": [
+            {
+              "key": "short_query_mode",
+              "label": "Short query mode",
+              "type": "string",
+              "default": "bm25",
+              "choices": [
+                "dense",
+                "bm25",
+                "hybrid",
+                "neural_sparse",
+                "weighted_hybrid"
+              ]
+            },
+            {
+              "key": "long_query_mode",
+              "label": "Long query mode",
+              "type": "string",
+              "default": "hybrid",
+              "choices": [
+                "dense",
+                "bm25",
+                "hybrid",
+                "neural_sparse",
+                "weighted_hybrid"
+              ]
+            },
+            {
+              "key": "default_mode",
+              "label": "Default mode",
+              "type": "string",
+              "default": "dense",
+              "choices": [
+                "dense",
+                "bm25",
+                "hybrid",
+                "neural_sparse",
+                "weighted_hybrid"
+              ]
+            },
+            {
+              "key": "short_query_max_terms",
+              "label": "Short query max terms",
+              "type": "number",
+              "default": 4,
+              "minimum": 0
+            },
+            {
+              "key": "long_query_min_terms",
+              "label": "Long query min terms",
+              "type": "number",
+              "default": 12,
+              "minimum": 1
+            },
+            {
+              "key": "hnsw_ef",
+              "label": "Hnsw ef",
+              "type": "number",
+              "aliases": ["search_ef"],
+              "minimum": 1
+            },
+            {
+              "key": "rrf_k",
+              "label": "Rrf k",
+              "type": "number",
+              "default": 60,
+              "minimum": 1
+            },
+            {
+              "key": "sources",
+              "label": "Sources",
+              "type": "array",
+              "items": {
+                "key": "item",
+                "label": "Item",
+                "type": "string"
+              },
+              "default": ["dense", "bm25"],
+              "aliases": ["retrievers"]
+            },
+            {
+              "key": "neural_sparse",
+              "label": "Neural sparse",
+              "type": "object",
+              "fields": [
+                {
+                  "key": "backend",
+                  "label": "Backend",
+                  "type": "string",
+                  "default": "opensearch",
+                  "choices": ["opensearch", "qdrant"]
+                },
+                {
+                  "key": "field",
+                  "label": "Field",
+                  "type": "string",
+                  "default": "sparse_embedding"
+                },
+                {
+                  "key": "query_terms",
+                  "label": "Query terms",
+                  "type": "number",
+                  "default": 256,
+                  "minimum": 1
+                },
+                {
+                  "key": "collection_name",
+                  "label": "Collection name",
+                  "type": "string"
+                },
+                {
+                  "key": "vector_name",
+                  "label": "Vector name",
+                  "type": "string",
+                  "default": "neural_sparse"
+                }
+              ]
+            },
+            {
+              "key": "weights",
+              "label": "Weights",
+              "type": "object",
+              "fields": [
+                {
+                  "key": "dense",
+                  "label": "Dense",
+                  "type": "number",
+                  "default": 1
+                },
+                {
+                  "key": "bm25",
+                  "label": "Bm25",
+                  "type": "number",
+                  "default": 1
+                },
+                {
+                  "key": "neural_sparse",
+                  "label": "Neural sparse",
+                  "type": "number",
+                  "default": 1
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "key": "filters",
+      "label": "Result filtering",
+      "path": ["pipeline", "query", "filters"],
+      "mode": "variants",
+      "discriminator": "type",
+      "components": [
+        {
+          "name": "none",
+          "fields": []
+        }
+      ]
+    },
+    {
+      "key": "rerankers",
+      "label": "Reranking",
+      "path": ["pipeline", "query", "rerankers"],
+      "mode": "variants",
+      "discriminator": "type",
+      "components": [
+        {
+          "name": "none",
+          "fields": []
+        },
+        {
+          "name": "cross_encoder",
+          "fields": [
+            {
+              "key": "model",
+              "label": "Model",
+              "type": "string",
+              "default": "cross-encoder/ms-marco-MiniLM-L-6-v2"
+            }
+          ]
+        },
+        {
+          "name": "flashrank",
+          "fields": [
+            {
+              "key": "model",
+              "label": "Model",
+              "type": "string"
+            },
+            {
+              "key": "cache_dir",
+              "label": "Cache dir",
+              "type": "string"
+            },
+            {
+              "key": "max_length",
+              "label": "Max length",
+              "type": "number",
+              "minimum": 1
+            }
+          ]
+        },
+        {
+          "name": "rankllm",
+          "fields": [
+            {
+              "key": "model",
+              "label": "Model",
+              "type": "string",
+              "default": "rankllm"
+            },
+            {
+              "key": "api_key",
+              "label": "Api key",
+              "type": "string",
+              "secret": true
+            },
+            {
+              "key": "lang",
+              "label": "Lang",
+              "type": "string"
+            }
+          ]
+        },
+        {
+          "name": "colbert",
+          "fields": [
+            {
+              "key": "model",
+              "label": "Model",
+              "type": "string",
+              "default": "colbert"
+            },
+            {
+              "key": "api_key",
+              "label": "Api key",
+              "type": "string",
+              "secret": true
+            },
+            {
+              "key": "lang",
+              "label": "Lang",
+              "type": "string"
+            }
+          ]
+        },
+        {
+          "name": "cohere",
+          "fields": [
+            {
+              "key": "model",
+              "label": "Model",
+              "type": "string",
+              "default": "rerank-v3.5"
+            },
+            {
+              "key": "api_key",
+              "label": "Api key",
+              "type": "string",
+              "secret": true
+            },
+            {
+              "key": "url",
+              "label": "Url",
+              "type": "string"
+            },
+            {
+              "key": "base_url",
+              "label": "Base url",
+              "type": "string"
+            },
+            {
+              "key": "top_n",
+              "label": "Top n",
+              "type": "number",
+              "minimum": 1
+            },
+            {
+              "key": "max_chunks_per_doc",
+              "label": "Max chunks per doc",
+              "type": "number",
+              "minimum": 1
+            },
+            {
+              "key": "return_documents",
+              "label": "Return documents",
+              "type": "boolean",
+              "default": false
+            },
+            {
+              "key": "timeout",
+              "label": "Timeout",
+              "type": "number",
+              "default": 30
+            }
+          ]
+        },
+        {
+          "name": "jina",
+          "fields": [
+            {
+              "key": "model",
+              "label": "Model",
+              "type": "string",
+              "default": "jinaai/jina-reranker-v2-base-multilingual"
+            },
+            {
+              "key": "trust_remote_code",
+              "label": "Trust remote code",
+              "type": "boolean",
+              "default": true
+            },
+            {
+              "key": "max_length",
+              "label": "Max length",
+              "type": "number",
+              "minimum": 1
+            },
+            {
+              "key": "device",
+              "label": "Device",
+              "type": "string"
+            }
+          ]
+        },
+        {
+          "name": "diversity_mmr",
+          "fields": [
+            {
+              "key": "lambda_mult",
+              "label": "Lambda mult",
+              "type": "number",
+              "default": 0.5,
+              "aliases": ["lambda"],
+              "minimum": 0,
+              "maximum": 1
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "key": "compressors",
+      "label": "Context compression",
+      "path": ["pipeline", "query", "compressors"],
+      "mode": "variants",
+      "discriminator": "type",
+      "components": [
+        {
+          "name": "none",
+          "fields": []
+        },
+        {
+          "name": "top_n",
+          "fields": [
+            {
+              "key": "max_chunks",
+              "label": "Max chunks",
+              "type": "number",
+              "default": 5,
+              "minimum": 0
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "key": "assemblers",
+      "label": "Context assembly",
+      "path": ["pipeline", "query", "context_assemblers"],
+      "mode": "variants",
+      "discriminator": "type",
+      "components": [
+        {
+          "name": "default",
+          "fields": [
+            {
+              "key": "max_context_chars",
+              "label": "Max context chars",
+              "type": "number",
+              "default": 12000,
+              "minimum": 0
+            }
+          ]
+        }
+      ],
+      "help": "The current engine uses only the first entry."
+    },
+    {
+      "key": "prompt_builders",
+      "label": "Prompt construction",
+      "path": ["pipeline", "query", "prompt_builders"],
+      "mode": "variants",
+      "discriminator": "type",
+      "components": [
+        {
+          "name": "default",
+          "fields": []
+        }
+      ],
+      "help": "The current engine uses only the first entry."
+    },
+    {
+      "key": "citation_validators",
+      "label": "Citation validation",
+      "path": ["pipeline", "query", "citation_validators"],
+      "mode": "variants",
+      "discriminator": "type",
+      "components": [
+        {
+          "name": "simple",
+          "fields": []
+        }
+      ],
+      "help": "The current engine uses only the first entry."
+    },
+    {
+      "key": "generators",
+      "label": "Answer generation",
+      "path": ["llm"],
+      "mode": "single",
+      "discriminator": "provider",
+      "components": [
+        {
+          "name": "ollama",
+          "fields": [
+            {
+              "key": "model",
+              "label": "Model",
+              "type": "string",
+              "default": "gpt-oss:20b"
+            },
+            {
+              "key": "base_url",
+              "label": "Base url",
+              "type": "string",
+              "default": "http://ollama:11434"
+            },
+            {
+              "key": "temperature",
+              "label": "Temperature",
+              "type": "number",
+              "default": 0
+            },
+            {
+              "key": "timeout",
+              "label": "Timeout",
+              "type": "number",
+              "default": 240,
+              "minimum": 1
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "metric_components": [
+    {
+      "name": "retrieval_metrics",
+      "fields": [
+        {
+          "key": "retrieval_k",
+          "label": "Retrieval k",
+          "type": "array",
+          "items": {
+            "key": "item",
+            "label": "Item",
+            "type": "integer"
+          },
+          "default": [3, 5, 10]
+        }
+      ]
+    },
+    {
+      "name": "operational",
+      "fields": [
+        {
+          "key": "pricing",
+          "label": "Pricing",
+          "type": "object",
+          "fields": [
+            {
+              "key": "generation_input_per_1m",
+              "label": "Generation input per 1m",
+              "type": "number",
+              "minimum": 0
+            },
+            {
+              "key": "generation_output_per_1m",
+              "label": "Generation output per 1m",
+              "type": "number",
+              "minimum": 0
+            },
+            {
+              "key": "embedding_per_1m",
+              "label": "Embedding per 1m",
+              "type": "number",
+              "minimum": 0
+            }
+          ]
+        },
+        {
+          "key": "generation_model",
+          "label": "Generation model",
+          "type": "string"
+        },
+        {
+          "key": "embedding_model",
+          "label": "Embedding model",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "name": "citation_coverage",
+      "fields": []
+    },
+    {
+      "name": "answer_correctness_placeholder",
+      "fields": []
+    },
+    {
+      "name": "faithfulness_placeholder",
+      "fields": []
+    }
+  ]
+}

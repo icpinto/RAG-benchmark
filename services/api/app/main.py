@@ -6,6 +6,7 @@ from pydantic import BaseModel, Field, ValidationError
 from ragbench_core.engine.database import init_db, get_run, list_runs, list_results, upsert_run
 from ragbench_core.utils.config import load_yaml, parse_yaml_text
 from services.worker.app.tasks import run_benchmark_task
+from services.api.app.config_catalog import get_config_schema
 
 app=FastAPI(title="RAG Benchmark Platform API", version="0.1.0")
 CONFIG_ROOT=Path(os.getenv("RAGBENCH_CONFIG_DIR", "/app/configs")).resolve()
@@ -97,6 +98,10 @@ def get_config_content(config_path: str = Query("/app/configs/default.yaml")):
     if not path.exists():
         raise HTTPException(status_code=404, detail=f"Config not found: {path}")
     return {"config_path":str(path),"content":path.read_text(encoding="utf-8")}
+
+@app.get("/configs/schema")
+def config_schema():
+    return get_config_schema()
 
 @app.put("/configs/content")
 def save_config_content(req: ConfigSaveRequest):

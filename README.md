@@ -1,6 +1,6 @@
 # RAG Benchmark Platform
 
-A runnable Python MVP for benchmarking advanced RAG pipelines across ingestion and query stages.
+A React and Python platform for benchmarking advanced RAG pipelines across ingestion and query stages.
 
 This project is intentionally modular. Every stage is implemented behind a small interface and registered through a plugin registry, so new chunkers, extractors, embedders, retrievers, rerankers, compressors, validators, and metrics can be added without rewriting the benchmark runner.
 
@@ -63,7 +63,7 @@ rag-benchmark-platform/
   services/
     api/        FastAPI service
     worker/     Celery benchmark worker
-    ui/         Streamlit UI
+    ui/         React UI
   packages/
     ragbench_core/
       components/
@@ -92,7 +92,7 @@ Host-accessible services:
 
 | Service | URL |
 |---|---|
-| Streamlit UI | http://localhost:8499 |
+| React UI | http://localhost:8499 |
 | FastAPI docs | http://localhost:7800/docs |
 
 Supporting services such as Postgres, Redis, Qdrant, OpenSearch, MinIO, and Ollama are available only on the Docker Compose network and are not published to the host by default.
@@ -146,12 +146,14 @@ cp .env.example .env
 docker compose up --build
 ```
 
-Then upload files and a ground-truth JSON from the Streamlit UI. The UI also includes an **Edit config YAML** panel where you can load `/app/configs/default.yaml`, edit the YAML, save it back to the shared `configs/` volume, and start a benchmark using the saved config path.
+Then use the React UI to upload documents and ground-truth JSON, manage evaluation questions, and configure benchmarks. **Benchmark Setup** includes detailed component forms and a synchronized **YAML source** editor. Load `/app/configs/default.yaml`, select inputs, and choose **Save and run**. **Results Explorer** provides live run statuses, scored answers, traces, retrieval heatmaps, and comparisons.
+
+For frontend development, use Node 22.12 or later: run `npm ci` and `npm run dev` in `services/ui`, then open <http://localhost:5173>. The development server proxies `/api` to port 7800. See [React workspace development and checks](services/ui/README.md) for configuration and testing details.
 
 You can also call the API directly:
 
 ```bash
-curl -X POST http://localhost:8000/benchmarks/run \
+curl -X POST http://localhost:7800/benchmarks/run \
   -H 'Content-Type: application/json' \
   -d '{"config_path":"/app/configs/default.yaml"}'
 ```
@@ -159,9 +161,9 @@ curl -X POST http://localhost:8000/benchmarks/run \
 Config files can be listed, loaded, and saved through the API:
 
 ```bash
-curl http://localhost:8000/configs
-curl 'http://localhost:8000/configs/content?config_path=/app/configs/default.yaml'
-curl -X PUT http://localhost:8000/configs/content \
+curl http://localhost:7800/configs
+curl 'http://localhost:7800/configs/content?config_path=/app/configs/default.yaml'
+curl -X PUT http://localhost:7800/configs/content \
   -H 'Content-Type: application/json' \
   -d '{"config_path":"/app/configs/default.yaml","content":"experiment:\n  name: edited_benchmark\n"}'
 ```
@@ -169,7 +171,7 @@ curl -X PUT http://localhost:8000/configs/content \
 Check job status:
 
 ```bash
-curl http://localhost:8000/benchmarks/<job_id>
+curl http://localhost:7800/benchmarks/<job_id>
 ```
 
 
