@@ -18,6 +18,7 @@ import {
 } from "lucide-react";
 import { Button } from "./ui/button";
 import { display, download } from "../lib/utils";
+const noWrapColumns: string[] = [];
 export function csvText(rows: Record<string, unknown>[], columns: string[]) {
   const quote = (value: unknown) => {
     let text = value == null ? "" : display(value);
@@ -34,11 +35,13 @@ export function DataTable({
   name = "results",
   cell,
   onRowClick,
+  wrapColumns = noWrapColumns,
 }: {
   rows: Record<string, unknown>[];
   name?: string;
   cell?: (key: string, row: Record<string, unknown>) => ReactNode | undefined;
   onRowClick?: (row: Record<string, unknown>) => void;
+  wrapColumns?: string[];
 }) {
   const [sorting, setSorting] = useState<SortingState>([]);
   const [search, setSearch] = useState("");
@@ -56,14 +59,14 @@ export function DataTable({
         cell: (info) =>
           cell?.(key, info.row.original) ?? (
             <span
-              className="table-value"
+              className={`table-value ${wrapColumns.includes(key) ? "table-value-wrap" : ""}`}
               title={display(info.row.original[key])}
             >
               {display(info.row.original[key])}
             </span>
           ),
       })),
-    [keys, cell],
+    [keys, cell, wrapColumns],
   );
   const table = useReactTable({
     data: rows,
@@ -108,7 +111,7 @@ export function DataTable({
         </Button>
       </div>
       <div className="table-scroll">
-        <table>
+        <table aria-label={`${name} table`}>
           <thead>
             {table.getHeaderGroups().map((group) => (
               <tr key={group.id}>

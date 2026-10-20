@@ -277,7 +277,7 @@ export default function BenchmarkSetup() {
         error={error || load.error || save.error || run.error || initial.error}
       />
       <div className="setup-layout">
-        <aside className="stack">
+        <div className="setup-overview">
           <Card title="Configuration file">
             <ErrorNotice
               error={configs.error}
@@ -373,12 +373,31 @@ export default function BenchmarkSetup() {
                 </Notice>
               )}
           </Card>
-          <Card title="Launch experiment">
-            <p className="muted">
-              The worker runs the saved configuration. Choose Save and run to
-              include your draft.
-            </p>
-            <div className="stack">
+        </div>
+        <Card className="editor-card">
+          <div className="editor-toolbar">
+            <Tabs
+              label="Configuration editor mode"
+              value={view}
+              onChange={setView}
+              items={[
+                { value: "forms", label: "Guided editor" },
+                { value: "yaml", label: "YAML source" },
+              ]}
+            />
+            <div
+              className="actions"
+              role="group"
+              aria-label="Save and launch experiment"
+            >
+              <Button
+                variant="outline"
+                disabled={pending || !!parsed.errors.length || !path}
+                onClick={() => save.mutate()}
+              >
+                <Save size={15} />
+                Save
+              </Button>
               <Button
                 disabled={pending || parsed.errors.length > 0 || !path}
                 onClick={() => run.mutate(true)}
@@ -393,33 +412,18 @@ export default function BenchmarkSetup() {
               >
                 Run saved configuration
               </Button>
-              {dirty && (
-                <span className="field-help">
-                  Run saved configuration ignores your unsaved edits.
-                </span>
-              )}
             </div>
-          </Card>
-        </aside>
-        <Card className="editor-card">
-          <div className="editor-toolbar">
-            <Tabs
-              label="Configuration editor mode"
-              value={view}
-              onChange={setView}
-              items={[
-                { value: "forms", label: "Guided editor" },
-                { value: "yaml", label: "YAML source" },
-              ]}
-            />
-            <Button
-              variant="outline"
-              disabled={pending || !!parsed.errors.length || !path}
-              onClick={() => save.mutate()}
-            >
-              <Save size={15} />
-              Save
-            </Button>
+          </div>
+          <div className="launch-help">
+            <p className="field-help">
+              The worker runs the saved configuration. Choose Save and run to
+              include your draft.
+            </p>
+            {dirty && (
+              <p className="field-help">
+                Run saved configuration ignores your unsaved edits.
+              </p>
+            )}
           </div>
           {parsed.errors.map((message, index) => (
             <Notice tone="error" key={index}>
@@ -451,6 +455,31 @@ export default function BenchmarkSetup() {
                 <Loading label="Loading component catalog…" />
               ) : catalog.data && !parsed.errors.length ? (
                 <div className="guided-editor">
+                  <div className="field config-section-picker">
+                    <label htmlFor="configuration-section">
+                      Configuration section
+                    </label>
+                    <select
+                      id="configuration-section"
+                      value={group}
+                      onChange={(event) => setGroup(event.target.value)}
+                    >
+                      <optgroup label="Configuration">
+                        {catalog.data.sections.map((section) => (
+                          <option key={section.key} value={section.key}>
+                            {section.label}
+                          </option>
+                        ))}
+                      </optgroup>
+                      <optgroup label="Pipeline components">
+                        {catalog.data.stages.map((stage) => (
+                          <option key={stage.key} value={stage.key}>
+                            {stage.label}
+                          </option>
+                        ))}
+                      </optgroup>
+                    </select>
+                  </div>
                   <nav
                     className="config-nav"
                     aria-label="Configuration sections"
@@ -459,6 +488,9 @@ export default function BenchmarkSetup() {
                       <button
                         key={section.key}
                         className={group === section.key ? "active" : ""}
+                        aria-current={
+                          group === section.key ? "true" : undefined
+                        }
                         onClick={() => setGroup(section.key)}
                       >
                         <SlidersHorizontal size={14} />
@@ -470,6 +502,7 @@ export default function BenchmarkSetup() {
                       <button
                         key={stage.key}
                         className={group === stage.key ? "active" : ""}
+                        aria-current={group === stage.key ? "true" : undefined}
                         onClick={() => setGroup(stage.key)}
                       >
                         {stage.label}

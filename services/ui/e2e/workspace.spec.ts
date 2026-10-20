@@ -1,6 +1,7 @@
 import { expect, test, type Page } from "@playwright/test";
 import catalog from "../src/test/catalog.json" with { type: "json" };
 import { sampleConfig, sampleResults, sampleRuns } from "../src/test/fixtures";
+import { expectReadableLayout } from "./readability";
 async function backend(page: Page) {
   let config = sampleConfig;
   let failSave = false;
@@ -160,7 +161,10 @@ test("data preparation, guided editing, launch, polling, traces and comparisons"
   await expect(
     page.getByText("Unsaved changes", { exact: true }),
   ).toBeVisible();
-  await page.screenshot({ path: "test-results/setup-guided-desktop.png", fullPage: true });
+  await page.screenshot({
+    path: "test-results/setup-guided-desktop.png",
+    fullPage: true,
+  });
   await page.getByRole("button", { name: "YAML source", exact: true }).click();
   await expect(page.locator(".cm-content")).toContainText("react_experiment");
   await page.screenshot({
@@ -284,4 +288,165 @@ test("mobile navigation, replacement confirmation, recovery and direct-link refr
       () => document.documentElement.scrollWidth <= window.innerWidth,
     ),
   ).toBe(true);
+});
+
+for (const width of [390, 768, 1280, 1440]) {
+  test(`readable workspaces and long content at ${width}px`, async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width, height: 1000 });
+    await backend(page);
+    const filename = `research-${"very-long-document-name-".repeat(12)}.md`;
+    const question =
+      "How does the policy apply when the customer requests a refund? ".repeat(
+        4,
+      );
+    const answer =
+      "Refunds are accepted within 14 days. ".repeat(12) +
+      "\n\nThe answer keeps its paragraphs and literal <strong>text</strong>.";
+    await page.route("**/api/data/files", (route) =>
+      route.fulfill({
+        json: {
+          data_root: "/app/data/raw",
+          files: [
+            {
+              name: filename,
+              path: filename,
+              size_bytes: 100,
+              modified_at: 1,
+            },
+          ],
+        },
+      }),
+    );
+    await page.route("**/api/data/questions", (route) =>
+      route.fulfill({
+        json: {
+          path: "/app/data/eval/qa.json",
+          questions: [
+            {
+              question,
+              expected_answer: answer,
+              ground_truth_doc_ids: [filename],
+              ground_truth_chunk_ids: [],
+              expected_citations: [],
+            },
+          ],
+        },
+      }),
+    );
+    await page.route("**/api/benchmarks/run-one/results", (route) =>
+      route.fulfill({ json: [{ ...sampleResults[0], question, answer }] }),
+    );
+    await page.goto("/knowledge-base");
+    await expect(
+      page.getByRole("table", { name: "documents table" }),
+    ).toBeVisible();
+    await expectReadableLayout(page);
+    await page.screenshot({
+      path: `test-results/readability-${width}-knowledge-base.png`,
+      fullPage: true,
+    });
+    await page
+      .getByRole("button", { name: "Evaluation questions", exact: true })
+      .click();
+    const questionCell = page
+      .getByRole("table", { name: "questions table" })
+      .getByText(question, { exact: true });
+    await expect(questionCell).toHaveCSS("white-space", "pre-wrap");
+    expect(
+      await questionCell.evaluate((el) => el.clientHeight),
+    ).toBeGreaterThan(40);
+    await expectReadableLayout(page);
+    await page
+      .getByRole("button", { name: "Add question", exact: true })
+      .click();
+    await expect(page.getByRole("dialog")).toBeVisible();
+    await expectReadableLayout(page);
+    await page.getByRole("button", { name: "Close dialog" }).click();
+
+    await page.goto("/benchmark-setup");
+    await expect(page.getByLabel("Name", { exact: true })).toBeVisible();
+    await page.getByLabel("Name", { exact: true }).focus();
+    await expect(page.getByLabel("Name", { exact: true })).toHaveCSS(
+      "outline-style",
+      "solid",
+    );
+    await expectReadableLayout(page);
+    if (width < 1200) {
+      await expect(
+        page.getByLabel("Configuration section", { exact: true }),
+      ).toBeVisible();
+      await page
+        .getByLabel("Configuration section", { exact: true })
+        .selectOption("runtime");
+    } else {
+      await page.getByRole("button", { name: "Runtime", exact: true }).click();
+    }
+    await expect(page.locator(".config-content h2")).toHaveText("Runtime");
+    await page
+      .locator(".nested-fields summary")
+      .filter({ hasText: "Embedding cache" })
+      .click();
+    await expect(page.locator(".nested-fields[open]")).toBeVisible();
+    await expectReadableLayout(page);
+    await page.screenshot({
+      path: `test-results/readability-${width}-setup.png`,
+      fullPage: true,
+    });
+    await page
+      .getByRole("button", { name: "YAML source", exact: true })
+      .click();
+    await expect(page.locator(".cm-content")).toContainText("research_run");
+    await expectReadableLayout(page);
+
+    await page.goto("/results/run-one?view=scores");
+    await expect(
+      page.getByRole("heading", { name: "Trace Explorer" }),
+    ).toBeVisible();
+    await page
+      .getByText("Question and generated answer", { exact: true })
+      .click();
+    await expect(page.locator(".answer-text")).toHaveText(answer);
+    await expect(page.locator(".answer-text strong")).toHaveCount(0);
+    await expect(page.locator(".answer-text")).toHaveCSS(
+      "white-space",
+      "pre-wrap",
+    );
+    await expectReadableLayout(page);
+    await page.screenshot({
+      path: `test-results/readability-${width}-results.png`,
+      fullPage: true,
+    });
+    await page
+      .getByRole("button", { name: "Retrieval heatmap", exact: true })
+      .click();
+    await expect(page.locator(".heatmap td")).toHaveText("0.500");
+    await expectReadableLayout(page);
+  });
+}
+
+test.describe("200 percent browser zoom equivalent", () => {
+  // A 1440x1000 display at 200% zoom has a 720x500 CSS viewport. Keep
+  // media queries and device pixels consistent with that browser behavior.
+  test.use({
+    viewport: { width: 720, height: 500 },
+    deviceScaleFactor: 2,
+  });
+  test("all workspaces reflow without clipped content", async ({ page }) => {
+    await backend(page);
+    for (const [name, path] of [
+      ["knowledge-base", "/knowledge-base"],
+      ["setup", "/benchmark-setup"],
+      ["results", "/results/run-one?view=scores"],
+    ]) {
+      await page.goto(path);
+      await expect(page.locator("main h1")).toBeVisible();
+      await expectReadableLayout(page);
+      await page.screenshot({
+        path: `test-results/zoom-200-${name}.png`,
+        fullPage: true,
+      });
+    }
+  });
 });

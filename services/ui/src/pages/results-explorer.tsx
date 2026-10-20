@@ -18,6 +18,7 @@ import {
   retrievalMetrics,
 } from "../lib/results";
 import { display, isRecord } from "../lib/utils";
+import { heatmapCellColors } from "../lib/colors";
 import { Button } from "../components/ui/button";
 import {
   Card,
@@ -94,7 +95,7 @@ export function TraceExplorer({ results }: { results: Result[] }) {
       <details className="chunk">
         <summary>Question and generated answer</summary>
         <h3>{result?.question}</h3>
-        <pre className="code-panel">{result?.answer}</pre>
+        <div className="answer-text">{result?.answer}</div>
       </details>
       {!isRecord(trace) || !Object.keys(trace).length ? (
         <Notice>
@@ -229,13 +230,9 @@ export function RetrievalHeatmap({ results }: { results: Result[] }) {
                         <td
                           key={question}
                           title={`${caseId}\n${question}\n${metric}: ${display(value)}`}
-                          style={{
-                            background:
-                              value === undefined
-                                ? "#f8fafc"
-                                : `rgba(37, 99, 235, ${0.08 + intensity * 0.76})`,
-                            color: intensity > 0.55 ? "white" : "#1e293b",
-                          }}
+                          style={heatmapCellColors(
+                            value === undefined ? undefined : intensity,
+                          )}
                         >
                           {value === undefined ? "—" : value.toFixed(3)}
                         </td>
@@ -401,6 +398,7 @@ function RunComparison({ runs }: { runs: Run[] }) {
             )}
             <DataTable
               name="run-comparison"
+              wrapColumns={["question", "answer", "description"]}
               rows={comparisonRows(data.runs, data.results)}
             />
           </div>
@@ -614,6 +612,7 @@ export default function ResultsExplorer() {
                         <DataTable
                           rows={metricRows(detail)}
                           name="scored-results"
+                          wrapColumns={["question", "answer", "description"]}
                         />
                       </Card>
                       <TraceExplorer key={runId} results={detail} />

@@ -14,10 +14,10 @@ export default function MetricChart({
 }) {
   return (
     <div className="chart" role="img" aria-label="Metric values bar chart">
-      <ResponsiveContainer width="100%" height={260}>
+      <ResponsiveContainer width="100%" height={300}>
         <BarChart
           data={data}
-          margin={{ top: 15, right: 16, bottom: 28, left: 0 }}
+          margin={{ top: 16, right: 16, bottom: 40, left: 0 }}
         >
           <CartesianGrid
             strokeDasharray="3 3"
@@ -26,16 +26,16 @@ export default function MetricChart({
           />
           <XAxis
             dataKey="name"
-            tick={{ fontSize: 11 }}
+            tick={{ fontSize: 14, fill: "#475569" }}
             interval={0}
             angle={-12}
             textAnchor="end"
           />
-          <YAxis tick={{ fontSize: 11 }} />
-          <Tooltip />
+          <YAxis tick={{ fontSize: 14, fill: "#475569" }} />
+          <Tooltip contentStyle={{ color: "#0f172a", fontSize: 14 }} />
           <Bar
             dataKey="value"
-            fill="#2563eb"
+            fill="#1d4ed8"
             radius={[5, 5, 0, 0]}
             isAnimationActive={false}
           />

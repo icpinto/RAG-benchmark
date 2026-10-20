@@ -188,16 +188,18 @@ export default function KnowledgeBase() {
         title="Knowledge Base"
         description="Build your corpus and define what a great answer looks like."
       />
-      <div className="stat-grid">
-        <div className="stat-card">
-          <span>Source documents</span>
-          <strong>{files.data?.files.length ?? "—"}</strong>
-          <small>Your benchmark knowledge base</small>
-        </div>
-        <div className="stat-card">
-          <span>Evaluation questions</span>
-          <strong>{questions.data?.questions.length ?? "—"}</strong>
-          <small>Reference answers and supporting evidence</small>
+      <div className="library-overview">
+        <div className="stat-grid" role="group" aria-label="Library totals">
+          <div className="stat-card">
+            <span>Source documents</span>
+            <strong>{files.data?.files.length ?? "—"}</strong>
+            <small>Your benchmark knowledge base</small>
+          </div>
+          <div className="stat-card">
+            <span>Evaluation questions</span>
+            <strong>{questions.data?.questions.length ?? "—"}</strong>
+            <small>Reference answers and supporting evidence</small>
+          </div>
         </div>
         <div className="stat-card accent-card">
           <FileText size={24} />
@@ -371,6 +373,7 @@ export default function KnowledgeBase() {
           ) : (
             <DataTable
               name="questions"
+              wrapColumns={["question", "expected_answer", "description"]}
               rows={list.map((question, index) => ({ index, ...question }))}
               cell={(key, row) =>
                 key === "index" ? (
