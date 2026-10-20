@@ -1,6 +1,17 @@
 import { useState, type FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { FileText, Plus, UploadCloud } from "lucide-react";
+import {
+  FileText,
+  Files,
+  ListChecks,
+  Plus,
+  UploadCloud,
+  Save,
+  Replace,
+  Pencil,
+  Trash2,
+  LoaderCircle,
+} from "lucide-react";
 import { api, json } from "../lib/api";
 import type { Question } from "../lib/types";
 import { useFiles, useQuestions } from "../hooks/data";
@@ -91,6 +102,16 @@ function QuestionForm({
       ))}
       <div className="actions justify-end">
         <Button type="submit" disabled={pending || !question.question.trim()}>
+          {pending ? (
+            <LoaderCircle
+              aria-hidden="true"
+              focusable="false"
+              className="spin"
+              size={16}
+            />
+          ) : (
+            <Save aria-hidden="true" focusable="false" size={16} />
+          )}
           {pending ? "Saving…" : "Save question"}
         </Button>
       </div>
@@ -202,7 +223,7 @@ export default function KnowledgeBase() {
           </div>
         </div>
         <div className="stat-card accent-card">
-          <FileText size={24} />
+          <FileText aria-hidden="true" focusable="false" size={24} />
           <span>Better inputs, clearer results</span>
           <small>
             Use focused documents and questions that test real retrieval
@@ -225,7 +246,7 @@ export default function KnowledgeBase() {
       >
         <div className="two-columns">
           <div className="upload-panel">
-            <UploadCloud size={24} />
+            <UploadCloud aria-hidden="true" focusable="false" size={24} />
             <label className="field">
               Source documents
               <input
@@ -247,11 +268,21 @@ export default function KnowledgeBase() {
                 upload.mutate();
               }}
             >
+              {upload.isPending ? (
+                <LoaderCircle
+                  aria-hidden="true"
+                  focusable="false"
+                  className="spin"
+                  size={16}
+                />
+              ) : (
+                <UploadCloud aria-hidden="true" focusable="false" size={16} />
+              )}
               {upload.isPending ? "Uploading…" : "Upload source documents"}
             </Button>
           </div>
           <div className="upload-panel">
-            <UploadCloud size={24} />
+            <UploadCloud aria-hidden="true" focusable="false" size={24} />
             <label className="field">
               Ground-truth JSON
               <input
@@ -272,6 +303,16 @@ export default function KnowledgeBase() {
                 setReplace(true);
               }}
             >
+              {replaceQuestions.isPending ? (
+                <LoaderCircle
+                  aria-hidden="true"
+                  focusable="false"
+                  className="spin"
+                  size={16}
+                />
+              ) : (
+                <Replace aria-hidden="true" focusable="false" size={16} />
+              )}
               {replaceQuestions.isPending
                 ? "Uploading…"
                 : "Replace ground-truth JSON"}
@@ -284,8 +325,12 @@ export default function KnowledgeBase() {
         value={tab}
         onChange={setTab}
         items={[
-          { value: "documents", label: "Source documents" },
-          { value: "questions", label: "Evaluation questions" },
+          { value: "documents", label: "Source documents", icon: Files },
+          {
+            value: "questions",
+            label: "Evaluation questions",
+            icon: ListChecks,
+          },
         ]}
       />
       {tab === "documents" ? (
@@ -354,7 +399,7 @@ export default function KnowledgeBase() {
                 setEditing("new");
               }}
             >
-              <Plus size={16} />
+              <Plus aria-hidden="true" focusable="false" size={16} />
               Add question
             </Button>
           </div>
@@ -386,6 +431,7 @@ export default function KnowledgeBase() {
                         setEditing(Number(row.index));
                       }}
                     >
+                      <Pencil aria-hidden="true" focusable="false" size={14} />
                       Edit {Number(row.index) + 1}
                     </Button>
                     <Button
@@ -393,6 +439,7 @@ export default function KnowledgeBase() {
                       size="sm"
                       onClick={() => setDeleting(Number(row.index))}
                     >
+                      <Trash2 aria-hidden="true" focusable="false" size={14} />
                       Delete
                     </Button>
                   </div>
@@ -407,6 +454,7 @@ export default function KnowledgeBase() {
         title="Replace all evaluation questions?"
         description="The uploaded JSON will replace the current qa.json. Existing benchmark results remain available."
         confirmLabel="Replace questions"
+        confirmIcon={Replace}
         onCancel={() => setReplace(false)}
         onConfirm={() => {
           setReplace(false);
@@ -418,6 +466,7 @@ export default function KnowledgeBase() {
         title="Delete this evaluation question?"
         description="This removes the question from the current ground-truth dataset."
         confirmLabel="Delete question"
+        confirmIcon={Trash2}
         onCancel={() => setDeleting(null)}
         onConfirm={() => {
           if (deleting !== null) deleteQuestion.mutate(deleting);

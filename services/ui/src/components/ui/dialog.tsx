@@ -1,6 +1,6 @@
 import * as Dialog from "@radix-ui/react-dialog";
 import * as AlertDialog from "@radix-ui/react-alert-dialog";
-import { X } from "lucide-react";
+import { X, type LucideIcon } from "lucide-react";
 import type { ReactNode } from "react";
 import { Button } from "./button";
 export function Modal({
@@ -32,7 +32,7 @@ export function Modal({
               className="modal-close"
               aria-label="Close dialog"
             >
-              <X size={18} />
+              <X aria-hidden="true" focusable="false" size={18} />
             </Button>
           </Dialog.Close>
           {children}
@@ -46,6 +46,7 @@ export function Confirm({
   title,
   description,
   confirmLabel = "Confirm",
+  confirmIcon: ConfirmIcon,
   onCancel,
   onConfirm,
 }: {
@@ -53,6 +54,7 @@ export function Confirm({
   title: string;
   description: string;
   confirmLabel?: string;
+  confirmIcon?: LucideIcon;
   onCancel: () => void;
   onConfirm: () => void;
 }) {
@@ -71,11 +73,17 @@ export function Confirm({
           <div className="actions justify-end">
             <AlertDialog.Cancel asChild>
               <Button variant="outline" onClick={onCancel}>
+                <X aria-hidden="true" focusable="false" size={16} />
                 Cancel
               </Button>
             </AlertDialog.Cancel>
             <AlertDialog.Action asChild>
-              <Button onClick={onConfirm}>{confirmLabel}</Button>
+              <Button onClick={onConfirm}>
+                {ConfirmIcon && (
+                  <ConfirmIcon aria-hidden="true" focusable="false" size={16} />
+                )}
+                {confirmLabel}
+              </Button>
             </AlertDialog.Action>
           </div>
         </AlertDialog.Content>

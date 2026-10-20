@@ -11,6 +11,8 @@ import {
 } from "@tanstack/react-table";
 import {
   ArrowUpDown,
+  ArrowUp,
+  ArrowDown,
   ChevronLeft,
   ChevronRight,
   Download,
@@ -84,7 +86,7 @@ export function DataTable({
     <div className="data-table">
       <div className="table-toolbar">
         <label className="search-field">
-          <Search size={16} />
+          <Search aria-hidden="true" focusable="false" size={16} />
           <input
             aria-label={`Search ${name}`}
             placeholder="Search table…"
@@ -106,7 +108,7 @@ export function DataTable({
             )
           }
         >
-          <Download size={14} />
+          <Download aria-hidden="true" focusable="false" size={14} />
           Export CSV
         </Button>
       </div>
@@ -116,18 +118,40 @@ export function DataTable({
             {table.getHeaderGroups().map((group) => (
               <tr key={group.id}>
                 {group.headers.map((header) => (
-                  <th key={header.id}>
+                  <th
+                    key={header.id}
+                    aria-sort={
+                      header.column.getIsSorted() === "asc"
+                        ? "ascending"
+                        : header.column.getIsSorted() === "desc"
+                          ? "descending"
+                          : "none"
+                    }
+                  >
                     <button onClick={header.column.getToggleSortingHandler()}>
                       {flexRender(
                         header.column.columnDef.header,
                         header.getContext(),
                       )}
-                      <ArrowUpDown size={12} />
-                      {header.column.getIsSorted() === "asc"
-                        ? " ↑"
-                        : header.column.getIsSorted() === "desc"
-                          ? " ↓"
-                          : ""}
+                      {header.column.getIsSorted() === "asc" ? (
+                        <ArrowUp
+                          aria-hidden="true"
+                          focusable="false"
+                          size={14}
+                        />
+                      ) : header.column.getIsSorted() === "desc" ? (
+                        <ArrowDown
+                          aria-hidden="true"
+                          focusable="false"
+                          size={14}
+                        />
+                      ) : (
+                        <ArrowUpDown
+                          aria-hidden="true"
+                          focusable="false"
+                          size={14}
+                        />
+                      )}
                     </button>
                   </th>
                 ))}
@@ -194,7 +218,7 @@ export function DataTable({
             disabled={!table.getCanPreviousPage()}
             onClick={() => table.previousPage()}
           >
-            <ChevronLeft size={16} />
+            <ChevronLeft aria-hidden="true" focusable="false" size={16} />
           </Button>
           <Button
             variant="outline"
@@ -203,7 +227,7 @@ export function DataTable({
             disabled={!table.getCanNextPage()}
             onClick={() => table.nextPage()}
           >
-            <ChevronRight size={16} />
+            <ChevronRight aria-hidden="true" focusable="false" size={16} />
           </Button>
         </div>
       </div>

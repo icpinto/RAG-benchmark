@@ -1,10 +1,18 @@
 import {
-  AlertCircle,
+  CircleAlert,
+  CircleHelp,
+  CircleX,
+  Clock,
+  Info,
+  TriangleAlert,
+  Check,
   CheckCircle2,
   Inbox,
   LoaderCircle,
   Copy,
   Download,
+  RotateCcw,
+  type LucideIcon,
 } from "lucide-react";
 import type { ReactNode } from "react";
 import { useState } from "react";
@@ -62,16 +70,18 @@ export function Notice({
   children: ReactNode;
   tone?: "info" | "error" | "success" | "warning";
 }) {
+  const Icon = {
+    info: Info,
+    error: CircleAlert,
+    warning: TriangleAlert,
+    success: CheckCircle2,
+  }[tone];
   return (
     <div
       className={`notice notice-${tone}`}
       role={tone === "error" ? "alert" : "status"}
     >
-      {tone === "success" ? (
-        <CheckCircle2 size={17} />
-      ) : (
-        <AlertCircle size={17} />
-      )}
+      <Icon aria-hidden="true" focusable="false" size={16} />
       <div>{children}</div>
     </div>
   );
@@ -88,6 +98,7 @@ export function ErrorNotice({
       {error instanceof Error ? error.message : String(error)}
       {retry && (
         <Button variant="ghost" size="sm" onClick={retry}>
+          <RotateCcw aria-hidden="true" focusable="false" size={14} />
           Try again
         </Button>
       )}
@@ -97,7 +108,12 @@ export function ErrorNotice({
 export function Loading({ label = "Loading workspace…" }: { label?: string }) {
   return (
     <div className="loading" role="status">
-      <LoaderCircle className="spin" size={20} />
+      <LoaderCircle
+        aria-hidden="true"
+        focusable="false"
+        className="spin"
+        size={20}
+      />
       {label}
     </div>
   );
@@ -111,17 +127,31 @@ export function Empty({
 }) {
   return (
     <div className="empty">
-      <Inbox size={32} />
+      <Inbox aria-hidden="true" focusable="false" size={32} />
       <h3>{title}</h3>
       {children && <p>{children}</p>}
     </div>
   );
 }
 export function StatusBadge({ status }: { status?: string }) {
-  const normalized = (status || "unknown").trim().toLowerCase();
+  const normalized = status?.trim().toLowerCase() || "unknown";
+  const icons: Record<string, LucideIcon> = {
+    queued: Clock,
+    running: LoaderCircle,
+    completed: CheckCircle2,
+    failed: CircleX,
+  };
+  const Icon = Object.hasOwn(icons, normalized)
+    ? icons[normalized]
+    : CircleHelp;
   return (
     <span className={`status-badge status-${normalized}`}>
-      <span />
+      <Icon
+        aria-hidden="true"
+        focusable="false"
+        size={14}
+        className={normalized === "running" ? "spin" : undefined}
+      />
       {normalized}
     </span>
   );
@@ -132,7 +162,7 @@ export function Tabs({
   onChange,
   label,
 }: {
-  items: { value: string; label: string }[];
+  items: { value: string; label: string; icon?: LucideIcon }[];
   value: string;
   onChange: (value: string) => void;
   label: string;
@@ -147,6 +177,9 @@ export function Tabs({
           className={value === item.value ? "tab active" : "tab"}
           onClick={() => onChange(item.value)}
         >
+          {item.icon && (
+            <item.icon aria-hidden="true" focusable="false" size={16} />
+          )}
           {item.label}
         </button>
       ))}
@@ -179,11 +212,15 @@ export function JsonView({
             }
           }}
         >
-          <Copy size={14} />
+          {copied ? (
+            <Check aria-hidden="true" focusable="false" size={14} />
+          ) : (
+            <Copy aria-hidden="true" focusable="false" size={14} />
+          )}
           {copied ? "Copied" : "Copy JSON"}
         </Button>
         <Button variant="ghost" size="sm" onClick={() => download(name, text)}>
-          <Download size={14} />
+          <Download aria-hidden="true" focusable="false" size={14} />
           Download JSON
         </Button>
       </div>

@@ -3,6 +3,8 @@ import { useQuery } from "@tanstack/react-query";
 import { Link, NavLink, Outlet, useRouteError } from "react-router-dom";
 import {
   Activity,
+  ExternalLink,
+  ArrowLeft,
   BookOpen,
   ChartNoAxesCombined,
   ChevronRight,
@@ -45,7 +47,10 @@ export function RouteError() {
       <h1>Unable to open this workspace</h1>
       <ErrorNotice error={error} />
       <Button asChild>
-        <Link to="/knowledge-base">Return to Knowledge Base</Link>
+        <Link to="/knowledge-base">
+          <ArrowLeft aria-hidden="true" focusable="false" size={16} />
+          Return to Knowledge Base
+        </Link>
       </Button>
     </div>
   );
@@ -124,7 +129,7 @@ export default function App() {
             onClick={() => setMobile(false)}
           >
             <span className="brand-icon">
-              <FlaskConical size={22} />
+              <FlaskConical aria-hidden="true" focusable="false" size={22} />
             </span>
             <span>
               RAG<span className="brand-light">bench</span>
@@ -138,7 +143,7 @@ export default function App() {
             aria-label="Close navigation"
             onClick={() => setMobile(false)}
           >
-            <X size={20} />
+            <X aria-hidden="true" focusable="false" size={20} />
           </Button>
           <div className="sidebar-label">YOUR WORKFLOW</div>
           <nav aria-label="Main navigation">
@@ -151,7 +156,7 @@ export default function App() {
                   `nav-item ${isActive ? "active" : ""}`
                 }
               >
-                <Icon size={19} />
+                <Icon aria-hidden="true" focusable="false" size={19} />
                 <span>
                   {label}
                   <small>{subtitle}</small>
@@ -184,7 +189,7 @@ export default function App() {
                 void health.refetch();
               }}
             >
-              <Activity size={14} />
+              <Activity aria-hidden="true" focusable="false" size={14} />
             </button>
           </div>
         </aside>
@@ -200,10 +205,10 @@ export default function App() {
                 aria-expanded={mobile}
                 onClick={() => setMobile(true)}
               >
-                <Menu size={20} />
+                <Menu aria-hidden="true" focusable="false" size={20} />
               </Button>
               <span className="topbar-label">Workspace</span>
-              <ChevronRight size={14} />
+              <ChevronRight aria-hidden="true" focusable="false" size={14} />
               <strong>RAG Benchmark Platform</strong>
             </div>
             <a
@@ -215,7 +220,8 @@ export default function App() {
               rel="noreferrer"
               className="docs-link"
             >
-              API documentation <span>↗</span>
+              API documentation{" "}
+              <ExternalLink aria-hidden="true" focusable="false" size={14} />
             </a>
           </header>
           <main id="main-content">

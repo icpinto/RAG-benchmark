@@ -1,7 +1,7 @@
 import { useEffect, useId, useState } from "react";
 import type { Document } from "yaml";
 import { parse } from "yaml";
-import { Plus, RotateCcw, Trash2 } from "lucide-react";
+import { Plus, RotateCcw, Trash2, Layers, Variable, ListX } from "lucide-react";
 import type { Field, Stage } from "../lib/types";
 import { configValue, type ConfigPath } from "../lib/config";
 import { isRecord } from "../lib/utils";
@@ -170,6 +170,7 @@ export function FieldInput({
                 )
               }
             >
+              <Layers aria-hidden="true" focusable="false" size={14} />
               Sweep
             </Button>
           )}
@@ -183,7 +184,8 @@ export function FieldInput({
                 if (env) onChange(undefined);
               }}
             >
-              ƒx
+              <Variable aria-hidden="true" focusable="false" size={14} />
+              Expression
             </Button>
           )}
           {value !== undefined && (
@@ -193,7 +195,7 @@ export function FieldInput({
               aria-label={`Reset ${field.label}`}
               onClick={() => onChange(undefined)}
             >
-              <RotateCcw size={12} />
+              <RotateCcw aria-hidden="true" focusable="false" size={14} />
             </Button>
           )}
         </span>
@@ -249,6 +251,7 @@ export function Fields({
                   size="sm"
                   onClick={() => onChange(target, [value ?? {}])}
                 >
+                  <Layers aria-hidden="true" focusable="false" size={14} />
                   Use object sweep
                 </Button>
               )}
@@ -270,6 +273,7 @@ export function Fields({
                 size="sm"
                 onClick={() => onChange(target, undefined)}
               >
+                <RotateCcw aria-hidden="true" focusable="false" size={14} />
                 Reset {field.label}
               </Button>
             </details>
@@ -285,6 +289,7 @@ export function Fields({
                   size="sm"
                   onClick={() => onChange(target, value[0])}
                 >
+                  <Layers aria-hidden="true" focusable="false" size={14} />
                   Use single value
                 </Button>
               </div>
@@ -308,6 +313,7 @@ export function Fields({
                   size="sm"
                   onClick={() => onChange(target, undefined)}
                 >
+                  <RotateCcw aria-hidden="true" focusable="false" size={14} />
                   Use default
                 </Button>
               </div>
@@ -374,7 +380,7 @@ function ArrayEditor({
             aria-label={`Remove item ${index + 1}`}
             onClick={() => onChange(values!.filter((_, i) => i !== index))}
           >
-            <Trash2 size={14} />
+            <Trash2 aria-hidden="true" focusable="false" size={14} />
           </Button>
         </div>
       ))}
@@ -393,11 +399,12 @@ function ArrayEditor({
             ])
           }
         >
-          <Plus size={14} />
+          <Plus aria-hidden="true" focusable="false" size={14} />
           Add item
         </Button>
         {values === undefined && (
           <Button variant="ghost" size="sm" onClick={() => onChange([])}>
+            <ListX aria-hidden="true" focusable="false" size={14} />
             Set empty list
           </Button>
         )}
@@ -533,7 +540,7 @@ function ObjectEditor({
               onChange(copy);
             }}
           >
-            <Trash2 size={14} />
+            <Trash2 aria-hidden="true" focusable="false" size={14} />
           </Button>
         </div>
       ))}
@@ -553,7 +560,7 @@ function ObjectEditor({
             setKey("");
           }}
         >
-          <Plus size={14} />
+          <Plus aria-hidden="true" focusable="false" size={14} />
           Add parameter
         </Button>
       </div>
@@ -647,7 +654,7 @@ export function StageEditor({
                 aria-label={`Remove ${componentName} variant ${index + 1}`}
                 onClick={() => setList(list.filter((_, i) => i !== index))}
               >
-                <Trash2 size={15} />
+                <Trash2 aria-hidden="true" focusable="false" size={14} />
               </Button>
             </div>
             {definition ? (
@@ -683,7 +690,7 @@ export function StageEditor({
           }}
           disabled={stage.mode === "single" && list.length > 0}
         >
-          <option value="">+ Add {stage.label.toLowerCase()} component</option>
+          <option value="">Add {stage.label.toLowerCase()} component</option>
           {stage.components.map((component) => (
             <option key={component.name} value={component.name}>
               {component.name}
@@ -695,6 +702,7 @@ export function StageEditor({
           size="sm"
           onClick={() => change(stage.path, undefined)}
         >
+          <RotateCcw aria-hidden="true" focusable="false" size={14} />
           Use engine default
         </Button>
         {stage.mode === "variants" && (
@@ -703,6 +711,7 @@ export function StageEditor({
             size="sm"
             onClick={() => change(stage.path, [])}
           >
+            <ListX aria-hidden="true" focusable="false" size={14} />
             Set empty list
           </Button>
         )}

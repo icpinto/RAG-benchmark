@@ -6,7 +6,20 @@ import {
   useParams,
   useSearchParams,
 } from "react-router-dom";
-import { ArrowRight, RefreshCw } from "lucide-react";
+import {
+  ArrowRight,
+  RefreshCw,
+  FileText,
+  MessageSquare,
+  Layers,
+  Settings2,
+  ChartNoAxesCombined,
+  ListChecks,
+  Grid2X2,
+  GitCompareArrows,
+  Braces,
+  Flag,
+} from "lucide-react";
 import { activeRun, api } from "../lib/api";
 import type { RecordValue, Result, Run } from "../lib/types";
 import {
@@ -109,10 +122,10 @@ export function TraceExplorer({ results }: { results: Result[] }) {
             value={tab}
             onChange={setTab}
             items={[
-              { value: "context", label: "Final context" },
-              { value: "prompt", label: "Prompt / query" },
-              { value: "chunks", label: "Retrieved chunks" },
-              { value: "config", label: "Case configuration" },
+              { value: "context", label: "Final context", icon: FileText },
+              { value: "prompt", label: "Prompt / query", icon: MessageSquare },
+              { value: "chunks", label: "Retrieved chunks", icon: Layers },
+              { value: "config", label: "Case configuration", icon: Settings2 },
             ]}
           />
           {tab === "context" && (
@@ -331,7 +344,10 @@ function RunComparison({ runs }: { runs: Run[] }) {
             <span>
               {run.name} · {run.id} <StatusBadge status={run.status} />
               {ids[0] === run.id && (
-                <span className="draft-badge">Baseline</span>
+                <span className="draft-badge">
+                  <Flag aria-hidden="true" focusable="false" size={14} />
+                  Baseline
+                </span>
               )}
             </span>
           </label>
@@ -509,7 +525,7 @@ export default function ResultsExplorer() {
               void client.invalidateQueries({ queryKey: ["comparison"] });
             }}
           >
-            <RefreshCw size={15} />
+            <RefreshCw aria-hidden="true" focusable="false" size={16} />
             Refresh runs
           </Button>
         }
@@ -555,7 +571,7 @@ export default function ResultsExplorer() {
           <Button asChild variant="ghost">
             <Link to="/benchmark-setup">
               Configure a benchmark
-              <ArrowRight size={15} />
+              <ArrowRight aria-hidden="true" focusable="false" size={16} />
             </Link>
           </Button>
         </div>
@@ -565,11 +581,15 @@ export default function ResultsExplorer() {
         value={view}
         onChange={setView}
         items={[
-          { value: "summary", label: "Run summary" },
-          { value: "scores", label: "Scored results & traces" },
-          { value: "heatmap", label: "Retrieval heatmap" },
-          { value: "compare", label: "Compare runs" },
-          { value: "raw", label: "Raw JSON" },
+          { value: "summary", label: "Run summary", icon: ChartNoAxesCombined },
+          {
+            value: "scores",
+            label: "Scored results & traces",
+            icon: ListChecks,
+          },
+          { value: "heatmap", label: "Retrieval heatmap", icon: Grid2X2 },
+          { value: "compare", label: "Compare runs", icon: GitCompareArrows },
+          { value: "raw", label: "Raw JSON", icon: Braces },
         ]}
       />
       {view === "compare" ? (

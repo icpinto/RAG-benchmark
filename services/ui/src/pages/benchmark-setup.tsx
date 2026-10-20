@@ -1,7 +1,20 @@
 import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useBlocker, useNavigate } from "react-router-dom";
-import { Play, Save, FolderOpen, Code2, SlidersHorizontal } from "lucide-react";
+import {
+  Play,
+  Save,
+  FolderOpen,
+  Code2,
+  SlidersHorizontal,
+  ListChecks,
+  ListX,
+  Layers,
+  CheckCircle2,
+  Pencil,
+  LoaderCircle,
+  LogOut,
+} from "lucide-react";
 import { api, json } from "../lib/api";
 import { parseConfig, updateConfig } from "../lib/config";
 import type { Catalog } from "../lib/types";
@@ -68,9 +81,11 @@ function InputSelection({
               size="sm"
               onClick={() => onChange(options.map((option) => option.id))}
             >
+              <ListChecks aria-hidden="true" focusable="false" size={14} />
               Select all
             </Button>
             <Button variant="ghost" size="sm" onClick={() => onChange([])}>
+              <ListX aria-hidden="true" focusable="false" size={14} />
               Clear
             </Button>
           </div>
@@ -268,6 +283,11 @@ export default function BenchmarkSetup() {
         description="Shape your pipeline, select your inputs, and launch a reproducible experiment."
         actions={
           <span className={`draft-badge ${dirty ? "dirty" : ""}`}>
+            {dirty ? (
+              <Pencil aria-hidden="true" focusable="false" size={14} />
+            ) : (
+              <CheckCircle2 aria-hidden="true" focusable="false" size={14} />
+            )}
             {dirty ? "Unsaved changes" : "Saved configuration"}
           </span>
         }
@@ -313,7 +333,7 @@ export default function BenchmarkSetup() {
               disabled={pending || !path}
               onClick={() => requestLoad(path)}
             >
-              <FolderOpen size={15} />
+              <FolderOpen aria-hidden="true" focusable="false" size={16} />
               Load from path
             </Button>
           </Card>
@@ -381,8 +401,12 @@ export default function BenchmarkSetup() {
               value={view}
               onChange={setView}
               items={[
-                { value: "forms", label: "Guided editor" },
-                { value: "yaml", label: "YAML source" },
+                {
+                  value: "forms",
+                  label: "Guided editor",
+                  icon: SlidersHorizontal,
+                },
+                { value: "yaml", label: "YAML source", icon: Code2 },
               ]}
             />
             <div
@@ -395,22 +419,54 @@ export default function BenchmarkSetup() {
                 disabled={pending || !!parsed.errors.length || !path}
                 onClick={() => save.mutate()}
               >
-                <Save size={15} />
-                Save
+                {save.isPending ? (
+                  <LoaderCircle
+                    aria-hidden="true"
+                    focusable="false"
+                    className="spin"
+                    size={16}
+                  />
+                ) : (
+                  <Save aria-hidden="true" focusable="false" size={16} />
+                )}
+                {save.isPending ? "Saving…" : "Save"}
               </Button>
               <Button
                 disabled={pending || parsed.errors.length > 0 || !path}
                 onClick={() => run.mutate(true)}
               >
-                <Play size={16} />
-                {run.isPending ? "Launching…" : "Save and run"}
+                {run.isPending && run.variables === true ? (
+                  <LoaderCircle
+                    aria-hidden="true"
+                    focusable="false"
+                    className="spin"
+                    size={16}
+                  />
+                ) : (
+                  <Play aria-hidden="true" focusable="false" size={16} />
+                )}
+                {run.isPending && run.variables === true
+                  ? "Launching…"
+                  : "Save and run"}
               </Button>
               <Button
                 variant="outline"
                 disabled={pending || !path}
                 onClick={() => run.mutate(false)}
               >
-                Run saved configuration
+                {run.isPending && run.variables === false ? (
+                  <LoaderCircle
+                    aria-hidden="true"
+                    focusable="false"
+                    className="spin"
+                    size={16}
+                  />
+                ) : (
+                  <Play aria-hidden="true" focusable="false" size={16} />
+                )}
+                {run.isPending && run.variables === false
+                  ? "Launching…"
+                  : "Run saved configuration"}
               </Button>
             </div>
           </div>
@@ -493,7 +549,11 @@ export default function BenchmarkSetup() {
                         }
                         onClick={() => setGroup(section.key)}
                       >
-                        <SlidersHorizontal size={14} />
+                        <SlidersHorizontal
+                          aria-hidden="true"
+                          focusable="false"
+                          size={18}
+                        />
                         {section.label}
                       </button>
                     ))}
@@ -505,6 +565,11 @@ export default function BenchmarkSetup() {
                         aria-current={group === stage.key ? "true" : undefined}
                         onClick={() => setGroup(stage.key)}
                       >
+                        <Layers
+                          aria-hidden="true"
+                          focusable="false"
+                          size={18}
+                        />
                         {stage.label}
                       </button>
                     ))}
@@ -544,9 +609,10 @@ export default function BenchmarkSetup() {
                 </div>
               ) : (
                 <div className="empty">
-                  <Code2 size={28} />
+                  <Code2 aria-hidden="true" focusable="false" size={28} />
                   <p>Use YAML source to edit this configuration.</p>
                   <Button variant="outline" onClick={() => setView("yaml")}>
+                    <Code2 aria-hidden="true" focusable="false" size={16} />
                     Open YAML source
                   </Button>
                 </div>
@@ -560,6 +626,7 @@ export default function BenchmarkSetup() {
         title="Discard unsaved changes?"
         description="Loading another configuration replaces the current draft."
         confirmLabel="Discard and load"
+        confirmIcon={FolderOpen}
         onCancel={() => setLoadPath(null)}
         onConfirm={() => {
           if (loadPath) load.mutate(loadPath);
@@ -571,6 +638,7 @@ export default function BenchmarkSetup() {
         title="Leave setup with unsaved changes?"
         description="Discard your draft changes and continue to the selected workspace."
         confirmLabel="Discard and leave"
+        confirmIcon={LogOut}
         onCancel={() => blocker.reset?.()}
         onConfirm={() => {
           setDraft((current) => ({ ...current, text: current.saved }));

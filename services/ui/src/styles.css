@@ -332,15 +332,15 @@ pre {
   font-weight: 600;
 }
 .docs-link {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
   color: var(--primary);
   white-space: nowrap;
   font-size: var(--text-sm);
 }
 .docs-link:hover {
   text-decoration: underline;
-}
-.docs-link span {
-  margin-left: 6px;
 }
 main {
   width: 100%;
@@ -399,7 +399,7 @@ main > * + * {
   max-width: 100%;
   overflow-wrap: anywhere;
 }
-.button > svg {
+.lucide {
   flex: none;
 }
 .button-primary {
@@ -685,6 +685,11 @@ select {
   flex-shrink: 0;
 }
 .tab {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  flex-shrink: 0;
   padding: var(--space-4) 2px;
   background: transparent;
   color: var(--muted-foreground);
@@ -820,13 +825,6 @@ tr:hover td {
   font-weight: 600;
   text-transform: capitalize;
   white-space: nowrap;
-}
-.status-badge > span {
-  width: 6px;
-  height: 6px;
-  flex: none;
-  border-radius: 50%;
-  background: currentColor;
 }
 .status-completed,
 .draft-badge {
@@ -1390,6 +1388,9 @@ input[type="checkbox"] {
   }
 }
 @media (prefers-reduced-motion: reduce) {
+  .spin {
+    animation: none !important;
+  }
   *,
   *::before,
   *::after {
