@@ -194,7 +194,9 @@ The benchmark YAML is organized around top-level experiment, data, pipeline, LLM
 | `llm` | `temperature` | No | `0` | Ollama `options.temperature`. |
 | `llm` | `timeout` | No | `240` | Seconds; integer-compatible. |
 | `metrics` | `retrieval_k` | No | `[3, 5, 10]` for metrics, `[10]` for retrieval limit fallback | Non-empty positive integer list. |
-| `metrics` | `enabled` | No | Informational in v1 | Informational; v1 computes all metrics. |
+| `metrics` | `enabled` | No | All applicable metrics | Metric allowlist; `[]` disables scoring. |
+| `metrics` | `judge` | No | Disabled | Separate Ollama judge configuration; see trustworthy runs below. |
+| `runtime` | `mode` | No | `end_to_end` | `retrieval_only` skips answer generation and answer metrics. |
 | `runtime` | `max_combinations` | No | `32` | Positive case cap. |
 | `runtime` | `collection_prefix` | No | `ragbench` | Index prefix; normalized to lowercase/underscores. |
 | `runtime` | `artifact_dir` | No | `/app/artifacts` in default config/settings | Writable artifact path. |
@@ -233,7 +235,7 @@ The benchmark YAML is organized around top-level experiment, data, pipeline, LLM
 | Metric component | Parameters | Restrictions / notes |
 |---|---|---|
 | Retrieval metrics | `metrics.retrieval_k` | Non-empty positive integer list; reports raw/reranked retrieval metrics. |
-| Operational metrics | None | Always reported. |
+| Operational metrics | `metrics.enabled` | Select `operational` for token/cost data and `latency` for timings. |
 | Citation coverage | Ground-truth `expected_citations` | Verbatim expected-citation match. |
 | Placeholder answer correctness | Ground-truth `expected_answer` | Lexical placeholder, not semantic. |
 | Placeholder faithfulness | Generated answer and assembled context | Lexical heuristic, not LLM-based. |
@@ -305,12 +307,84 @@ This project is licensed under the MIT License. See [LICENSE](LICENSE) for the f
 
 This repo deliberately avoids a blind Cartesian product explosion. The runner expands configured variants into benchmark cases, but you should keep early experiments small and controlled. Test retrieval first, then generation. If retrieval fails, answer metrics become noise.
 
-Recommended extension roadmap:
+Deferred extensions:
 
-1. LLM-based citation validator
-2. RAGAS and DeepEval adapters
-3. Additional LangChain and LlamaIndex adapter components
-4. Synthetic QA generation
-5. Experiment comparison dashboard
-6. Distributed worker scaling
-7. Dataset versioning and artifact lineage
+1. RAGAS and DeepEval adapters
+2. Additional framework components
+3. Synthetic QA generation
+4. Distributed worker scaling
+5. Team access controls
+
+
+## Trustworthy runs
+
+Before queueing, the API freezes the resolved configuration, selected local files,
+fetched URL bytes, and selected ground-truth questions under
+`artifacts/<run_id>/snapshot/`. The manifest records original sources, checksums,
+question IDs, and a dataset hash independent of filesystem location. The worker
+receives only `run_id`, loads its persisted configuration, verifies snapshot
+checksums, and reads the frozen inputs. Direct Python runs create the same snapshot.
+Changing a source file, URL, ground truth, or YAML after submission cannot change
+the experiment. Duplicate document IDs and question IDs are rejected.
+
+Ground-truth entries may supply `question_id`; legacy entries receive deterministic
+IDs from their content. Question edits through the API preserve their existing ID.
+Indexes are isolated by run and case. A run ends as `completed`,
+`completed_with_errors` (some cases/questions failed), or `failed` (none succeeded
+or a top-level error occurred). Queue submission failures are recorded as failed.
+Successful question results survive failures elsewhere in the run. Results and
+case-level aggregates include valid, missing, and failed counts; missing scores
+are never converted to zero. Existing databases gain a nullable question ID column.
+Historical runs remain inspectable; rerun them to obtain stable paired identities.
+Restart API and workers together when upgrading: old queued task arguments are
+incompatible with the new run-ID-only task contract; resubmit those jobs.
+
+To benchmark retrieval without answer generation:
+
+```yaml
+runtime:
+  mode: retrieval_only
+metrics:
+  retrieval_k: [3, 5, 10]
+  enabled: [recall_at_k, precision_at_k, mrr, ndcg, latency, index_size]
+```
+
+LLM-backed rewriters still call Ollama when explicitly selected. Retrieval-only
+runs skip context compression, prompt building, answer generation, citation checks,
+and the judge. Extractor-specific settings are forwarded to execution.
+
+`metrics.enabled` accepts `retrieval_metrics` (all retrieval scores),
+`recall_at_k`, `precision_at_k`, `mrr`, `ndcg`, `operational`, `latency`,
+`index_size`, `citation_coverage`, `answer_correctness_placeholder`,
+`faithfulness_placeholder`, and the three semantic scores below. Omitting the list
+computes all applicable metrics; `[]` disables scoring. Unknown names are rejected.
+`index_size` currently reports chunk count, not backend storage bytes.
+
+Enable semantic evaluation separately from the answer model:
+
+```yaml
+metrics:
+  enabled: [retrieval_metrics, answer_correctness, claim_support, citation_support]
+  judge:
+    enabled: true
+    provider: ollama
+    model: "${JUDGE_MODEL:your-local-judge-model}"
+    base_url: "${OLLAMA_BASE_URL:http://ollama:11434}"
+    timeout: 240
+```
+
+The judge saves a versioned rubric, model identity, structured verdicts, reasons,
+and evidence quotes. Supported claims/citations must cite matching context text
+and document IDs. Correctness is unavailable without a reference answer; empty
+claim/citation sets are unavailable. Judge errors yield null scores with saved
+error details. Judge usage is stored separately from generation usage. Placeholder
+correctness/faithfulness and citation text coverage remain explicitly labeled
+heuristics and are excluded from semantic charts.
+
+In Results Explorer, select a baseline run, a candidate run, and one case from each.
+The comparison endpoint also accepts `baseline_case_id` and `candidate_case_id`:
+`GET /benchmarks/compare?run_ids=<baseline>&run_ids=<candidate>&baseline_case_id=<a>&candidate_case_id=<b>`.
+Pairs match stable question IDs only when dataset hashes agree. Output includes
+paired means, mean deltas, missing counts, and a deterministic 2,000-resample
+paired-bootstrap 95% interval (unavailable with fewer than two pairs). Different
+datasets remain available as descriptive results without paired deltas.

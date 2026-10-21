@@ -66,7 +66,46 @@
             "label": "Item",
             "type": "string"
           },
-          "help": "Informational in the current engine: all metrics are computed."
+          "help": "Select metric names. Omit to compute all applicable metrics; an empty list disables scoring. Placeholder scores are lexical heuristics."
+        },
+        {
+          "key": "judge",
+          "label": "Judge",
+          "type": "object",
+          "fields": [
+            {
+              "key": "enabled",
+              "label": "Enabled",
+              "type": "boolean",
+              "default": false
+            },
+            {
+              "key": "provider",
+              "label": "Provider",
+              "type": "string",
+              "default": "ollama",
+              "choices": ["ollama"]
+            },
+            {
+              "key": "model",
+              "label": "Model",
+              "type": "string"
+            },
+            {
+              "key": "base_url",
+              "label": "Base url",
+              "type": "string",
+              "default": "http://ollama:11434"
+            },
+            {
+              "key": "timeout",
+              "label": "Timeout",
+              "type": "number",
+              "default": 240,
+              "minimum": 1
+            }
+          ],
+          "help": "Optional local semantic judge, configured independently of answer generation. Failures yield unavailable scores."
         },
         {
           "key": "generation_model",
@@ -92,6 +131,14 @@
           "type": "number",
           "default": 32,
           "minimum": 1
+        },
+        {
+          "key": "mode",
+          "label": "Mode",
+          "type": "string",
+          "default": "end_to_end",
+          "choices": ["end_to_end", "retrieval_only"],
+          "help": "Retrieval-only skips answer generation and answer metrics. LLM-backed rewriters can still call Ollama."
         },
         {
           "key": "collection_prefix",
@@ -282,7 +329,7 @@
           ]
         }
       ],
-      "help": "Extractor options are stored in ingestion.extractor_configs. The current case expander does not forward that mapping to cases; changing these options does not change execution until the engine supports forwarding."
+      "help": "Extractor options are stored in ingestion.extractor_configs and forwarded to every expanded case."
     },
     {
       "key": "cleaners",

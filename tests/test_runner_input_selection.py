@@ -47,6 +47,8 @@ def test_runner_records_case_errors_and_continues(monkeypatch, tmp_path):
     monkeypatch.setattr(runner_module, "load_ground_truth", lambda path: [QueryExample(question="Q?")])
     monkeypatch.setattr(runner_module, "list_sources", lambda input_dir, remote_urls_file=None: [str(tmp_path / "doc.md")])
     monkeypatch.setattr(runner_module, "dataset_hash", lambda sources, examples: "dataset-hash")
+    monkeypatch.setattr(runner_module, "snapshot_inputs", lambda run_id, config: {**config, "_snapshot": {
+        "ground_truth_file": "frozen.json", "sources": [{"path": "frozen.md"}], "dataset_hash": "dataset-hash"}})
     monkeypatch.setattr(runner_module, "component_versions", lambda registry: {})
     monkeypatch.setattr(runner_module, "dependency_versions", lambda: {})
     monkeypatch.setattr(runner_module, "export_run", lambda config, run_id, run_payload, results: {})
@@ -78,7 +80,7 @@ def test_runner_records_case_errors_and_continues(monkeypatch, tmp_path):
         },
     )
 
-    completed = [call for call in upsert_calls if call["status"] == "completed"][-1]
+    completed = [call for call in upsert_calls if call["status"] == "completed_with_errors"][-1]
     case_error = summary["case_errors"][0]
 
     assert summary["cases"] == 1
@@ -159,6 +161,7 @@ def test_run_case_delegates_to_ingest_answer_and_persist(monkeypatch, tmp_path):
 
     assert summary == {
         "questions": 2,
+        "question_errors": [],
         "metric_rows": [
             {"case_id": "case-1", "question": "Q1?", "metrics": {}},
             {"case_id": "case-1", "question": "Q2?", "metrics": {}},

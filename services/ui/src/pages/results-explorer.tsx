@@ -77,7 +77,7 @@ function RunGuidance({ run, results }: { run: Run; results: Result[] }) {
     );
   return Number(run.summary?.errors) > 0 ? (
     <Notice tone="warning">
-      This run completed with {String(run.summary?.errors)} case errors.
+      This run completed with {String(run.summary?.errors)} execution errors.
       Successful results remain available; inspect the summary for failures.
     </Notice>
   ) : null;
@@ -110,6 +110,12 @@ export function TraceExplorer({ results }: { results: Result[] }) {
         <h3>{result?.question}</h3>
         <div className="answer-text">{result?.answer}</div>
       </details>
+      {result?.case_config?.judge != null && (
+        <details className="chunk">
+          <summary>Local judge verdicts and evidence</summary>
+          <JsonView value={result.case_config.judge} name="judge.json" />
+        </details>
+      )}
       {!isRecord(trace) || !Object.keys(trace).length ? (
         <Notice>
           This historical result does not include saved context or prompt
@@ -275,17 +281,27 @@ function RunComparison({ runs }: { runs: Run[] }) {
   const [params, setParams] = useSearchParams();
   const ids = params.getAll("compare");
   const [metric, setMetric] = useState("");
+  const baselineCase = params.get("baseline_case_id") || "";
+  const candidateCase = params.get("candidate_case_id") || "";
+  const compareParams = new URLSearchParams(ids.map((id) => ["run_ids", id]));
+  if (baselineCase && candidateCase) {
+    compareParams.set("baseline_case_id", baselineCase);
+    compareParams.set("candidate_case_id", candidateCase);
+  }
   const comparison = useQuery({
-    queryKey: ["comparison", ids],
+    queryKey: ["comparison", ids, baselineCase, candidateCase],
     enabled: ids.length >= 2,
     queryFn: () =>
       api<{
         runs: Run[];
         results: Record<string, Result[]>;
         deltas: RecordValue[];
-      }>(
-        `/benchmarks/compare?${new URLSearchParams(ids.map((id) => ["run_ids", id]))}`,
-      ),
+        comparisons?: {
+          compatible: boolean;
+          reason?: string;
+          metrics: RecordValue[];
+        }[];
+      }>(`/benchmarks/compare?${compareParams}`),
     refetchInterval: (query) =>
       query.state.data?.runs.some((run) => activeRun(run.status))
         ? 5000
@@ -298,7 +314,12 @@ function RunComparison({ runs }: { runs: Run[] }) {
           Object.values(data.results).flatMap((rows) =>
             rows.flatMap((row) =>
               Object.entries(row.metrics || {})
-                .filter(([, value]) => typeof value === "number")
+                .filter(
+                  ([key, value]) =>
+                    typeof value === "number" &&
+                    !key.includes("placeholder") &&
+                    key !== "citation_coverage",
+                )
                 .map(([key]) => key),
             ),
           ),
@@ -309,6 +330,10 @@ function RunComparison({ runs }: { runs: Run[] }) {
   const chart =
     data?.runs.flatMap((run) => {
       const values = (data.results[run.id] || [])
+        .filter(
+          (row) =>
+            row.case_id === (run.id === ids[0] ? baselineCase : candidateCase),
+        )
         .map((row) => numeric(row.metrics?.[chosen]))
         .filter((v): v is number => v !== undefined);
       return values.length
@@ -323,7 +348,7 @@ function RunComparison({ runs }: { runs: Run[] }) {
   return (
     <Card
       title="Compare benchmark runs"
-      description="The first selected run is the baseline. Deltas align by exact case ID and question."
+      description="Select two runs, then a baseline case and candidate case. Paired deltas require the same dataset snapshot and stable question IDs."
     >
       <div className="selection-list">
         {runs.map((run) => (
@@ -334,8 +359,10 @@ function RunComparison({ runs }: { runs: Run[] }) {
               onChange={(event) => {
                 const next = new URLSearchParams(params);
                 next.delete("compare");
+                next.delete("baseline_case_id");
+                next.delete("candidate_case_id");
                 (event.target.checked
-                  ? [...ids, run.id]
+                  ? [...ids.slice(-1), run.id]
                   : ids.filter((id) => id !== run.id)
                 ).forEach((id) => next.append("compare", id));
                 setParams(next, { flushSync: true, preventScrollReset: true });
@@ -366,6 +393,54 @@ function RunComparison({ runs }: { runs: Run[] }) {
       ) : (
         data && (
           <div className="stack">
+            <Notice>
+              Lexical placeholder metrics and citation text coverage are
+              heuristics. They are excluded from the comparison chart.
+            </Notice>
+            {data.runs.slice(0, 2).map((run, index) => (
+              <label className="field" key={run.id}>
+                {index === 0 ? "Baseline case" : "Candidate case"}
+                <select
+                  value={index === 0 ? baselineCase : candidateCase}
+                  onChange={(event) => {
+                    const next = new URLSearchParams(params);
+                    next.set(
+                      index === 0 ? "baseline_case_id" : "candidate_case_id",
+                      event.target.value,
+                    );
+                    setParams(next, { preventScrollReset: true });
+                  }}
+                >
+                  <option value="">Select a case</option>
+                  {Array.from(
+                    new Set([
+                      ...(data.results[run.id] || []).map((row) => row.case_id),
+                      ...Object.keys(
+                        isRecord(run.summary?.case_aggregates)
+                          ? run.summary.case_aggregates
+                          : {},
+                      ),
+                    ]),
+                  ).map((id) => (
+                    <option key={id}>{id}</option>
+                  ))}
+                </select>
+              </label>
+            ))}
+            {data.comparisons?.map((item, index) =>
+              item.compatible ? (
+                <DataTable
+                  key={index}
+                  name="paired-comparison"
+                  rows={item.metrics}
+                />
+              ) : (
+                <Notice key={index} tone="warning">
+                  {item.reason}. Results below are descriptive; paired deltas
+                  are unavailable.
+                </Notice>
+              ),
+            )}
             <DataTable
               name="comparison-metadata"
               rows={data.runs.map((run) => ({
@@ -404,8 +479,8 @@ function RunComparison({ runs }: { runs: Run[] }) {
                   </select>
                 </label>
                 <p className="field-help">
-                  Mean score across available results in each run. Case-aligned
-                  deltas appear in the table below.
+                  Mean score across available results in the selected cases.
+                  Paired statistics above use only shared valid question scores.
                 </p>
                 <Suspense fallback={<Loading />}>
                   <MetricChart data={chart} />
@@ -427,7 +502,11 @@ function Summary({ run }: { run: Run }) {
   const aggregate = aggregateRows(run);
   const means = aggregate
     .filter(
-      (row) => row.metric.endsWith(".mean") && numeric(row.value) !== undefined,
+      (row) =>
+        row.metric.endsWith(".mean") &&
+        !row.metric.includes("placeholder") &&
+        !row.metric.includes("citation_coverage") &&
+        numeric(row.value) !== undefined,
     )
     .map((row) => ({
       name: row.metric.slice(0, -5),
@@ -437,6 +516,10 @@ function Summary({ run }: { run: Run }) {
   const selected = means.find((row) => row.name === metric) || means[0];
   return (
     <div className="stack">
+      <Notice>
+        Placeholder correctness/faithfulness and citation text coverage are
+        lexical heuristics. Semantic scores require the optional local judge.
+      </Notice>
       <div className="stat-grid">
         {["cases", "questions", "errors"].map((key) => (
           <div className="stat-card" key={key}>

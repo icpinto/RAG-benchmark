@@ -133,7 +133,7 @@ def expand_cases(config: dict) -> list[BenchmarkCase]:
             indexers["sparse"] = sparse_indexer
         else:
             indexers.pop("sparse", None)
-        ing_conf={"chunker":chunker,"embedder":embedder,"cleaners":ing.get("cleaners",[]),"extractors":ing.get("extractors",[]),"metadata_enrichers":ing.get("metadata_enrichers",[]),"indexers":indexers}
+        ing_conf={"chunker":chunker,"embedder":embedder,"cleaners":ing.get("cleaners",[]),"extractors":ing.get("extractors",[]),"extractor_configs":deepcopy(ing.get("extractor_configs", {})),"metadata_enrichers":ing.get("metadata_enrichers",[]),"indexers":indexers}
         retriever_conf = dict(retriever)
         if dense_indexer is not None and retriever_conf.get("type") in {"dense", "dense_filtered", "hybrid", "weighted_hybrid", "adaptive_hybrid", "parent_document", "multi_query_fusion"}:
             search_ef = dense_indexer.get("search_ef", dense_indexer.get("hnsw_ef"))
@@ -141,6 +141,6 @@ def expand_cases(config: dict) -> list[BenchmarkCase]:
                 retriever_conf["search_ef"] = search_ef
         qry_conf={"rewriter":rewriter,"retriever":retriever_conf,"filters":qry.get("filters", [{"type":"none"}]),"reranker":reranker,"compressor":compressor,"context_assembler":qry.get("context_assemblers", [{"type":"default"}])[0],"prompt_builder":qry.get("prompt_builders", [{"type":"default"}])[0],"citation_validator":qry.get("citation_validators", [{"type":"simple"}])[0]}
         cid=stable_id(ing_conf,qry_conf,config.get("experiment",{}).get("name","exp"))
-        cases.append(BenchmarkCase(cid, ing_conf, qry_conf, config["llm"], config["metrics"]))
+        cases.append(BenchmarkCase(cid, ing_conf, qry_conf, config.get("llm", {}), config.get("metrics", {})))
         if len(cases)>=max_combos: break
     return cases

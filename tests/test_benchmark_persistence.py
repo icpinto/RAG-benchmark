@@ -36,3 +36,12 @@ def test_dataset_hash_uses_file_content_and_examples(tmp_path):
     source.write_text("beta", encoding="utf-8")
 
     assert dataset_hash([source], examples) != first
+
+
+def test_dataset_hash_does_not_depend_on_storage_root(tmp_path):
+    first = tmp_path / "first" / "doc.md"
+    second = tmp_path / "second" / "doc.md"
+    for path in (first, second):
+        path.parent.mkdir()
+        path.write_text("same content", encoding="utf-8")
+    assert dataset_hash([first], [QueryExample("Q")]) == dataset_hash([second], [QueryExample("Q")])

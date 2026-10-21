@@ -4,6 +4,49 @@ from typing import Any
 from ragbench_core.interfaces import BaseMetric
 from ragbench_core.models.schema import QueryExample, RetrievalResult, GeneratedAnswer
 
+RETRIEVAL_SELECTIONS = {"retrieval_metrics", "recall_at_k", "precision_at_k", "mrr", "ndcg"}
+ANSWER_SELECTIONS = {"citation_coverage", "answer_correctness_placeholder", "faithfulness_placeholder"}
+METRIC_SELECTIONS = RETRIEVAL_SELECTIONS | ANSWER_SELECTIONS | {"operational", "latency", "index_size", "answer_correctness", "claim_support", "citation_support"}
+
+
+def validate_metric_selection(config: dict) -> None:
+    enabled = config.get("enabled")
+    if enabled is not None and (not isinstance(enabled, list) or any(not isinstance(v, str) or v not in METRIC_SELECTIONS for v in enabled)):
+        raise ValueError("metrics.enabled must be a list of supported metric names")
+
+
+def metric_selected(name: str, config: dict) -> bool:
+    enabled = config.get("enabled")
+    if enabled is None:
+        return True
+    if name == "retrieval_metrics":
+        return bool(set(enabled) & RETRIEVAL_SELECTIONS)
+    return name in enabled
+
+
+def filter_metrics(metrics: dict, config: dict) -> dict:
+    enabled = config.get("enabled")
+    if enabled is None:
+        return metrics
+    selected = set(enabled)
+    def keep(key):
+        if key in selected:
+            return True
+        if "retrieval_metrics" in selected and any(term in key for term in ("recall@", "precision@", "mrr@", "ndcg@")):
+            return True
+        if any(alias in selected and term in key for alias, term in (("recall_at_k", "recall@"), ("precision_at_k", "precision@"), ("mrr", "mrr@"), ("ndcg", "ndcg@"))):
+            return True
+        if selected & RETRIEVAL_SELECTIONS and (key.endswith("failed") or key == "retrieval_ground_truth_available"):
+            return True
+        if "latency" in selected and key.endswith("seconds"):
+            return True
+        if "index_size" in selected and key == "chunk_count":
+            return True
+        if "operational" in selected and any(term in key for term in ("tokens", "cost", "chars", "context_chunks")):
+            return True
+        return False
+    return {k: v for k, v in metrics.items() if keep(k)}
+
 
 def count_text_tokens(text: str, model: str | None = None) -> int:
     """Count tokens with tiktoken when installed, falling back to a rough char heuristic."""

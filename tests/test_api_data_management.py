@@ -1,4 +1,5 @@
 import json
+from pathlib import Path
 
 import pytest
 
@@ -70,16 +71,17 @@ def test_run_benchmark_validates_and_embeds_input_selection(tmp_path, monkeypatc
     config_root = (tmp_path / "configs").resolve()
     config_root.mkdir()
     config_path = config_root / "config.yaml"
-    config_path.write_text("experiment:\n  name: selected\ndata: {}\n", encoding="utf-8")
+    config_path.write_text(json.dumps({"experiment": {"name": "selected"},
+        "data": {"input_dir": str(raw_dir), "ground_truth_file": str(qa_path)},
+        "runtime": {"artifact_dir": str(tmp_path / "artifacts")},
+        "pipeline": {"ingestion": {"chunkers": [{"type": "fixed"}], "embeddings": [{"provider": "fake"}]}, "query": {}}}), encoding="utf-8")
 
     queued = {}
 
     class DummyTask:
         @staticmethod
-        def delay(run_id, config_path_arg, overrides=None):
+        def delay(run_id):
             queued["run_id"] = run_id
-            queued["config_path"] = config_path_arg
-            queued["overrides"] = overrides
 
     monkeypatch.setattr(main, "CONFIG_ROOT", config_root)
     monkeypatch.setattr(main, "RAW_DATA_DIR", raw_dir)
@@ -97,15 +99,11 @@ def test_run_benchmark_validates_and_embeds_input_selection(tmp_path, monkeypatc
     )
 
     assert response["status"] == "queued"
-    assert queued["config_path"] == str(config_path)
-    assert queued["overrides"] == {
-        "input_selection": {
-            "source_paths": [str(source)],
-            "question_indices": [1],
-        }
-    }
+    assert queued["run_id"] == response["run_id"]
     saved_config = queued["upsert"][3]
     assert saved_config["input_selection"]["source_paths"] == [str(source)]
+    assert saved_config["_snapshot"]["sources"][0]["doc_id"] == "policy.md"
+    assert json.loads(Path(saved_config["_snapshot"]["ground_truth_file"]).read_text())[0]["question"] == "Q2?"
 
 
 def test_run_benchmark_resolves_relative_valid_config_for_load_and_queue(tmp_path, monkeypatch):
@@ -118,8 +116,8 @@ def test_run_benchmark_resolves_relative_valid_config_for_load_and_queue(tmp_pat
 
     class DummyTask:
         @staticmethod
-        def delay(run_id, config_path_arg, overrides=None):
-            calls["queued_config_path"] = config_path_arg
+        def delay(run_id):
+            calls["queued_run_id"] = run_id
 
     def fake_load_yaml(config_path_arg):
         calls["loaded_config_path"] = config_path_arg
@@ -127,6 +125,7 @@ def test_run_benchmark_resolves_relative_valid_config_for_load_and_queue(tmp_pat
 
     monkeypatch.setattr(main, "CONFIG_ROOT", config_root)
     monkeypatch.setattr(main, "load_yaml", fake_load_yaml)
+    monkeypatch.setattr(main, "snapshot_inputs", lambda run_id, config: {**config, "_snapshot": {"dataset_hash": "frozen"}})
     monkeypatch.setattr(main, "run_benchmark_task", DummyTask)
     monkeypatch.setattr(main, "upsert_run", lambda *args, **kwargs: calls.setdefault("upsert", args))
 
@@ -134,7 +133,7 @@ def test_run_benchmark_resolves_relative_valid_config_for_load_and_queue(tmp_pat
 
     assert response["status"] == "queued"
     assert calls["loaded_config_path"] == str(config_path)
-    assert calls["queued_config_path"] == str(config_path)
+    assert calls["queued_run_id"] == response["run_id"]
 
 
 def test_run_benchmark_rejects_absolute_config_outside_config_root(tmp_path, monkeypatch):
@@ -286,7 +285,9 @@ async def test_upload_ground_truth_writes_valid_upload_after_validation(tmp_path
     )
 
     assert response == {"saved": str(qa_path.resolve())}
-    assert json.loads(qa_path.read_text(encoding="utf-8")) == [
+    saved = json.loads(qa_path.read_text(encoding="utf-8"))
+    assert all(item["question_id"] for item in saved)
+    assert [{k: v for k, v in item.items() if k != "question_id"} for item in saved] == [
         payload[0],
         {
             "question": "What is covered?",

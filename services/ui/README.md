@@ -43,8 +43,8 @@ browser storage. Loading a different file or leaving setup prompts before
 discarding edits.
 
 Extractor-specific settings can be saved in `pipeline.ingestion.extractor_configs`;
-the existing case expander currently does not forward them to execution.
-Metrics `enabled` is informational, and the engine uses the first context
+the case expander forwards them to execution.
+Metrics `enabled` selects the metrics computed, and the engine uses the first context
 assembler, prompt builder, and citation validator. These engine behaviors
 are retained and explained in the relevant forms.
 
@@ -70,3 +70,8 @@ After changing the catalog, run `python scripts/export_ui_catalog.py` from the
 repository root and rerun both suites. The Python contract test detects stale
 frontend fixtures. `npm run format` formats
 the frontend source.
+
+Runs ending with `completed_with_errors` are terminal and display a warning badge.
+Compare explicit baseline/candidate cases on the same snapshot to obtain paired
+statistics; different datasets are descriptive only. The configuration forms expose
+retrieval-only mode and the optional independent Ollama judge.

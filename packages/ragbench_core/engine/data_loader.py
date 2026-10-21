@@ -15,5 +15,8 @@ def list_sources(input_dir: str, remote_urls_file: str | None = None) -> list[st
     return sources
 
 def load_ground_truth(path: str) -> list[QueryExample]:
-    raw=json.loads(Path(path).read_text())
-    return [QueryExample(**x) for x in raw]
+    raw=json.loads(Path(path).read_text(encoding="utf-8"))
+    examples = [QueryExample(**x) for x in raw]
+    if len({example.question_id for example in examples}) != len(examples):
+        raise ValueError("Duplicate question IDs in ground truth")
+    return examples

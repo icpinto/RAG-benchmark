@@ -190,8 +190,11 @@ def _catalog():
                 ),
                 array(
                     "enabled",
-                    help="Informational in the current engine: all metrics are computed.",
+                    help="Select metric names. Omit to compute all applicable metrics; an empty list disables scoring. Placeholder scores are lexical heuristics.",
                 ),
+                obj("judge", [flag("enabled"), field("provider", default="ollama", choices=["ollama"]),
+                              field("model"), field("base_url", default="http://ollama:11434"), number("timeout", 240, minimum=1)],
+                    help="Optional local semantic judge, configured independently of answer generation. Failures yield unavailable scores."),
             ],
         },
         {
@@ -199,6 +202,8 @@ def _catalog():
             "label": "Runtime",
             "fields": [
                 number("max_combinations", 32, minimum=1),
+                field("mode", default="end_to_end", choices=["end_to_end", "retrieval_only"],
+                      help="Retrieval-only skips answer generation and answer metrics. LLM-backed rewriters can still call Ollama."),
                 field("collection_prefix", default="ragbench"),
                 field("artifact_dir", default="/app/artifacts"),
                 obj("embedding_cache", cache),
@@ -253,7 +258,7 @@ def _catalog():
                 ),
             ],
             mode="extractors",
-            help="Extractor options are stored in ingestion.extractor_configs. The current case expander does not forward that mapping to cases; changing these options does not change execution until the engine supports forwarding.",
+            help="Extractor options are stored in ingestion.extractor_configs and forwarded to every expanded case.",
         ),
         stage(
             "cleaners", "Cleaning", "pipeline.ingestion.cleaners", [component("basic")]

@@ -11,7 +11,7 @@ from typing import Any
 from ragbench_core.models.schema import RetrievalResult, Chunk
 
 _VOLATILE_KEYS={"api_key","token","password","secret","created_at","updated_at"}
-_DEPENDENCIES=("rag-benchmark-platform","fastapi","streamlit","sqlalchemy","pydantic","pandas","mlflow","wandb")
+_DEPENDENCIES=("rag-benchmark-platform","fastapi","sqlalchemy","pydantic","pandas","numpy","requests","qdrant-client","opensearch-py","sentence-transformers","llama-index-core","mlflow","wandb")
 
 
 def _json_default(value: Any):
@@ -49,7 +49,7 @@ def stable_hash(value: Any) -> str:
 def dataset_hash(sources: list[str | Path], examples: list[Any]) -> str:
     payload={"sources": [], "examples": normalize_for_hash(examples)}
     for source in sorted(Path(item) for item in sources):
-        entry={"path": str(source)}
+        entry={"doc_id": source.name}
         try:
             entry["sha256"]=hashlib.sha256(source.read_bytes()).hexdigest()
         except OSError:
@@ -97,6 +97,9 @@ def model_identifiers(config: dict[str, Any]) -> dict[str, list[str]]:
     for item in config.get("pipeline", {}).get("query", {}).get("rerankers", []):
         if "model" in item:
             models["rerankers"].append(f"{item.get('type','reranker')}:{item['model']}")
+    judge = config.get("metrics", {}).get("judge", {})
+    if judge.get("enabled"):
+        models["judges"] = [f"ollama:{judge['model']}"]
     return models
 
 

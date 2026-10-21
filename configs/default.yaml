@@ -2,15 +2,6 @@ experiment:
   name: "v1_rag_benchmark"
   description: "Runnable MVP benchmark over ingestion and query variants"
 
-runtime:
-  pricing:
-    generation_input_per_1m: 0.15
-    generation_output_per_1m: 0.60
-    embedding_per_1m: 0.02
-  retrieval_cache:
-    enabled: true
-    backend: file
-
 data:
   input_dir: "/app/data/raw"
   remote_urls_file: "/app/data/raw/urls.txt"
@@ -306,6 +297,14 @@ metrics:
     - faithfulness_placeholder
 
 runtime:
+  mode: end_to_end
+  pricing:
+    generation_input_per_1m: 0.15
+    generation_output_per_1m: 0.60
+    embedding_per_1m: 0.02
+  retrieval_cache:
+    enabled: true
+    backend: file
   max_combinations: 32
   collection_prefix: "ragbench"
   artifact_dir: "/app/artifacts"

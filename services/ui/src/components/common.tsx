@@ -139,6 +139,7 @@ export function StatusBadge({ status }: { status?: string }) {
     queued: Clock,
     running: LoaderCircle,
     completed: CheckCircle2,
+    completed_with_errors: TriangleAlert,
     failed: CircleX,
   };
   const Icon = Object.hasOwn(icons, normalized)

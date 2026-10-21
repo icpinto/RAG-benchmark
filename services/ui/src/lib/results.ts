@@ -57,38 +57,17 @@ export function comparisonRows(
   runs: Run[],
   results: Record<string, Result[]>,
 ): RecordValue[] {
-  const joined = new Map<string, RecordValue>();
-  for (const run of runs)
-    for (const row of results[run.id] || []) {
-      const key = JSON.stringify([row.case_id, row.question]);
-      const output = joined.get(key) || {
-        case_id: row.case_id,
-        question: row.question,
-      };
-      for (const [metric, value] of Object.entries(row.metrics || {}))
-        output[`${run.id} · ${metric}`] = value;
-      joined.set(key, output);
-    }
-  const baseline = runs[0];
-  if (baseline)
-    for (const row of joined.values())
-      for (const run of runs.slice(1))
-        for (const [key, value] of Object.entries(row)) {
-          const prefix = `${run.id} · `;
-          if (key.startsWith(prefix)) {
-            const metric = key.slice(prefix.length);
-            const base = row[`${baseline.id} · ${metric}`];
-            if (
-              typeof value === "number" &&
-              typeof base === "number" &&
-              Number.isFinite(value) &&
-              Number.isFinite(base)
-            )
-              row[`Δ ${metric} (${run.id} − ${baseline.id})`] = value - base;
-          }
-        }
-  return Array.from(joined.values());
+  return runs.flatMap((run) =>
+    (results[run.id] || []).map((row) => ({
+      run_id: run.id,
+      case_id: row.case_id,
+      question_id: row.question_id,
+      question: row.question,
+      ...(row.metrics || {}),
+    })),
+  );
 }
+
 export function aggregateRows(run: Run): { metric: string; value: unknown }[] {
   const rows: { metric: string; value: unknown }[] = [];
   function flatten(value: unknown, path: string) {

@@ -2,7 +2,7 @@ import { expect, test, type Page } from "@playwright/test";
 import catalog from "../src/test/catalog.json" with { type: "json" };
 import { sampleConfig, sampleResults, sampleRuns } from "../src/test/fixtures";
 import { expectReadableLayout } from "./readability";
-async function backend(page: Page) {
+async function backend(page: Page, terminalStatus = "completed") {
   let config = sampleConfig;
   let failSave = false;
   let failFiles = false;
@@ -97,6 +97,24 @@ async function backend(page: Page) {
           })),
         },
         deltas: [],
+        comparisons:
+          url.searchParams.has("baseline_case_id") &&
+          url.searchParams.has("candidate_case_id")
+            ? [
+                {
+                  compatible: true,
+                  metrics: [
+                    {
+                      metric: "recall@5",
+                      paired_count: 1,
+                      missing_count: 0,
+                      mean_delta: 0.5,
+                      ci95: null,
+                    },
+                  ],
+                },
+              ]
+            : [],
       });
     if (path === "/benchmarks/run-new") {
       runReads++;
@@ -104,7 +122,15 @@ async function backend(page: Page) {
         ...sampleRuns[0],
         id: "run-new",
         status:
-          runReads === 1 ? "queued" : runReads === 2 ? "running" : "completed",
+          runReads === 1
+            ? "queued"
+            : runReads === 2
+              ? "running"
+              : terminalStatus,
+        summary: {
+          ...sampleRuns[0].summary,
+          errors: terminalStatus === "completed_with_errors" ? 1 : 0,
+        },
       });
     }
     if (path.endsWith("/results")) return respond(sampleResults);
@@ -126,6 +152,7 @@ async function backend(page: Page) {
 test("data preparation, guided editing, launch, polling, traces and comparisons", async ({
   page,
 }) => {
+  test.setTimeout(60000);
   const state = await backend(page);
   await page.goto("/knowledge-base");
   await expect(
@@ -200,11 +227,47 @@ test("data preparation, guided editing, launch, polling, traces and comparisons"
   await expect(
     page.getByRole("heading", { name: "Compare benchmark runs" }),
   ).toBeVisible();
+  await page
+    .getByRole("combobox", { name: "Baseline case", exact: true })
+    .selectOption("case-one");
+  await page
+    .getByRole("combobox", { name: "Candidate case", exact: true })
+    .selectOption("case-one");
+  await expect(
+    page.getByRole("table", { name: "paired-comparison table" }),
+  ).toBeVisible();
   await expect(page.getByText("0.5", { exact: true }).first()).toBeVisible();
   await page.screenshot({
     path: "test-results/comparison-desktop.png",
     fullPage: true,
   });
+});
+
+test("mixed outcomes stop polling and retain scored results", async ({
+  page,
+}) => {
+  await backend(page, "completed_with_errors");
+  let reads = 0;
+  page.on("request", (request) => {
+    if (new URL(request.url()).pathname === "/api/benchmarks/run-new") reads++;
+  });
+  await page.goto("/results/run-new");
+  await expect(page.locator(".selected-run .status-badge")).toHaveText(
+    "completed_with_errors",
+    { timeout: 15000 },
+  );
+  await expect(
+    page.getByText("This run completed with 1 execution errors.", {
+      exact: false,
+    }),
+  ).toBeVisible();
+  const terminalReads = reads;
+  await page.waitForTimeout(5500);
+  expect(reads).toBe(terminalReads);
+  await page.getByRole("button", { name: "Scored results & traces" }).click();
+  await expect(
+    page.getByRole("heading", { name: "Trace Explorer" }),
+  ).toBeVisible();
 });
 test("question updates and deletes use the current index and require confirmation", async ({
   page,

@@ -79,7 +79,7 @@ The important sections are:
 | `pipeline.ingestion` | Extractors, cleaners, chunkers, enrichers, embedders, and dense/sparse indexers. |
 | `pipeline.query` | Rewriters, retrievers, filters, rerankers, compressors, context assemblers, prompt builders, and citation validators. |
 | `llm` | Generator provider, model, endpoint, temperature, and timeout. |
-| `metrics` | Retrieval cutoffs and declared metric list. The runner currently invokes every registered metric. |
+| `metrics` | Retrieval cutoffs, an optional metric allowlist, and an independently configured local semantic judge. |
 | `runtime` | Case cap, collection prefix, caches, pricing, artifact directory, and optional exports. |
 
 The UI also lets the operator choose a subset of source paths and question indexes for a run. These selections are run overrides; they do not rewrite the YAML. An empty selection intentionally means no sources or no questions, rather than “all.”
@@ -100,22 +100,23 @@ sequenceDiagram
     O->>U: Start benchmark
     U->>A: POST /benchmarks/run
     A->>A: Resolve config inside config root
-    A->>A: Validate selected files/questions
+    A->>A: Validate cases and freeze selected files, URLs, questions
     A->>P: Insert run with status=queued
-    A->>R: Enqueue run_id, config path, selections
+    A->>R: Enqueue run_id only
     A-->>U: run_id and queued status
     R->>W: Deliver task
-    W->>W: Load YAML and apply selections
+    W->>P: Load persisted resolved configuration
+    W->>W: Verify and read immutable snapshot
     W->>P: Update status=running
     W->>W: Execute cases and questions
-    W->>P: Persist results and completed/failed status
+    W->>P: Persist results and terminal outcome
 ```
 
 Path resolution confines configuration access to the configured config root and data access to the raw-data root. The generated UUID is the stable run identifier used by the API, database, and artifact directory.
 
 ### Step 4: monitor and inspect
 
-The UI reads the run list and selected run from the API. A run normally progresses through `queued` → `running` → `completed`. A top-level runner exception produces `failed`. Individual case failures are isolated and recorded in the completed run summary, so one unsupported or unhealthy component combination does not discard all other cases.
+The UI reads the run list and selected run from the API. A run normally progresses through `queued` → `running` → `completed`. A top-level runner exception produces `failed`. Case and question failures are isolated. Mixed outcomes produce `completed_with_errors`; no successful case produces `failed`. Successful results remain available.
 
 The results area provides:
 
@@ -124,7 +125,7 @@ The results area provides:
 - retrieval metric tables/heatmaps;
 - an evaluation-step view containing rewritten queries, retrieved chunks, context, and prompt;
 - saved artifact paths and the expanded case configuration; and
-- cross-run comparison, aligned by `(case_id, question)`, with numeric deltas against the first selected run.
+- cross-run comparison of explicitly selected cases, paired by stable question ID on matching dataset snapshots, with missing counts and bootstrap confidence intervals.
 
 ## 4. Inside `BenchmarkRunner`
 
@@ -164,7 +165,7 @@ flowchart LR
 
 For every selected source, every configured extractor is asked to extract; extractors return no documents for unsupported inputs. The resulting documents pass through the cleaner chain, the case's chunker, and metadata enrichers. The selected embedder populates dense and/or sparse embeddings. The embedding cache avoids recomputing vectors for the same safe embedder configuration and chunk content.
 
-The collection/index name is `<collection_prefix>_<case_id>`, normalized to lowercase with hyphens changed to underscores. Dense and sparse indexers may both persist the same chunks. The runner captures total ingestion, embedding, persistence, client-initialization, token, and chunk-count information for later metrics.
+The collection/index name is `<collection_prefix>_<run_namespace>_<case_id>`, normalized to lowercase with hyphens changed to underscores. Dense and sparse indexers may both persist the same chunks. The runner captures total ingestion, embedding, persistence, client-initialization, token, and chunk-count information for later metrics.
 
 Because ingestion is performed per case, cases with different query settings but identical ingestion settings currently rebuild/reindex the corpus (although embedding cache hits can avoid model inference).
 
@@ -197,15 +198,15 @@ flowchart LR
 
 ### 4.5 Evaluation and aggregation
 
-Every registered metric is invoked for each answer. The built-ins cover retrieval scores (raw and reranked recall/precision/MRR/NDCG at configured `k` values), operational timing/token/cost data, citation coverage, and placeholder answer correctness/faithfulness heuristics. The citation validator also adds validation output.
+`metrics.enabled` selects applicable metrics; omission computes all, while `[]` disables scoring. Retrieval-only mode skips answer generation, citation checks, and the judge. The built-ins cover retrieval scores (raw and reranked recall/precision/MRR/NDCG at configured `k` values), operational timing/token/cost data, citation coverage, and placeholder answer correctness/faithfulness heuristics. The citation validator also adds validation output.
 
-Metrics are persisted with the answer and case configuration. At the end of the run, each numeric metric is aggregated independently into `mean`, `min`, `max`, and `sum`. Aggregation is over all successful per-question rows; failed cases contribute no metric rows.
+Metrics are persisted with the answer and case configuration. At the end of the run, each numeric metric is aggregated independently into `mean`, `min`, `max`, and `sum`. Run and case aggregates track valid, missing, and failed observations separately. Failed cases contribute failed observations without zero-valued scores.
 
 ## 5. Persistence and artifacts
 
 ### Postgres records
 
-`benchmark_runs` contains status, original/overridden configuration, summary, error, dataset/config hashes, version/model metadata, artifact directory, and exports. `benchmark_results` contains one row per successful case/question with metrics, answer, case/evaluation configuration, artifact paths, and model identifiers.
+`benchmark_runs` contains status, original/overridden configuration, summary, error, dataset/config hashes, version/model metadata, artifact directory, and exports. `benchmark_results` contains stable question IDs and one row per attempted case/question, including question failures with metrics, answer, case/evaluation configuration, artifact paths, and model identifiers.
 
 ### Artifact tree
 
@@ -239,12 +240,12 @@ Embedding and retrieval caches are performance optimizations, not the result sto
 - A bad YAML save is rejected. A configuration that is valid YAML but references a missing plugin generally fails in the worker.
 - A case exception is written to `case_error.json`, counted in `summary.errors`, and execution continues with the next case.
 - A failure outside case isolation (for example, loading missing ground truth) marks the entire run `failed` and records the error string.
-- A completed run may therefore have nonzero errors; inspect both `status` and `summary.errors`.
+- Mixed outcomes are terminal `completed_with_errors`; an entirely unsuccessful run is `failed`. Queue submission errors also mark the persisted run failed.
 - A worker crash before the runner handles an exception can leave a run in `queued` or `running`; there is currently no watchdog/reconciliation process.
-- Vector/search collections are named by deterministic case ID and are not automatically deleted after a run.
-- Run comparison only produces deltas where both runs have the same case ID and question. Because experiment name participates in the case ID, changing it can prevent row alignment even when the pipeline is otherwise identical.
-- Metrics listed under `metrics.enabled` are informational in the current implementation; all registered metrics execute.
-- “Answer correctness” and “faithfulness” are explicitly placeholder lexical heuristics, not judge-model evaluations.
+- Vector/search collections are isolated by run and case and are not automatically deleted after a run.
+- Paired comparison requires explicitly selected cases, the same dataset snapshot, and stable question IDs. Experiment names do not affect pairing. Different datasets are descriptive only.
+- Metrics listed under `metrics.enabled` are honored. Extractor-specific configurations are forwarded through case expansion.
+- Placeholder correctness/faithfulness and citation text coverage are lexical heuristics. Opt-in Ollama judging adds semantic correctness, claim support, and citation support with a saved rubric and evidence. Judge errors yield unavailable scores.
 
 ## 7. API map
 
@@ -258,7 +259,7 @@ Embedding and retrieval caches are performance optimizations, not the result sto
 | `GET /benchmarks` | List recent runs. |
 | `GET /benchmarks/{run_id}` | Fetch run metadata/status/summary. |
 | `GET /benchmarks/{run_id}/results` | Fetch per-question results. |
-| `GET /benchmarks/compare?run_ids=...` | Return runs, results, and aligned numeric deltas. |
+| `GET /benchmarks/compare?run_ids=...` | Return descriptive results; select baseline/candidate cases for paired deltas and confidence intervals. |
 | `POST /data/upload` | Upload source files. |
 | `POST /data/ground-truth` | Replace ground truth from a validated JSON upload (maximum 10 MiB). |
 | `GET /data/files` | List source files. |

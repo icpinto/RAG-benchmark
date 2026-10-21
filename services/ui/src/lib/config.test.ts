@@ -8,12 +8,13 @@ describe("configuration round trips", () => {
     resolve(process.cwd(), "../../configs/default.yaml"),
     "utf8",
   );
-  it("loads the existing default and edits the effective final runtime without merging duplicates", () => {
-    const original = parseConfig(sample);
+  it("edits the effective final runtime without merging duplicate mappings", () => {
+    const duplicated = sample + "\nruntime:\n  max_combinations: 32\n";
+    const original = parseConfig(duplicated);
     expect(original.errors).toEqual([]);
     expect(original.duplicates).toContain("runtime");
     expect(configValue(original.doc, ["runtime", "pricing"])).toBeUndefined();
-    const edited = updateConfig(sample, ["runtime", "max_combinations"], 2);
+    const edited = updateConfig(duplicated, ["runtime", "max_combinations"], 2);
     expect(
       configValue(parseConfig(edited).doc, ["runtime", "max_combinations"]),
     ).toBe(2);

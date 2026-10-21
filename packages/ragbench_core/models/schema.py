@@ -25,6 +25,14 @@ class QueryExample:
     ground_truth_doc_ids: list[str] = field(default_factory=list)
     ground_truth_chunk_ids: list[str] = field(default_factory=list)
     expected_citations: list[str] = field(default_factory=list)
+    question_id: str = ""
+
+    def __post_init__(self):
+        if not self.question_id:
+            from ragbench_core.engine.persistence import stable_hash
+            self.question_id = stable_hash({k: v for k, v in self.__dict__.items() if k != "question_id"})[:24]
+        if not isinstance(self.question_id, str) or not self.question_id.strip():
+            raise ValueError("question_id must be a non-empty string")
 
 @dataclass
 class RetrievalResult:

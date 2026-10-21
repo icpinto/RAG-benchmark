@@ -1,12 +1,17 @@
 from __future__ import annotations
 from pathlib import Path
 import json, os, shutil, uuid
+import requests
 from fastapi import FastAPI, UploadFile, File, HTTPException, Query
 from pydantic import BaseModel, Field, ValidationError
 from ragbench_core.engine.database import init_db, get_run, list_runs, list_results, upsert_run
 from ragbench_core.utils.config import load_yaml, parse_yaml_text
 from services.worker.app.tasks import run_benchmark_task
 from services.api.app.config_catalog import get_config_schema
+from ragbench_core.engine.snapshots import snapshot_inputs
+from ragbench_core.engine.comparison import paired_comparison
+from ragbench_core.models.schema import QueryExample
+from dataclasses import asdict
 
 app=FastAPI(title="RAG Benchmark Platform API", version="0.1.0")
 CONFIG_ROOT=Path(os.getenv("RAGBENCH_CONFIG_DIR", "/app/configs")).resolve()
@@ -31,6 +36,7 @@ class QuestionRequest(BaseModel):
     ground_truth_doc_ids: list[str] = Field(default_factory=list)
     ground_truth_chunk_ids: list[str] = Field(default_factory=list)
     expected_citations: list[str] = Field(default_factory=list)
+    question_id: str | None = Field(default=None, min_length=1)
 
 
 
@@ -52,16 +58,20 @@ def _read_ground_truth() -> list[dict]:
         raise HTTPException(status_code=500, detail=f"Invalid ground-truth JSON: {exc}")
     if not isinstance(payload, list):
         raise HTTPException(status_code=500, detail="Ground-truth JSON must contain a list of questions")
-    return payload
+    return [asdict(QueryExample(**item)) for item in payload]
 
 def _write_ground_truth(questions: list[dict]) -> None:
+    if len({item["question_id"] for item in questions}) != len(questions):
+        raise HTTPException(status_code=400, detail="Duplicate question IDs in ground truth")
     EVAL_DATA_DIR.mkdir(parents=True, exist_ok=True)
     GROUND_TRUTH_PATH.write_text(json.dumps(questions, indent=2) + "\n", encoding="utf-8")
 
 def _question_payload(req: QuestionRequest) -> dict:
     if hasattr(req, "model_dump"):
-        return req.model_dump()
-    return req.dict()
+        payload = req.model_dump(exclude_none=True)
+    else:
+        payload = req.dict(exclude_none=True)
+    return asdict(QueryExample(**payload))
 
 def _resolve_config_path(config_path: str) -> Path:
     raw=Path(config_path)
@@ -125,10 +135,10 @@ def _validated_source_paths(source_paths: list[str] | None) -> list[str] | None:
         selected.append(str(data_path))
     return selected
 
-def _validated_question_indices(question_indices: list[int] | None) -> list[int] | None:
+def _validated_question_indices(question_indices: list[int] | None, ground_truth_file: str | None = None) -> list[int] | None:
     if question_indices is None:
         return None
-    questions=_read_ground_truth()
+    questions=json.loads(Path(ground_truth_file).read_text(encoding="utf-8")) if ground_truth_file else _read_ground_truth()
     selected=[]
     for index in question_indices:
         if index < 0 or index >= len(questions):
@@ -153,13 +163,24 @@ def run_benchmark(req: RunRequest):
     config_path=_resolve_config_path(req.config_path)
     if not config_path.exists():
         raise HTTPException(status_code=404, detail=f"Config not found: {config_path}")
-    config=load_yaml(str(config_path))
-    source_paths=_validated_source_paths(req.source_paths)
-    question_indices=_validated_question_indices(req.question_indices)
-    config=_apply_input_selection(config, source_paths, question_indices)
     run_id=str(uuid.uuid4())
-    upsert_run(run_id, config.get("experiment",{}).get("name","benchmark"), "queued", config)
-    run_benchmark_task.delay(run_id, str(config_path), {"input_selection":config.get("input_selection", {})})
+    try:
+        config=load_yaml(str(config_path))
+        source_paths=_validated_source_paths(req.source_paths)
+        question_indices=_validated_question_indices(req.question_indices, config.get("data", {}).get("ground_truth_file"))
+        config=_apply_input_selection(config, source_paths, question_indices)
+        config=snapshot_inputs(run_id, config)
+    except (ValueError, KeyError, TypeError, OSError) as exc:
+        raise HTTPException(status_code=400, detail=f"Invalid benchmark inputs: {exc}") from exc
+    except requests.RequestException as exc:
+        raise HTTPException(status_code=400, detail=f"Could not snapshot URL: {exc}") from exc
+    name = config.get("experiment",{}).get("name","benchmark")
+    upsert_run(run_id, name, "queued", config, dataset_hash=config["_snapshot"]["dataset_hash"])
+    try:
+        run_benchmark_task.delay(run_id)
+    except Exception as exc:
+        upsert_run(run_id, name, "failed", config, error=f"Queue submission failed: {exc}")
+        raise HTTPException(status_code=503, detail="Benchmark could not be queued") from exc
     return {"run_id":run_id,"status":"queued"}
 
 @app.get("/benchmarks")
@@ -168,7 +189,7 @@ def benchmarks():
 
 
 @app.get("/benchmarks/compare")
-def compare_benchmarks(run_ids: list[str] = Query(...)):
+def compare_benchmarks(run_ids: list[str] = Query(...), baseline_case_id: str | None = None, candidate_case_id: str | None = None):
     if len(run_ids) < 2:
         raise HTTPException(status_code=400, detail="At least two run_ids are required")
     runs=[]
@@ -179,20 +200,18 @@ def compare_benchmarks(run_ids: list[str] = Query(...)):
             raise HTTPException(status_code=404, detail=f"Run not found: {run_id}")
         runs.append(run)
         results[run_id]=list_results(run_id)
-    base=run_ids[0]
-    deltas=[]
-    base_lookup={(item.get("case_id"), item.get("question")): item for item in results[base]}
-    for run_id in run_ids[1:]:
-        for item in results[run_id]:
-            key=(item.get("case_id"), item.get("question"))
-            base_item=base_lookup.get(key)
-            if not base_item:
-                continue
-            for metric,value in (item.get("metrics") or {}).items():
-                base_value=(base_item.get("metrics") or {}).get(metric)
-                if isinstance(value, (int,float)) and isinstance(base_value, (int,float)):
-                    deltas.append({"case_id":key[0],"question":key[1],"metric":metric,"baseline_run_id":base,"run_id":run_id,"delta":value-base_value})
-    return {"runs":runs,"results":results,"deltas":deltas,"compare_by":["config_hash","dataset_hash","model_identifiers","metrics"]}
+    comparisons=[]
+    if bool(baseline_case_id) != bool(candidate_case_id):
+        raise HTTPException(status_code=400, detail="Select both baseline_case_id and candidate_case_id")
+    if baseline_case_id and candidate_case_id:
+        for run, case_id in ((runs[0], baseline_case_id), *[(r, candidate_case_id) for r in runs[1:]]):
+            if not any(row["case_id"] == case_id for row in results[run["id"]]) and case_id not in run.get("summary", {}).get("case_aggregates", {}):
+                raise HTTPException(status_code=400, detail=f"Case {case_id} is unavailable in run {run['id']}")
+        try:
+            comparisons=[paired_comparison(runs[0], run, results[runs[0]["id"]], results[run["id"]], baseline_case_id, candidate_case_id) for run in runs[1:]]
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"runs":runs,"results":results,"comparisons":comparisons,"deltas":[d for c in comparisons for d in c["deltas"]],"compare_by":["dataset_hash","question_id","selected_cases"]}
 
 @app.get("/benchmarks/{run_id}")
 def benchmark(run_id: str):
@@ -298,7 +317,9 @@ def update_question(index: int, req: QuestionRequest):
     questions=_read_ground_truth()
     if index < 0 or index >= len(questions):
         raise HTTPException(status_code=404, detail="Question not found")
+    previous_id = questions[index]["question_id"]
     questions[index]=_question_payload(req)
+    questions[index]["question_id"] = previous_id
     _write_ground_truth(questions)
     return {"index":index,"question":questions[index],"status":"updated"}
 

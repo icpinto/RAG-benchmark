@@ -33,30 +33,25 @@ describe("results transformations", () => {
       ]),
     ).toEqual(["recall@5"]);
   });
-  it("outer joins comparisons and calculates deltas only for shared numeric metrics", () => {
-    const runs = [{ id: "one" }, { id: "two" }] as Run[];
-    const rows = comparisonRows(runs, {
-      one: [result("a", "q", { recall: 0.2, text: "old" })],
-      two: [
-        result("a", "q", { recall: 0.7, text: "new" }),
-        result("b", "q", { recall: 1 }),
-      ],
+  it("keeps comparisons descriptive without inventing client-side paired deltas", () => {
+    const rows = comparisonRows([{ id: "one" }, { id: "two" }] as Run[], {
+      one: [result("a", "q", { recall: 0.2 })],
+      two: [result("b", "q", { recall: 0.7 })],
     });
     expect(rows).toHaveLength(2);
-    expect(rows[0]["Δ recall (two − one)"]).toBeCloseTo(0.5);
-    expect(rows[0]["Δ text (two − one)"]).toBeUndefined();
-    expect(rows[1]["one · recall"]).toBeUndefined();
+    expect(rows[0]).toMatchObject({ run_id: "one", case_id: "a", recall: 0.2 });
+    expect(rows[1]).toMatchObject({ run_id: "two", case_id: "b", recall: 0.7 });
+    expect(Object.keys(rows[0]).some((key) => key.startsWith("?"))).toBe(false);
   });
-  it("uses full IDs to avoid truncated label collisions", () => {
-    const runs = [{ id: "same1234-1" }, { id: "same1234-2" }] as Run[];
-    expect(
-      Object.keys(
-        comparisonRows(runs, {
-          "same1234-1": [result("a", "q", { score: 1 })],
-          "same1234-2": [result("a", "q", { score: 2 })],
-        })[0],
-      ),
-    ).toContain("same1234-2 · score");
+  it("uses full run IDs for descriptive comparisons", () => {
+    const rows = comparisonRows(
+      [{ id: "same1234-1" }, { id: "same1234-2" }] as Run[],
+      {
+        "same1234-1": [result("a", "q", { score: 1 })],
+        "same1234-2": [result("a", "q", { score: 2 })],
+      },
+    );
+    expect(rows.map((row) => row.run_id)).toEqual(["same1234-1", "same1234-2"]);
   });
   it("escapes CSV and neutralizes spreadsheet formulas", () => {
     expect(
@@ -70,6 +65,7 @@ describe("results transformations", () => {
     expect(activeRun("queued")).toBe(true);
     expect(activeRun("running")).toBe(true);
     expect(activeRun("completed")).toBe(false);
+    expect(activeRun("completed_with_errors")).toBe(false);
     expect(activeRun("failed")).toBe(false);
   });
 });

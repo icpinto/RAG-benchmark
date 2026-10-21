@@ -838,6 +838,7 @@ tr:hover td {
   border-color: #93c5fd;
 }
 .status-queued,
+.status-completed_with_errors,
 .draft-badge.dirty {
   color: var(--warning);
   background: var(--warning-soft);

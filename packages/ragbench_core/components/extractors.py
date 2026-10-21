@@ -432,9 +432,13 @@ class HtmlUrlExtractor(BaseExtractor):
         import requests
         from bs4 import BeautifulSoup
 
-        resp = requests.get(source, timeout=30, headers={"User-Agent":"ragbench/0.1"})
-        resp.raise_for_status()
-        soup = BeautifulSoup(resp.text, "html.parser")
+        if config.get("_snapshot_html"):
+            html = Path(config["_snapshot_html"]).read_bytes().decode(config.get("_snapshot_encoding", "utf-8"), errors="replace")
+        else:
+            resp = requests.get(source, timeout=30, headers={"User-Agent":"ragbench/0.1"})
+            resp.raise_for_status()
+            html = resp.text
+        soup = BeautifulSoup(html, "html.parser")
         for tag in soup(["script", "style", "nav", "footer", "header"]):
             tag.decompose()
         title = soup.title.string.strip() if soup.title and soup.title.string else source

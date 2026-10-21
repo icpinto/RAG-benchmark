@@ -1,5 +1,6 @@
 export type RecordValue = Record<string, unknown>;
 export interface Question {
+  question_id?: string;
   question: string;
   expected_answer: string;
   ground_truth_doc_ids: string[];
@@ -12,10 +13,12 @@ export interface DataFile {
   size_bytes: number;
   modified_at: number;
 }
+export type RunStatus =
+  "queued" | "running" | "completed" | "completed_with_errors" | "failed";
 export interface Run {
   id: string;
   name: string;
-  status: string;
+  status: RunStatus | (string & {});
   summary?: RecordValue;
   error?: string;
   config_hash?: string;
@@ -27,6 +30,7 @@ export interface Run {
   [key: string]: unknown;
 }
 export interface Result {
+  question_id?: string;
   case_id: string;
   question: string;
   answer: string;
