@@ -4,6 +4,38 @@ A React and Python platform for benchmarking advanced RAG pipelines across inges
 
 This project is intentionally modular. Every stage is implemented behind a small interface and registered through a plugin registry, so new chunkers, extractors, embedders, retrievers, rerankers, compressors, validators, and metrics can be added without rewriting the benchmark runner.
 
+## Workspace tour
+
+### Knowledge Base
+
+Upload source documents and ground-truth JSON, then manage the document library and evaluation questions.
+
+![Knowledge Base workspace showing document and evaluation-question counts and benchmark input uploads](docs/images/knowledge_base.png)
+
+### Benchmark Setup
+
+Configure pipeline components in the guided editor or YAML source, then save and run the benchmark. The embedding-model form below shows model, batch size, normalization, and prefix settings.
+
+![Benchmark Setup guided editor showing embedding-model configuration and save and run controls](docs/images/benchmark_setup.png)
+
+### Results Explorer
+
+Browse benchmark runs, check execution status and configuration/dataset hashes, and export the run table as CSV.
+
+![Results Explorer showing completed benchmark runs and their configuration and dataset hashes](docs/images/results_explorer.png)
+
+### Compare runs
+
+Select two runs and choose baseline and candidate cases. Paired comparisons require matching dataset snapshots and stable question IDs.
+
+![Compare runs view showing run selection and baseline and candidate case selectors](docs/images/compare_runs.png)
+
+### Run metrics
+
+Inspect side-by-side metric tables for selected runs, including ingestion, embedding, persistence, and query timings.
+
+![Side-by-side benchmark metric tables showing ingestion, embedding, persistence, and query timings](docs/images/run_metrics_comparison.png)
+
 ## What v1 supports
 
 ### Ingestion pipeline
