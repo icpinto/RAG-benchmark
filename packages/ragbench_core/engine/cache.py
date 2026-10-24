@@ -2,10 +2,15 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
+import os
 from pathlib import Path
 from typing import Any, Protocol
 
 from ragbench_core.models.schema import Chunk, RetrievalResult
+
+logger = logging.getLogger(__name__)
+DEMO_CACHE_FAULTS = frozenset({"cache_schema", "cache_serialization"})
 
 _SECRET_KEYS = {"api_key", "token", "password", "secret", "authorization"}
 _EMBEDDER_CONFIG_KEYS = {
@@ -103,9 +108,13 @@ def query_embedding_key(embedder_config: dict[str, Any], query: str) -> str:
 
 
 class FileEmbeddingCache:
-    def __init__(self, root: Path):
+    def __init__(self, root: Path, *, demo_faults: set[str] | None = None):
         self.root = root
         self.root.mkdir(parents=True, exist_ok=True)
+        # Demo faults are opt-in and fire at most once per cache instance.
+        if demo_faults is None:
+            demo_faults = {item.strip() for item in os.getenv("RAGBENCH_DEMO_FAULTS", "").split(",")}
+        self._pending_demo_faults = DEMO_CACHE_FAULTS.intersection(demo_faults)
 
     def _path(self, key: str) -> Path:
         digest = key.rsplit(":", 1)[-1]
@@ -113,17 +122,52 @@ class FileEmbeddingCache:
 
     def get(self, key: str) -> Any | None:
         path = self._path(key)
-        if not path.exists():
-            return None
-        with path.open("r", encoding="utf-8") as handle:
-            return json.load(handle)
+        cached = None
+        if path.exists():
+            with path.open("r", encoding="utf-8") as handle:
+                cached = json.load(handle)
+        if "cache_schema" in self._pending_demo_faults:
+            self._pending_demo_faults = self._pending_demo_faults - {"cache_schema"}
+            try:
+                # Intentional demo bug: writer and reader disagree on the envelope key.
+                envelope = {"payload": cached}
+                return envelope["value"]
+            except KeyError:
+                logger.exception(
+                    "event=cache_read_failed demo=true fault_id=cache_schema "
+                    "cache_key=%s cache_path=%s recovery=cache_miss", key, path,
+                )
+                logger.info(
+                    "event=cache_read_recovered demo=true fault_id=cache_schema "
+                    "cache_key=%s recovery=cache_miss", key,
+                )
+                return None
+        return cached
 
     def set(self, key: str, value: Any) -> None:
         path = self._path(key)
+        retry_write = False
+        if "cache_serialization" in self._pending_demo_faults:
+            self._pending_demo_faults = self._pending_demo_faults - {"cache_serialization"}
+            try:
+                # Intentional demo bug: encoding too early passes bytes to the JSON encoder.
+                encoded = json.dumps(value).encode("utf-8")
+                json.dumps(encoded)
+            except TypeError:
+                logger.exception(
+                    "event=cache_write_failed demo=true fault_id=cache_serialization "
+                    "cache_key=%s cache_path=%s recovery=retry_json_write", key, path,
+                )
+                retry_write = True
         tmp_path = path.with_suffix(".tmp")
         with tmp_path.open("w", encoding="utf-8") as handle:
             json.dump(value, handle, sort_keys=True, separators=(",", ":"))
         tmp_path.replace(path)
+        if retry_write:
+            logger.info(
+                "event=cache_write_recovered demo=true fault_id=cache_serialization "
+                "cache_key=%s recovery=retry_json_write", key,
+            )
 
 
 class RedisEmbeddingCache:

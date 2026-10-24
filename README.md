@@ -335,6 +335,58 @@ Contributions are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for developmen
 
 This project is licensed under the MIT License. See [LICENSE](LICENSE) for the full license text.
 
+## Incident-analysis demo
+
+Two opt-in bugs in `FileEmbeddingCache` produce real exceptions and stack traces
+while allowing the cache operation and benchmark to recover. They are disabled
+by default.
+
+| Fault ID | Error and cause | Recovery |
+|---|---|---|
+| `cache_schema` | `KeyError: 'value'`: the reader expects `value`, but the demo envelope contains `payload` | Return a cache miss and recompute the embedding or retrieval result |
+| `cache_serialization` | `TypeError: Object of type bytes is not JSON serializable`: JSON is encoded to bytes before another JSON serialization | Retry the normal JSON write and preserve a valid cache file |
+
+Generate both incidents locally from the repository root with the core package
+on your Python path (for example, after installing the project):
+
+```bash
+python -m scripts.demo_incidents
+```
+
+The script needs only the Python standard library and the repository source;
+it uses a deterministic fake embedder and temporary cache files. It logs to the
+console and appends to `artifacts/incident-demo.log`, then verifies that a second
+embedding request is a cache hit. Select one scenario with
+`--faults cache_schema` or `--faults cache_serialization`; use `--log-file PATH`
+to choose a different log file.
+
+To produce the same errors during a real benchmark, set this in `.env`:
+
+```dotenv
+RAGBENCH_DEMO_FAULTS=cache_schema,cache_serialization
+```
+
+Build and recreate the worker, then start a benchmark through the UI or API:
+
+```bash
+docker compose up -d --build --no-deps --force-recreate worker
+docker compose logs -f worker
+```
+
+Use enabled file-backed embedding or retrieval caches; both are enabled in the
+default config. Each selected fault fires once per cache instance, so multiple
+benchmark cases can emit multiple incidents. Redis and disabled caches do not
+inject these faults. Log entries include `demo=true`, `fault_id`, the cache key,
+the cache path on failure, a traceback with the source location, and recovery
+events. No document text or credentials are logged. Recovered incidents do not
+mark a benchmark as failed, but can add recomputation time to its metrics.
+
+Disable the faults by clearing `RAGBENCH_DEMO_FAULTS` and recreating the worker:
+
+```bash
+docker compose up -d --no-deps --force-recreate worker
+```
+
 ## Design notes
 
 This repo deliberately avoids a blind Cartesian product explosion. The runner expands configured variants into benchmark cases, but you should keep early experiments small and controlled. Test retrieval first, then generation. If retrieval fails, answer metrics become noise.
