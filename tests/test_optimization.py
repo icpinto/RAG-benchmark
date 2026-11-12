@@ -34,7 +34,10 @@ from ragbench_core.optimization.search import (
     validate_candidate,
 )
 from ragbench_core.optimization.selection import compare_trials
-from ragbench_core.optimization.tools import OptimizationPreflightError, OptimizationTools
+from ragbench_core.optimization.tools import (
+    OptimizationPreflightError,
+    OptimizationTools,
+)
 from ragbench_core.optimization.workflow import build_graph
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
@@ -582,6 +585,155 @@ def test_api_pause_resume_cancel_and_export(session, monkeypatch):
     assert b"_snapshot" in result.body
 
 
+def test_api_configuration_uses_saved_settings_and_redacts_credentials(
+    session, monkeypatch
+):
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from services.api.app import optimizations as api
+
+    saved = store.get(session)
+    template = deepcopy(saved["template"])
+    template["llm"].update(
+        {
+            "api_key": "inline-key",
+            "api_key_env": "ANSWER_API_KEY",
+            "base_url": "https://user:password@example.test/v1?api_key=query-key&version=2",
+        }
+    )
+    template["pipeline"]["ingestion"]["embeddings"][0]["api_key"] = (
+        "${EMBEDDING_API_KEY}"
+    )
+    template["headers"] = [
+        {
+            "Authorization": "Bearer hidden",
+            "password": "hidden",
+            "X-API-Key": "header-key",
+        }
+    ]
+    template["runtime"]["database_password"] = "database-secret"
+    template["_snapshot"] = {"sources": ["private"]}
+    template["_optimization"] = {"budget_operation": "private"}
+    store.update(session, template=template)
+    monkeypatch.setattr(
+        api, "load_yaml", lambda *_: pytest.fail("Must use saved template")
+    )
+    app = FastAPI()
+    app.include_router(api.router)
+    with TestClient(app) as client:
+        response = client.get(f"/optimizations/{session}/configuration")
+        assert response.status_code == 200
+        result = response.json()
+        assert result["request"] == saved["request"]
+        assert result["template"]["llm"]["model"] == "fixed-answer"
+        assert result["template"]["llm"]["api_key"] == "[REDACTED]"
+        assert result["template"]["llm"]["api_key_env"] == "ANSWER_API_KEY"
+        assert (
+            result["template"]["pipeline"]["ingestion"]["embeddings"][0]["api_key"]
+            == "${EMBEDDING_API_KEY}"
+        )
+        assert result["template"]["headers"] == [
+            {
+                "Authorization": "[REDACTED]",
+                "password": "[REDACTED]",
+                "X-API-Key": "[REDACTED]",
+            }
+        ]
+        assert result["template"]["runtime"]["database_password"] == "[REDACTED]"
+        assert "user" not in result["template"]["llm"]["base_url"]
+        assert "password" not in result["template"]["llm"]["base_url"]
+        assert "query-key" not in result["template"]["llm"]["base_url"]
+        assert "version=2" in result["template"]["llm"]["base_url"]
+        assert "_snapshot" not in result["template"]
+        assert "_optimization" not in result["template"]
+        assert "request" not in client.get(f"/optimizations/{session}").json()
+        assert "template" not in client.get("/optimizations").json()[0]
+        assert client.get("/optimizations/missing/configuration").status_code == 404
+    assert store.get(session)["template"] == template
+
+
+def test_api_trial_configuration_is_scoped_and_preserves_execution_settings(
+    session, template
+):
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from services.api.app import optimizations as api
+
+    config = deepcopy(template)
+    config["runtime"]["mode"] = "end_to_end"
+    config["metrics"] = {
+        "enabled": ["answer_correctness"],
+        "judge": {
+            "model": "saved-judge",
+            "api_key_env": "JUDGE_KEY",
+            "token": "hidden",
+        },
+    }
+    config["_snapshot"] = {"sources": ["private"]}
+    config["_optimization"] = {"budget_operation": "private"}
+    with db.SessionLocal.begin() as conn:
+        conn.add(
+            store.OptimizationSession(
+                id="other",
+                request=store.get(session)["request"],
+                template=template,
+                progress={},
+            )
+        )
+        conn.add(
+            store.OptimizationTrial(
+                id="trial",
+                session_id=session,
+                operation_key="one",
+                phase="answer",
+                split="tuning",
+                config=config,
+            )
+        )
+        conn.add(
+            store.OptimizationTrial(
+                id="unavailable",
+                session_id=session,
+                operation_key="two",
+                phase="retrieval",
+                split="tuning",
+                config=None,
+            )
+        )
+    app = FastAPI()
+    app.include_router(api.router)
+    with TestClient(app) as client:
+        response = client.get(f"/optimizations/{session}/trials/trial/config")
+        assert response.status_code == 200
+        result = response.json()["config"]
+        assert result["pipeline"] == config["pipeline"]
+        assert result["runtime"]["mode"] == "end_to_end"
+        assert result["metrics"] == {
+            "enabled": ["answer_correctness"],
+            "judge": {
+                "model": "saved-judge",
+                "api_key_env": "JUDGE_KEY",
+                "token": "[REDACTED]",
+            },
+        }
+        assert "_snapshot" not in result and "_optimization" not in result
+        assert "config" not in client.get(f"/optimizations/{session}/trials").json()[0]
+        assert (
+            client.get(f"/optimizations/{session}/trials/missing/config").status_code
+            == 404
+        )
+        assert client.get("/optimizations/other/trials/trial/config").status_code == 404
+        assert (
+            client.get("/optimizations/missing/trials/trial/config").status_code == 404
+        )
+        assert client.get(
+            f"/optimizations/{session}/trials/unavailable/config"
+        ).json() == {"config": None}
+    assert store.rows(store.OptimizationTrial, session)[0]["config"] == config
+
+
 def test_worker_executes_trial_once_and_reuses_initial_reservation(
     session, monkeypatch
 ):
@@ -634,7 +786,9 @@ def test_preflight_lists_all_missing_ollama_models(session, monkeypatch):
 
     def tags(url, timeout):
         calls.append(url)
-        return SimpleNamespace(raise_for_status=lambda: None, json=lambda: {"models": []})
+        return SimpleNamespace(
+            raise_for_status=lambda: None, json=lambda: {"models": []}
+        )
 
     monkeypatch.setattr(requests, "get", tags)
     with pytest.raises(OptimizationPreflightError) as exc:
@@ -647,6 +801,7 @@ def test_preflight_lists_all_missing_ollama_models(session, monkeypatch):
 def test_worker_exposes_safe_preflight_error(session, monkeypatch):
     from langgraph.checkpoint.postgres import PostgresSaver
     from ragbench_core.optimization import workflow
+
     from services.worker.app import optimization_tasks as tasks
 
     class Saver:
@@ -661,7 +816,9 @@ def test_worker_exposes_safe_preflight_error(session, monkeypatch):
             raise OptimizationPreflightError("Ollama model is not installed: example")
 
     monkeypatch.setattr(db, "init_db", lambda: None)
-    monkeypatch.setattr(PostgresSaver, "from_conn_string", lambda uri: nullcontext(Saver()))
+    monkeypatch.setattr(
+        PostgresSaver, "from_conn_string", lambda uri: nullcontext(Saver())
+    )
     monkeypatch.setattr(workflow, "build_graph", lambda saver, dispatch: Graph())
     tasks.advance_optimization.run(session)
     assert store.get(session)["error"] == "Ollama model is not installed: example"

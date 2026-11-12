@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import os
+import re
 import time
 import uuid
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import Response
@@ -64,6 +65,66 @@ def public_session(session):
         "budget": budget.totals(session["id"]),
         "limits": session["request"]["limits"],
     }
+
+
+def public_configuration(value):
+    """Copy saved settings without credentials or execution-only metadata."""
+    secret_keys = {
+        "apikey",
+        "authorization",
+        "password",
+        "secret",
+        "token",
+        "accesstoken",
+        "refreshtoken",
+        "clientsecret",
+        "accesskey",
+        "secretaccesskey",
+        "awsaccesskeyid",
+        "awssecretaccesskey",
+        "secretkey",
+    }
+
+    def secret(key):
+        normalized = re.sub(r"[^a-z0-9]", "", str(key).lower())
+        return normalized in secret_keys or normalized.endswith(
+            ("apikey", "authorization", "password", "secret", "privatekey")
+        )
+
+    def redact(child):
+        if isinstance(child, str) and re.fullmatch(
+            r"\$\{[A-Za-z_][A-Za-z0-9_]*\}", child
+        ):
+            return child
+        return "[REDACTED]" if child else child
+
+    if isinstance(value, dict):
+        return {
+            key: redact(child) if secret(key) else public_configuration(child)
+            for key, child in value.items()
+            if key not in {"_snapshot", "_optimization"}
+        }
+    if isinstance(value, list):
+        return [public_configuration(child) for child in value]
+    if isinstance(value, str) and "://" in value:
+        try:
+            parsed = urlparse(value)
+            query = parse_qsl(parsed.query, keep_blank_values=True)
+            if parsed.username is not None or any(secret(key) for key, _ in query):
+                return urlunparse(
+                    parsed._replace(
+                        netloc=parsed.netloc.rsplit("@", 1)[-1],
+                        query=urlencode(
+                            [
+                                (key, redact(child) if secret(key) else child)
+                                for key, child in query
+                            ]
+                        ),
+                    )
+                )
+        except ValueError:
+            return "[REDACTED]"
+    return value
 
 
 def reject_secrets(value):
@@ -218,6 +279,24 @@ def list_optimizations():
 @router.get("/{session_id}")
 def get_optimization(session_id: str):
     return public_session(session_or_404(session_id))
+
+
+@router.get("/{session_id}/configuration")
+def get_configuration(session_id: str):
+    session = session_or_404(session_id)
+    return public_configuration(
+        {"request": session["request"], "template": session["template"]}
+    )
+
+
+@router.get("/{session_id}/trials/{trial_id}/config")
+def get_trial_configuration(session_id: str, trial_id: str):
+    session_or_404(session_id)
+    with store.db.SessionLocal() as conn:
+        trial = conn.get(store.OptimizationTrial, trial_id)
+        if trial is None or trial.session_id != session_id:
+            raise HTTPException(404, "Optimization trial not found")
+        return {"config": public_configuration(trial.config)}
 
 
 @router.get("/{session_id}/dataset")

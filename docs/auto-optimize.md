@@ -82,6 +82,19 @@ semantics. Preserve the shared artifact volume and Postgres data when restarting
 
 ## APIs and exports
 
+Each run page includes a **Run configuration** card with the saved template,
+source selection, model roles, fixed answer model, limits, and component
+restrictions. Expand the saved request/template YAML to inspect all settings.
+These are the stored snapshots used by the run, so later template edits do not
+change the display.
+
+**Currently running configs** shows every running trial and its pipeline settings,
+updated with trial status polling every three seconds while the session is active.
+Queued and paused trials are not labeled running. Use **View config** in the
+leaderboard to inspect any trial, including completed or failed trials, and expand
+its YAML for runtime, metrics, and judge settings. Configuration views are read-only;
+credential values are redacted and snapshot/orchestration internals are omitted.
+
 `POST /optimizations` accepts `config_path`, optional `source_paths`, `urls`,
 `audience`, `task`, `example_questions`, four model profiles, `limits`,
 `allowed_components`, `allow_hosted`, and `review_before_freeze`.
@@ -90,6 +103,14 @@ Read `/optimizations/{id}` plus `/dataset`, `/trials`, `/events`, and
 `/recommendation`. Use `PUT .../dataset` only while paused before freezing;
 `POST .../pause`, `/resume`, `/cancel`, and `/fork` manage the lifecycle.
 The OpenAPI schema documents the typed request contracts.
+
+`GET /optimizations/{id}/configuration` returns `{request, template}` from the
+stored session. `GET /optimizations/{id}/trials/{trial_id}/config` returns `{config}`
+from a trial belonging to that session; missing or unrelated trials return 404.
+These dedicated endpoints keep session/trial lists lightweight. They preserve
+credential environment-variable references, redact inline credential values, and
+omit `_snapshot` and `_optimization` metadata. A missing saved configuration is
+returned as null and shown as unavailable.
 
 Exports at `/export/yaml`, `/export/qa`, and `/export/report` contain the recommended
 configuration, legacy-compatible QA JSON, and evidence/limitations report.

@@ -1430,6 +1430,33 @@ input[type="checkbox"] {
   max-height: 600px;
   overflow: auto;
 }
+.optimization-config-fields {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 260px), 1fr));
+  gap: 16px;
+}
+.optimization-config-fields dt {
+  font-weight: 600;
+}
+.optimization-config-fields dd {
+  margin: 4px 0 0;
+  overflow-wrap: anywhere;
+}
+.optimization-config-yaml {
+  max-width: 100%;
+  max-height: 420px;
+  overflow: auto;
+  padding: 12px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  white-space: pre;
+}
+.optimization-running-config {
+  min-width: 0;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--border);
+}
 .optimizer-questions article {
   padding: 16px 0;
   border-bottom: 1px solid var(--border, #d9e0e7);

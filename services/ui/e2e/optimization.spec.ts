@@ -5,6 +5,19 @@ test("select corpus, review synthetic references, inspect recommendation and exp
 }) => {
   let resumed = false;
   let submitted: Record<string, unknown> = {};
+  const trialConfig = {
+    pipeline: {
+      ingestion: {
+        chunkers: [{ type: "recursive", chunk_size: 512, overlap: 0.1 }],
+        embeddings: [
+          { provider: "sentence_transformers", model: "fixture-embedding" },
+        ],
+      },
+      query: { retrievers: [{ type: "dense" }] },
+    },
+    runtime: { mode: "end_to_end" },
+    metrics: { enabled: ["answer_correctness"] },
+  };
   const question = {
     question_id: "q1",
     question: "What is the refund window?",
@@ -48,7 +61,21 @@ test("select corpus, review synthetic references, inspect recommendation and exp
       payload = { status: "queued" };
     } else if (path.endsWith("/dataset"))
       payload = { version: 1, frozen: resumed ? 1 : 0, payload: [question] };
-    else if (path.endsWith("/trials")) payload = [];
+    else if (path.endsWith("/configuration"))
+      payload = {
+        request: { ...submitted, config_path: "captured-template.yaml" },
+        template: { llm: { provider: "ollama", model: "fixed-answer" } },
+      };
+    else if (path.endsWith("/trials"))
+      payload = [
+        {
+          id: "fixture-trial",
+          phase: "answer",
+          split: "tuning",
+          status: resumed ? "completed" : "paused",
+        },
+      ];
+    else if (path.endsWith("/config")) payload = { config: trialConfig };
     else if (path.endsWith("/events")) payload = [];
     else if (path.endsWith("/recommendation"))
       payload = resumed
@@ -82,6 +109,30 @@ test("select corpus, review synthetic references, inspect recommendation and exp
   await page.getByRole("button", { name: "Start optimization" }).click();
   await expect(page.getByText("Optimization · paused")).toBeVisible();
   expect(submitted.source_paths).toEqual(["policy.txt"]);
+  await expect(
+    page.getByText("captured-template.yaml", { exact: true }),
+  ).toBeVisible();
+  await page.getByText("Saved request YAML", { exact: true }).click();
+  await expect(page.getByLabel("Saved request YAML")).toContainText(
+    "target_questions: 100",
+  );
+  await expect(page.getByText("No trial is currently running.")).toBeVisible();
+  await page.getByText("View config", { exact: true }).click();
+  await expect(
+    page.getByText("type: recursive, chunk_size: 512, overlap: 0.1", {
+      exact: true,
+    }),
+  ).toBeVisible();
+  await page
+    .getByText("Full trial configuration YAML", { exact: true })
+    .click();
+  await expect(page.getByLabel("Full trial configuration YAML")).toContainText(
+    "answer_correctness",
+  );
+  await page.reload();
+  await expect(
+    page.getByText("captured-template.yaml", { exact: true }),
+  ).toBeVisible();
   await page.getByText("Inspect questions and source evidence").click();
   await expect(
     page.getByText("Refunds within fourteen days.", { exact: true }),
@@ -94,4 +145,95 @@ test("select corpus, review synthetic references, inspect recommendation and exp
   const download = page.waitForEvent("download");
   await page.getByRole("button", { name: "Download YAML" }).click();
   expect((await download).suggestedFilename()).toBe("recommended.yaml");
+});
+
+test("inspect running configs on a narrow screen and follow trial completion", async ({
+  page,
+}) => {
+  let finished = false;
+  const longModel = `local-model-${"long-name-".repeat(30)}`;
+  await page.route("**/api/**", async (route) => {
+    const path = new URL(route.request().url()).pathname.replace("/api", "");
+    const session = {
+      id: "live",
+      status: finished ? "completed" : "running",
+      stage: finished ? "done" : "retrieval",
+      budget: { tokens: 1000, active_seconds: 30, cost: null },
+      progress: {},
+    };
+    let payload: unknown = null;
+    if (path === "/health") payload = { status: "ok" };
+    else if (path === "/configs") payload = { files: ["default.yaml"] };
+    else if (path === "/data/files") payload = { files: [] };
+    else if (path === "/optimizations") payload = [session];
+    else if (path === "/optimizations/live") payload = session;
+    else if (path.endsWith("/configuration"))
+      payload = {
+        request: {
+          config_path: "saved.yaml",
+          planner: { model: longModel },
+          limits: {},
+          allowed_components: {},
+        },
+        template: { llm: { model: "fixed-answer" } },
+      };
+    else if (path.endsWith("/trials"))
+      payload = [
+        {
+          id: "live-trial",
+          phase: "retrieval",
+          split: "tuning",
+          status: finished ? "completed" : "running",
+        },
+      ];
+    else if (path.endsWith("/config"))
+      payload = {
+        config: {
+          pipeline: {
+            ingestion: {
+              chunkers: [{ type: "fixed", chunk_size: 256 }],
+              embeddings: [{ model: longModel }],
+            },
+          },
+          runtime: { mode: "retrieval_only" },
+        },
+      };
+    else if (path.endsWith("/events")) payload = [];
+    await route.fulfill({ json: payload });
+  });
+  await page.setViewportSize({ width: 375, height: 812 });
+  await page.goto("/auto-optimize/live");
+  const running = page.getByRole("article", {
+    name: "Running trial live-trial",
+  });
+  await expect(
+    running.getByText("type: fixed, chunk_size: 256", { exact: true }),
+  ).toBeVisible();
+  await running
+    .getByText("Full trial configuration YAML", { exact: true })
+    .click();
+  await expect(
+    running.getByLabel("Full trial configuration YAML"),
+  ).toContainText(longModel);
+  const widths = await running
+    .getByLabel("Full trial configuration YAML")
+    .evaluate((element) => ({
+      scroll: element.scrollWidth,
+      client: element.clientWidth,
+      overflow: getComputedStyle(element).overflowX,
+    }));
+  expect(widths.scroll).toBeGreaterThan(widths.client);
+  expect(widths.overflow).toBe("auto");
+  expect(
+    await page.evaluate(() => document.documentElement.scrollWidth),
+  ).toBeLessThanOrEqual(375);
+  await page.screenshot({
+    path: "test-results/optimization-config-mobile.png",
+    fullPage: true,
+  });
+  finished = true;
+  await expect(page.getByText("Optimization · completed")).toBeVisible();
+  await expect(page.getByText("No trial is currently running.")).toBeVisible();
+  await page.getByText("View config", { exact: true }).click();
+  await expect(page.getByText("retrieval_only", { exact: true })).toBeVisible();
 });

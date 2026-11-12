@@ -7,6 +7,11 @@ import { useFiles } from "../hooks/data";
 import { useDraft } from "../hooks/draft";
 import { Button } from "../components/ui/button";
 import { Card, ErrorNotice, Notice, PageHeading } from "../components/common";
+import {
+  RunConfigurationCard,
+  TrialConfiguration,
+  TrialConfigDetails,
+} from "../components/optimization-config";
 
 interface ModelProfile {
   provider: "ollama" | "chat_completions";
@@ -146,9 +151,9 @@ export default function AutoOptimize() {
     refetchInterval: active ? 5000 : false,
   });
   const trials = useQuery({
-    queryKey: ["optimization-trials", sessionId],
+    queryKey: ["optimization-trials", sessionId, session.data?.status],
     queryFn: () => api<Trial[]>(`/optimizations/${sessionId}/trials`),
-    enabled: !!sessionId,
+    enabled: !!sessionId && !!session.data,
     refetchInterval: active ? 3000 : false,
   });
   const events = useQuery({
@@ -169,7 +174,11 @@ export default function AutoOptimize() {
   const refresh = () =>
     client.invalidateQueries({
       predicate: (query) =>
-        String(query.queryKey[0]).startsWith("optimization"),
+        String(query.queryKey[0]).startsWith("optimization") &&
+        ![
+          "optimization-configuration",
+          "optimization-trial-configuration",
+        ].includes(String(query.queryKey[0])),
     });
   const start = useMutation({
     mutationFn: () =>
@@ -648,6 +657,36 @@ export default function AutoOptimize() {
               </Button>
             </div>
           </Card>
+          <RunConfigurationCard key={sessionId} sessionId={sessionId} />
+          <Card title="Currently running configs">
+            {trials.isPending && <p role="status">Loading running trials...</p>}
+            <ErrorNotice
+              error={trials.error}
+              retry={() => void trials.refetch()}
+            />
+            {trials.isSuccess &&
+              !trials.data.some((trial) => trial.status === "running") && (
+                <p>No trial is currently running.</p>
+              )}
+            {trials.data
+              ?.filter((trial) => trial.status === "running")
+              .map((trial) => (
+                <article
+                  key={`${sessionId}:${trial.id}`}
+                  className="optimization-running-config"
+                  aria-label={`Running trial ${trial.id}`}
+                >
+                  <h3>Trial {trial.id}</h3>
+                  <p>
+                    {trial.phase} / {trial.split} · {trial.status}
+                  </p>
+                  <TrialConfiguration
+                    sessionId={sessionId}
+                    trialId={trial.id}
+                  />
+                </article>
+              ))}
+          </Card>
           {dataset.data && (
             <Card
               title={`Synthetic evaluation dataset · version ${dataset.data.version}`}
@@ -723,6 +762,7 @@ export default function AutoOptimize() {
                     <th>Score</th>
                     <th>Paired / missing</th>
                     <th>p95 seconds</th>
+                    <th>Configuration</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -751,6 +791,13 @@ export default function AutoOptimize() {
                             : "—"}
                         </td>
                         <td>{ranked?.p95_seconds?.toFixed(2) ?? "—"}</td>
+                        <td>
+                          <TrialConfigDetails
+                            key={`${sessionId}:${trial.id}`}
+                            sessionId={sessionId}
+                            trialId={trial.id}
+                          />
+                        </td>
                       </tr>
                     );
                   })}
