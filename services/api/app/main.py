@@ -14,6 +14,8 @@ from ragbench_core.models.schema import QueryExample
 from dataclasses import asdict
 
 app=FastAPI(title="RAG Benchmark Platform API", version="0.1.0")
+from services.api.app.optimizations import router as optimization_router
+app.include_router(optimization_router)
 CONFIG_ROOT=Path(os.getenv("RAGBENCH_CONFIG_DIR", "/app/configs")).resolve()
 DATA_ROOT=Path(os.getenv("RAGBENCH_DATA_DIR", "/app/data")).resolve()
 RAW_DATA_DIR=(DATA_ROOT / "raw").resolve()

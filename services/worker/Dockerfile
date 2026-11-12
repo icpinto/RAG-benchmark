@@ -5,5 +5,6 @@ COPY requirements/base.txt /app/requirements.txt
 RUN pip install --no-cache-dir -r /app/requirements.txt
 COPY packages /app/packages
 COPY services /app/services
+COPY scripts /app/scripts
 ENV PYTHONPATH=/app/packages:/app
 CMD ["celery", "-A", "services.worker.app.celery_app", "worker", "--loglevel=INFO"]

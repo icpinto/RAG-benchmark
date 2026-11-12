@@ -10,6 +10,7 @@ import App, {
   BenchmarkSetup,
   KnowledgeBase,
   ResultsExplorer,
+  AutoOptimize,
   RouteError,
 } from "./app";
 import "./styles.css";
@@ -28,6 +29,8 @@ const router = createBrowserRouter([
       { index: true, element: <Navigate to="/knowledge-base" replace /> },
       { path: "knowledge-base", element: <KnowledgeBase /> },
       { path: "benchmark-setup", element: <BenchmarkSetup /> },
+      { path: "auto-optimize", element: <AutoOptimize /> },
+      { path: "auto-optimize/:sessionId", element: <AutoOptimize /> },
       { path: "results", element: <ResultsExplorer /> },
       { path: "results/:runId", element: <ResultsExplorer /> },
       { path: "*", element: <Navigate to="/knowledge-base" replace /> },

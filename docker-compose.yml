@@ -46,6 +46,36 @@ services:
         condition: service_started
     command: celery -A services.worker.app.celery_app worker --loglevel=INFO --concurrency=1 -Q ragbench
 
+  optimizer:
+    build:
+      context: .
+      dockerfile: services/worker/Dockerfile
+    env_file: .env
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - ./configs:/app/configs
+      - ./data:/app/data
+      - ./artifacts:/app/artifacts
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    command: celery -A services.worker.app.celery_app worker --loglevel=INFO --concurrency=1 -Q optimization
+
+  scheduler:
+    build:
+      context: .
+      dockerfile: services/worker/Dockerfile
+    env_file: .env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    command: celery -A services.worker.app.celery_app beat --loglevel=INFO --schedule=/tmp/ragbench-beat
+
   ui:
     build:
       context: .

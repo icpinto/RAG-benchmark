@@ -82,6 +82,11 @@ User question
 
 ## Architecture
 
+**Auto Optimize** generates evidence-backed synthetic evaluation questions, searches
+bounded pipeline configurations with a durable LangGraph workflow, and exports a
+recommendation with held-out benchmark evidence. See [Auto Optimize](docs/auto-optimize.md)
+for setup, model/provider configuration, budgets, recovery, and API details.
+
 For a detailed walkthrough of the operator journey, service interactions, case
 expansion, ingestion/query execution, persistence, artifacts, failure behavior,
 and extension points, see [Platform flow](docs/platform-flow.md).

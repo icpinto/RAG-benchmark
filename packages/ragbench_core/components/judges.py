@@ -16,7 +16,7 @@ def judge_answer(example, answer, config: dict) -> dict:
     context = answer.metadata.get("context_text", "")
     documents = [{"doc_id": c.doc_id, "text": c.text} for c in answer.context_chunks]
     details = {
-        "provider": "ollama",
+        "provider": config.get("provider", "ollama"),
         "model": model,
         "rubric_version": RUBRIC_VERSION,
         "status": "ok",
@@ -44,19 +44,13 @@ def judge_answer(example, answer, config: dict) -> dict:
             )
         )
         base_url = config.get("base_url", "http://ollama:11434").rstrip("/")
-        response = requests.post(
-            f"{base_url}/api/generate",
-            json={
-                "model": model,
-                "prompt": prompt,
-                "stream": False,
-                "format": "json",
-                "options": {"temperature": 0, "seed": 0},
-            },
-            timeout=float(config.get("timeout", 240)),
-        )
-        response.raise_for_status()
-        body = response.json()
+        if config.get("provider", "ollama") == "chat_completions":
+            from ragbench_core.optimization.models import structured_call
+            from ragbench_core.optimization.contracts import ModelProfile
+            verdicts, usage = structured_call(ModelProfile.model_validate({k: v for k, v in config.items() if k in ModelProfile.model_fields}), prompt, {})
+            body = {"response": json.dumps(verdicts), "prompt_eval_count": usage.get("prompt_tokens"), "eval_count": usage.get("completion_tokens")}
+        else:
+            body = _ollama_verdict(base_url, model, prompt, config)
         verdicts = json.loads(body["response"])
         details["verdicts"] = verdicts
         details["usage"] = {
@@ -70,47 +64,65 @@ def judge_answer(example, answer, config: dict) -> dict:
             or not math.isfinite(score)
             or not 0 <= score <= 1
         ):
-            raise ValueError(
-                "Judge correctness score must be finite and between 0 and 1"
-            )
+            raise ValueError("Judge correctness score must be finite and between 0 and 1")
         if not isinstance(verdicts["answer_correctness"].get("reason"), str):
             raise TypeError("Judge must supply a correctness reason")
-        for field, metric in (
-            ("claims", "claim_support"),
-            ("citations", "citation_support"),
-        ):
-            items = verdicts[field]
-            if not isinstance(items, list):
-                raise TypeError(f"Judge {field} must be a list")
-            for item in items:
-                label = item.get("claim" if field == "claims" else "citation")
-                if (
-                    not isinstance(label, str)
-                    or not label.strip()
-                    or not isinstance(item.get("supported"), bool)
-                    or not isinstance(item.get("evidence"), list)
-                ):
-                    raise ValueError("Malformed judge verdict")
-                if field == "citations" and label not in answer.answer:
-                    raise ValueError("Judge returned a citation absent from the answer")
-                evidence_valid = bool(item["evidence"]) and all(
-                    isinstance(e, dict)
-                    and isinstance(e.get("quote"), str)
-                    and bool(e["quote"].strip())
-                    and e["quote"] in context
-                    and any(
-                        d["doc_id"] == e.get("doc_id") and e["quote"] in d["text"]
-                        for d in documents
-                    )
-                    for e in item["evidence"]
-                )
-                if item["supported"] and not evidence_valid:
-                    raise ValueError("Supported verdict has no valid context evidence")
-            result[metric] = (
-                sum(i["supported"] for i in items) / len(items) if items else None
-            )
+        _apply_verdicts(verdicts, result, answer, context, documents)
         result["answer_correctness"] = score if example.expected_answer else None
-    except Exception as exc:  # noqa: BLE001 -- Judge failures must preserve benchmark answers.
+    except Exception as exc:  # noqa: BLE001
         result = {key: None for key in SCORES}
         details.update(status="error", error=f"{type(exc).__name__}: {exc}")
     return {"scores": result, "details": details}
+
+
+def _ollama_verdict(base_url, model, prompt, config):
+    response = requests.post(
+        f"{base_url}/api/generate",
+        json={
+            "model": model,
+            "prompt": prompt,
+            "stream": False,
+            "format": "json",
+            "options": {"temperature": 0, "seed": 0, **({"num_predict": config["max_output_tokens"]} if config.get("max_output_tokens") else {})},
+        },
+        timeout=float(config.get("timeout", 240)),
+    )
+    response.raise_for_status()
+    return response.json()
+
+
+def _apply_verdicts(verdicts, result, answer, context, documents):
+    for field, metric in (
+        ("claims", "claim_support"),
+        ("citations", "citation_support"),
+    ):
+        items = verdicts[field]
+        if not isinstance(items, list):
+            raise TypeError(f"Judge {field} must be a list")
+        for item in items:
+            label = item.get("claim" if field == "claims" else "citation")
+            if (
+                not isinstance(label, str)
+                or not label.strip()
+                or not isinstance(item.get("supported"), bool)
+                or not isinstance(item.get("evidence"), list)
+            ):
+                raise ValueError("Malformed judge verdict")
+            if field == "citations" and label not in answer.answer:
+                raise ValueError("Judge returned a citation absent from the answer")
+            evidence_valid = bool(item["evidence"]) and all(
+                isinstance(e, dict)
+                and isinstance(e.get("quote"), str)
+                and bool(e["quote"].strip())
+                and e["quote"] in context
+                and any(
+                    d["doc_id"] == e.get("doc_id") and e["quote"] in d["text"]
+                    for d in documents
+                )
+                for e in item["evidence"]
+            )
+            if item["supported"] and not evidence_valid:
+                raise ValueError("Supported verdict has no valid context evidence")
+        result[metric] = (
+            sum(i["supported"] for i in items) / len(items) if items else None
+        )

@@ -30,9 +30,9 @@ def _ollama_generate(prompt: str, llm_config: dict[str, Any], temperature: float
             "model": llm_config["model"],
             "prompt": prompt,
             "stream": False,
-            "options": {"temperature": temperature},
+            "options": {"temperature": temperature, **({"num_predict": llm_config["max_output_tokens"]} if llm_config.get("max_output_tokens") else {})},
         },
-        timeout=120,
+        timeout=min(120, llm_config.get("timeout", 120)),
     )
     resp.raise_for_status()
     return resp.json().get("response", "").strip()

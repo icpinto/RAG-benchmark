@@ -1388,6 +1388,58 @@ input[type="checkbox"] {
     padding: var(--space-3);
   }
 }
+.optimizer-form {
+  display: grid;
+  gap: 18px;
+}
+.optimizer-form label {
+  display: grid;
+  gap: 6px;
+}
+.optimizer-form .check-row {
+  display: flex;
+  align-items: center;
+}
+.optimizer-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 16px;
+}
+.optimizer-form fieldset {
+  border: 1px solid var(--border, #d9e0e7);
+  padding: 16px;
+  border-radius: 8px;
+  margin: 12px 0;
+}
+.optimizer-form input:not([type="checkbox"]),
+.optimizer-form select,
+.optimizer-form textarea,
+.optimizer-json {
+  width: 100%;
+  padding: 10px;
+  border: 1px solid var(--border, #d9e0e7);
+  border-radius: 6px;
+  background: var(--surface, white);
+  color: inherit;
+}
+.optimizer-json {
+  font-family: monospace;
+  margin: 12px 0;
+}
+.optimizer-questions {
+  max-height: 600px;
+  overflow: auto;
+}
+.optimizer-questions article {
+  padding: 16px 0;
+  border-bottom: 1px solid var(--border, #d9e0e7);
+}
+.optimizer-questions blockquote {
+  padding: 12px;
+  margin: 12px 0;
+  background: #f5f7fa;
+  border-left: 3px solid #5b6de8;
+}
 @media (prefers-reduced-motion: reduce) {
   .spin {
     animation: none !important;

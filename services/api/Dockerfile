@@ -5,5 +5,6 @@ COPY requirements/base.txt /app/requirements.txt
 RUN pip install --no-cache-dir -r /app/requirements.txt
 COPY packages /app/packages
 COPY services /app/services
+COPY scripts /app/scripts
 ENV PYTHONPATH=/app/packages:/app
 CMD ["uvicorn", "services.api.app.main:app", "--host", "0.0.0.0", "--port", "8000"]

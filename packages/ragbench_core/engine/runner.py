@@ -36,8 +36,13 @@ from ragbench_core.engine.persistence import (
 )
 
 class BenchmarkRunner:
-    def __init__(self):
+    control = staticmethod(lambda *args: None)
+    ingestion_reuse = None
+
+    def __init__(self, control=None, ingestion_reuse=None):
         self.registry=register_builtin_components()
+        self.control = control or (lambda *args: None)
+        self.ingestion_reuse = ingestion_reuse
 
     def run(self, run_id: str, config: dict) -> dict:
         run_name=config.get("experiment",{}).get("name","benchmark")
@@ -69,6 +74,7 @@ class BenchmarkRunner:
             summary["total_questions"] = len(cases) * len(examples)
             all_metric_rows=[]
             for case in cases:
+                self.control("case", case)
                 try:
                     case_summary=self._run_case(run_id, case, sources, examples, config)
                     summary["cases"] += int(case_summary["questions"] > 0)
@@ -78,6 +84,9 @@ class BenchmarkRunner:
                     all_metric_rows.extend(case_summary["metric_rows"])
                     summary["case_aggregates"][case.case_id] = self._aggregate(case_summary["metric_rows"])
                 except Exception as e:
+                    from ragbench_core.optimization.budget import OptimizationStopped, BudgetExhausted
+                    if isinstance(e, (OptimizationStopped, BudgetExhausted)):
+                        raise
                     summary["errors"] += 1
                     error_payload=self._case_error_payload(case.case_id, e)
                     error_payload["artifact_path"]=write_json_artifact(
@@ -117,7 +126,14 @@ class BenchmarkRunner:
 
     def _run_case(self, run_id, case, sources, examples, full_config):
         full_config = {**full_config, "_run_id": run_id}
-        ingestion = self._ingest_case(case, sources, full_config)
+        self.control("ingestion", case)
+        ingestion = self.ingestion_reuse.load(case, full_config) if self.ingestion_reuse else None
+        if ingestion is None:
+            if self.ingestion_reuse:
+                full_config["_index_name"] = self.ingestion_reuse.index_name(case, full_config)
+            ingestion = self._ingest_case(case, sources, full_config)
+            if self.ingestion_reuse:
+                self.ingestion_reuse.save(case, full_config, ingestion)
         ingestion["per_question_embedding_tokens"] = ingestion["embedding_tokens"] / len(examples) if examples else 0
         caches = {
             "embedding": ingestion["embedding_cache"],
@@ -127,11 +143,22 @@ class BenchmarkRunner:
                          "runtime_mode": full_config.get("runtime", {}).get("mode", "end_to_end")}
         metric_rows=[]
         question_errors=[]
+        previous = {}
+        if self.ingestion_reuse:
+            from ragbench_core.engine.database import list_results
+            previous = {r["question_id"]: r for r in list_results(run_id) if r["case_id"] == case.case_id and r["metrics"]}
         for example in examples:
+            if example.question_id in previous:
+                metric_rows.append(previous[example.question_id])
+                continue
+            self.control("question", example)
             try:
                 answer_payload = self._answer_question(example, case, ingestion["chunks"], ingestion["index_name"], caches, metric_config)
                 row = self._compute_and_persist_result(run_id, example, case, full_config, metric_config, ingestion, answer_payload)
             except Exception as exc:
+                from ragbench_core.optimization.budget import OptimizationStopped, BudgetExhausted
+                if isinstance(exc, (OptimizationStopped, BudgetExhausted)):
+                    raise
                 error = {**self._case_error_payload(case.case_id, exc), "question_id": example.question_id}
                 path = write_json_artifact(full_config, run_id, "cases", case.case_id, f"{example.question_id}_error.json", payload=error)
                 question_errors.append({**error, "artifact_path": path})
@@ -142,6 +169,7 @@ class BenchmarkRunner:
                 consume_client_timings()
                 consume_token_usage()
             metric_rows.append(row)
+            self.control("question_finished", row)
         return {"questions":sum(not r.get("failed", False) for r in metric_rows),"metric_rows":metric_rows,"question_errors":question_errors}
 
     def _ingest_case(self, case, sources, full_config):
@@ -176,10 +204,11 @@ class BenchmarkRunner:
             with timer() as ingest_embedding_timer:
                 chunks=embed_chunks_cached(embedding_cache, embedder, chunks, ing["embedder"])
             prefix = re.sub(r"[^a-z0-9_]", "_", full_config.get("runtime", {}).get("collection_prefix", "ragbench").lower())[:80].strip("_") or "ragbench"
-            index_name=f"{prefix}_{stable_id(full_config['_run_id'])}_{case.case_id}".lower().replace('-', '_')
+            index_name=full_config.get("_index_name") or f"{prefix}_{stable_id(full_config['_run_id'])}_{case.case_id}".lower().replace('-', '_')
             dense_indexer_conf=ing.get("indexers",{}).get("dense")
             sparse_indexer_conf=ing.get("indexers",{}).get("sparse")
             with timer() as persistence_timer:
+                self.control("index", case)
                 if dense_indexer_conf:
                     self.registry.indexers[dense_indexer_conf.get("type","qdrant")].index(chunks, index_name, dense_indexer_conf)
                 if sparse_indexer_conf:
@@ -204,6 +233,7 @@ class BenchmarkRunner:
         }
 
     def _answer_question(self, example, case, chunks, index_name, caches, metric_config):
+        self.control("query", example)
         ing=case.ingestion_config; qry=case.query_config
         retrieval_only = metric_config.get("runtime_mode") == "retrieval_only"
         max_k = max(RetrievalMetrics._validate_retrieval_k(metric_config))
@@ -231,6 +261,7 @@ class BenchmarkRunner:
                 context=self.registry.assemblers[qry["context_assembler"]["type"]].assemble(combined, qry["context_assembler"])
                 prompt=self.registry.prompt_builders[qry["prompt_builder"]["type"]].build(example.question, context, qry["prompt_builder"])
             with timer() as generation_timer:
+                self.control("generation", example)
                 generation_result="" if retrieval_only else self.registry.generators[case.llm_config["provider"]].generate(prompt, case.llm_config)
             if isinstance(generation_result, dict):
                 answer_text=str(generation_result.get("answer", ""))
@@ -304,6 +335,7 @@ class BenchmarkRunner:
         judge = None
         judge_config = metric_config.get("judge", {})
         if not retrieval_only and judge_config.get("enabled") and any(metric_selected(name, metric_config) for name in SCORES):
+            self.control("judge", example)
             judge = judge_answer(example, gen, judge_config)
             metrics.update(judge["scores"])
         metrics = filter_metrics(metrics, metric_config)
@@ -316,7 +348,9 @@ class BenchmarkRunner:
                 example.question,
                 metrics,
                 answer_payload["answer_text"],
-                {"ingestion":ing,"query":qry,"llm":case.llm_config,"question_id":example.question_id,"evaluation_step":answer_payload["evaluation_step"],"judge":judge},
+                {"ingestion":ing,"query":qry,"llm":case.llm_config,"question_id":example.question_id,"evaluation_step":answer_payload["evaluation_step"],"judge":judge,
+                 "ingestion_execution": {"index_name": ingestion["index_name"], "reused": bool(ingestion.get("build_timings")),
+                                         "build_timings": ingestion.get("build_timings", ingestion["timings"])}},
                 artifact_paths=self._write_result_artifacts(full_config, run_id, case.case_id, result_id, {
                     "expanded_config":{"ingestion":ing,"query":qry,"llm":case.llm_config,"metrics":metric_config},
                     "retrieval_traces":{"raw":retrieval_results_payload(answer_payload["raw_retrieval_results"]),"reranked":retrieval_results_payload(answer_payload["reranked_results"])},

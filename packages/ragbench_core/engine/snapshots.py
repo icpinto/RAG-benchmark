@@ -39,8 +39,8 @@ def validate_config(config: dict) -> None:
     validate_metric_selection(config.get("metrics", {}))
     judge = config.get("metrics", {}).get("judge", {})
     if judge.get("enabled"):
-        if not judge.get("model") or judge.get("provider", "ollama") != "ollama":
-            raise ValueError("An enabled judge requires an Ollama model")
+        if not judge.get("model") or judge.get("provider", "ollama") not in {"ollama", "chat_completions"}:
+            raise ValueError("An enabled judge requires a supported provider and model")
         if (
             not isinstance(judge.get("timeout", 240), (int, float))
             or judge.get("timeout", 240) <= 0
@@ -48,6 +48,59 @@ def validate_config(config: dict) -> None:
             raise ValueError("Judge timeout must be positive")
     if not expand_cases(config):
         raise ValueError("Benchmark must expand to at least one case")
+
+
+def capture_corpus(sources: list[str], root: Path) -> dict:
+    """Freeze source bytes without requiring evaluation questions."""
+    if not sources:
+        raise ValueError("Corpus requires at least one source")
+    root.mkdir(parents=True, exist_ok=False)
+    entries, seen = [], set()
+    for index, source in enumerate(sorted(set(sources))):
+        remote = source.startswith(("http://", "https://"))
+        doc_id = source.replace("https://", "").replace("http://", "").replace("/", "_")[:180] if remote else Path(source).name
+        if doc_id in seen:
+            raise ValueError(f"Duplicate document ID: {doc_id}")
+        seen.add(doc_id)
+        encoding = "utf-8"
+        if remote:
+            response = requests.get(source, timeout=30, headers={"User-Agent": "ragbench/0.1"})
+            response.raise_for_status()
+            content, encoding = response.content, response.encoding or "utf-8"
+        else:
+            content = Path(source).read_bytes()
+        target = root / "corpus" / str(index) / ("source.html" if remote else Path(source).name)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(content)
+        entries.append(dict(source=source, doc_id=doc_id, path=str(target.resolve()), sha256=checksum(content), remote=remote, encoding=encoding))
+    manifest = {"version": 1, "sources": entries, "corpus_hash": stable_hash(sorted(
+        [{"doc_id": e["doc_id"], "sha256": e["sha256"]} for e in entries], key=lambda e: e["doc_id"]))}
+    (root / "corpus_manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+    return manifest
+
+
+def verify_corpus(manifest: dict) -> None:
+    for entry in manifest["sources"]:
+        if checksum(Path(entry["path"]).read_bytes()) != entry["sha256"]:
+            raise ValueError(f"Snapshot checksum mismatch: {entry['doc_id']}")
+
+
+def attach_evaluation(manifest: dict, examples: list, root: Path) -> dict:
+    """Bind a question split to an already frozen corpus, without fetching again."""
+    verify_corpus(manifest)
+    root.mkdir(parents=True, exist_ok=True)
+    questions = [asdict(e) for e in examples]
+    if not questions:
+        raise ValueError("Evaluation split is empty")
+    ground_truth = root / "ground_truth.json"
+    ground_truth.write_text(json.dumps(questions, ensure_ascii=False, indent=2), encoding="utf-8")
+    identity = {"sources": sorted([{"doc_id": e["doc_id"], "sha256": e["sha256"]} for e in manifest["sources"]], key=lambda e: e["doc_id"]),
+                "questions": sorted(questions, key=lambda e: e["question_id"])}
+    result = {**manifest, "ground_truth_file": str(ground_truth.resolve()), "ground_truth_sha256": checksum(ground_truth.read_bytes()),
+              "question_ids": [q["question_id"] for q in questions], "dataset_hash": stable_hash(identity)}
+    path = root / "manifest.json"
+    path.write_text(json.dumps(result, indent=2), encoding="utf-8")
+    return {**result, "manifest_path": str(path.resolve())}
 
 
 def snapshot_inputs(run_id: str, config: dict) -> dict:
@@ -77,71 +130,10 @@ def snapshot_inputs(run_id: str, config: dict) -> dict:
         raise ValueError("Benchmark requires at least one selected source and question")
 
     root = artifact_root(config, run_id) / "snapshot"
-    root.mkdir(parents=True, exist_ok=False)
-    entries, seen = [], set()
-    for index, source in enumerate(sorted(set(sources))):
-        remote = source.startswith(("http://", "https://"))
-        doc_id = (
-            source.replace("https://", "")
-            .replace("http://", "")
-            .replace("/", "_")[:180]
-            if remote
-            else Path(source).name
-        )
-        if doc_id in seen:
-            raise ValueError(f"Duplicate document ID: {doc_id}")
-        seen.add(doc_id)
-        encoding = "utf-8"
-        if remote:
-            response = requests.get(
-                source, timeout=30, headers={"User-Agent": "ragbench/0.1"}
-            )
-            response.raise_for_status()
-            content, encoding = response.content, response.encoding or "utf-8"
-        else:
-            content = Path(source).read_bytes()
-        target = (
-            root
-            / "corpus"
-            / str(index)
-            / ("source.html" if remote else Path(source).name)
-        )
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_bytes(content)
-        entries.append(
-            {
-                "source": source,
-                "doc_id": doc_id,
-                "path": str(target.resolve()),
-                "sha256": checksum(content),
-                "remote": remote,
-                "encoding": encoding,
-            }
-        )
-    questions = [asdict(e) for e in examples]
-    ground_truth = root / "ground_truth.json"
-    ground_truth.write_text(
-        json.dumps(questions, ensure_ascii=False, indent=2), encoding="utf-8"
-    )
-    identity = {
-        "sources": sorted(
-            [{"doc_id": e["doc_id"], "sha256": e["sha256"]} for e in entries],
-            key=lambda e: e["doc_id"],
-        ),
-        "questions": sorted(questions, key=lambda e: e["question_id"]),
-    }
-    manifest = {
-        "version": 1,
-        "sources": entries,
-        "ground_truth_file": str(ground_truth.resolve()),
-        "ground_truth_sha256": checksum(ground_truth.read_bytes()),
-        "question_ids": [e.question_id for e in examples],
-        "dataset_hash": stable_hash(identity),
-    }
-    manifest_path = root / "manifest.json"
-    manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
-    config["_snapshot"] = {**manifest, "manifest_path": str(manifest_path.resolve())}
+    corpus = capture_corpus(sources, root)
+    config["_snapshot"] = attach_evaluation(corpus, examples, root)
     return config
+
 
 
 def verify_snapshot(config: dict) -> None:

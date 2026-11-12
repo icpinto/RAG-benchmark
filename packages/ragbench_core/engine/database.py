@@ -42,6 +42,7 @@ class BenchmarkResult(Base):
     created_at=Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
 def init_db():
+    from ragbench_core.optimization import store  # noqa: F401 -- additive tables on the shared metadata
     Base.metadata.create_all(engine)
     _ensure_metadata_columns()
 
@@ -90,7 +91,7 @@ def upsert_run(run_id: str, name: str, status: str, config: dict, summary: dict 
 def insert_result(result_id: str, run_id: str, case_id: str, question: str, metrics: dict, answer: str, case_config: dict, artifact_paths: dict | None = None, model_identifiers: dict | None = None, question_id: str | None = None):
     db=SessionLocal()
     try:
-        db.add(BenchmarkResult(id=result_id, run_id=run_id, case_id=case_id, question=question, question_id=question_id, metrics=metrics, answer=answer, case_config=case_config, artifact_paths=artifact_paths or {}, model_identifiers=model_identifiers or {}))
+        db.merge(BenchmarkResult(id=result_id, run_id=run_id, case_id=case_id, question=question, question_id=question_id, metrics=metrics, answer=answer, case_config=case_config, artifact_paths=artifact_paths or {}, model_identifiers=model_identifiers or {}))
         db.commit()
     finally:
         db.close()

@@ -20,6 +20,7 @@ import { ErrorNotice, Loading } from "./components/common";
 export const KnowledgeBase = lazy(() => import("./pages/knowledge-base"));
 export const BenchmarkSetup = lazy(() => import("./pages/benchmark-setup"));
 export const ResultsExplorer = lazy(() => import("./pages/results-explorer"));
+export const AutoOptimize = lazy(() => import("./pages/auto-optimize"));
 const links = [
   {
     to: "/knowledge-base",
@@ -32,6 +33,12 @@ const links = [
     label: "Benchmark Setup",
     subtitle: "Pipelines & experiments",
     icon: Settings2,
+  },
+  {
+    to: "/auto-optimize",
+    label: "Auto Optimize",
+    subtitle: "Discover pipeline configurations",
+    icon: Activity,
   },
   {
     to: "/results",

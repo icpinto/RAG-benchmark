@@ -13,6 +13,8 @@ class OllamaGenerator(BaseGenerator):
         base_url=config.get("base_url", "http://ollama:11434").rstrip("/")
         model=config.get("model", "gpt-oss:20b")
         payload={"model":model,"prompt":prompt,"stream":False,"options":{"temperature":config.get("temperature",0)}}
+        if config.get("max_output_tokens"):
+            payload["options"]["num_predict"] = int(config["max_output_tokens"])
         resp=get_ollama_session(base_url).post(f"{base_url}/api/generate", json=payload, timeout=int(config.get("timeout", 240)))
         resp.raise_for_status()
         body = resp.json()
