@@ -193,7 +193,7 @@ def _catalog():
                     help="Select metric names. Omit to compute all applicable metrics; an empty list disables scoring. Placeholder scores are lexical heuristics.",
                 ),
                 obj("judge", [flag("enabled"), field("provider", default="ollama", choices=["ollama"]),
-                              field("model"), field("base_url", default="http://ollama:11434"), number("timeout", 240, minimum=1)],
+                              field("model"), field("base_url", default="http://100.110.250.66:11434"), number("timeout", 240, minimum=1)],
                     help="Optional local semantic judge, configured independently of answer generation. Failures yield unavailable scores."),
             ],
         },
@@ -690,8 +690,8 @@ def _catalog():
                 component(
                     "ollama",
                     [
-                        field("model", default="gpt-oss:20b"),
-                        field("base_url", default="http://ollama:11434"),
+                        field("model", default="qwen2.5:32b"),
+                        field("base_url", default="http://100.110.250.66:11434"),
                         number("temperature", 0),
                         number("timeout", 240, minimum=1),
                     ],

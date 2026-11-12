@@ -114,6 +114,12 @@ describe("Auto Optimize", () => {
     expect(payload.task).toBe("Support policy questions");
     expect(payload.allow_hosted).toBe(false);
     expect(payload.planner.provider).toBe("ollama");
+    for (const role of ["planner", "synthesizer", "verifier", "judge"]) {
+      expect(payload[role]).toMatchObject({
+        model: "qwen2.5:32b",
+        base_url: "http://100.110.250.66:11434",
+      });
+    }
   });
   it("displays evidence and supports an explicit review resume", async () => {
     mount("/auto-optimize/session");

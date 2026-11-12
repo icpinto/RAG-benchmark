@@ -82,8 +82,8 @@ const roles = ["planner", "synthesizer", "verifier", "judge"] as const;
 type Role = (typeof roles)[number];
 const initialModel: ModelProfile = {
   provider: "ollama",
-  model: "gpt-oss:20b",
-  base_url: "http://ollama:11434",
+  model: "qwen2.5:32b",
+  base_url: "http://100.110.250.66:11434",
 };
 const terminal = (status?: string) =>
   ["completed", "failed", "cancelled", "budget_exhausted"].includes(

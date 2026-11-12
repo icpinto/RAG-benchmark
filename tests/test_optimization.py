@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from contextlib import nullcontext
 from copy import deepcopy
 from pathlib import Path
 from types import SimpleNamespace
@@ -33,7 +34,7 @@ from ragbench_core.optimization.search import (
     validate_candidate,
 )
 from ragbench_core.optimization.selection import compare_trials
-from ragbench_core.optimization.tools import OptimizationTools
+from ragbench_core.optimization.tools import OptimizationPreflightError, OptimizationTools
 from ragbench_core.optimization.workflow import build_graph
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
@@ -624,6 +625,47 @@ def test_worker_executes_trial_once_and_reuses_initial_reservation(
     assert len(notifications) == 1
     assert store.rows(store.OptimizationTrial, session)[0]["status"] == "completed"
     assert budget.totals(session)["tokens"] == initial_tokens
+
+
+def test_preflight_lists_all_missing_ollama_models(session, monkeypatch):
+    import requests
+
+    calls = []
+
+    def tags(url, timeout):
+        calls.append(url)
+        return SimpleNamespace(raise_for_status=lambda: None, json=lambda: {"models": []})
+
+    monkeypatch.setattr(requests, "get", tags)
+    with pytest.raises(OptimizationPreflightError) as exc:
+        OptimizationTools(session).preflight_models()
+    assert "qwen2.5:32b (planner, synthesizer, verifier, judge)" in str(exc.value)
+    assert "fixed-answer (answer)" in str(exc.value)
+    assert calls == ["http://100.110.250.66:11434/api/tags"]
+
+
+def test_worker_exposes_safe_preflight_error(session, monkeypatch):
+    from langgraph.checkpoint.postgres import PostgresSaver
+    from ragbench_core.optimization import workflow
+    from services.worker.app import optimization_tasks as tasks
+
+    class Saver:
+        def setup(self):
+            pass
+
+    class Graph:
+        def get_state(self, config):
+            return SimpleNamespace(values={}, interrupts=[])
+
+        def invoke(self, data, config, durability):
+            raise OptimizationPreflightError("Ollama model is not installed: example")
+
+    monkeypatch.setattr(db, "init_db", lambda: None)
+    monkeypatch.setattr(PostgresSaver, "from_conn_string", lambda uri: nullcontext(Saver()))
+    monkeypatch.setattr(workflow, "build_graph", lambda saver, dispatch: Graph())
+    tasks.advance_optimization.run(session)
+    assert store.get(session)["error"] == "Ollama model is not installed: example"
+    assert store.get(session)["status"] == "failed"
 
 
 def test_review_resume_marks_human_review_only_after_dataset_is_visible(

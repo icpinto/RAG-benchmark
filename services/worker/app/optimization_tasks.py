@@ -22,6 +22,7 @@ def advance_optimization(session_id):
     from langgraph.checkpoint.postgres import PostgresSaver
     from langgraph.types import Command
     from ragbench_core.engine.database import engine, init_db
+    from ragbench_core.optimization.tools import OptimizationPreflightError
     from ragbench_core.optimization.workflow import build_graph
 
     init_db()
@@ -60,6 +61,11 @@ def advance_optimization(session_id):
         pass
     except budget.BudgetExhausted as exc:
         store.update(session_id, status="budget_exhausted", error=str(exc))
+    except OptimizationPreflightError as exc:
+        store.update(session_id, status="failed", error=str(exc))
+        import logging
+
+        logging.getLogger(__name__).error("Optimization %s failed: %s", session_id, exc)
     except Exception as exc:  # noqa: BLE001 -- isolate provider/plugin/queue failures at the service boundary.
         store.update(
             session_id,

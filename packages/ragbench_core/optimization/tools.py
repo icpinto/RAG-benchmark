@@ -37,6 +37,10 @@ from ragbench_core.optimization.search import (
 from ragbench_core.optimization.selection import compare_trials
 
 
+class OptimizationPreflightError(ValueError):
+    """A configuration problem with a safe, actionable message for the user."""
+
+
 class OptimizationTools:
     def __init__(self, session_id, registry=None, model_call=structured_call):
         self.session_id, self.model_call = session_id, model_call
@@ -268,7 +272,6 @@ class OptimizationTools:
 
         import requests
 
-        seen = set()
         embedding_keys = {
             "openai": "OPENAI_API_KEY",
             "voyage": "VOYAGE_API_KEY",
@@ -280,7 +283,9 @@ class OptimizationTools:
         ):
             environment = embedding_keys.get(embedding["provider"])
             if environment and not os.getenv(environment):
-                raise ValueError(f"Missing server embedding credential: {environment}")
+                raise OptimizationPreflightError(
+                    f"Missing server embedding credential: {environment}"
+                )
         profiles = {
             role: ModelProfile.model_validate(self.session["request"][role])
             for role in ("planner", "synthesizer", "verifier", "judge")
@@ -293,30 +298,42 @@ class OptimizationTools:
                 if key in ModelProfile.model_fields
             }
         )
+        roles_by_identity = {}
         for role, profile in profiles.items():
             identity = (profile.provider, profile.base_url, profile.model)
-            if identity in seen:
-                continue
-            seen.add(identity)
+            roles_by_identity.setdefault(identity, []).append(role)
+        available_by_endpoint = {}
+        missing_models = []
+        for identity, roles in roles_by_identity.items():
+            role = roles[0]
+            profile = profiles[role]
             if profile.provider == "chat_completions":
                 if not os.getenv(profile.api_key_env or "RAGBENCH_OPTIMIZER_API_KEY"):
-                    raise ValueError(
+                    raise OptimizationPreflightError(
                         f"Missing server credential environment variable for {role}"
                     )
             else:
-                response = requests.get(
-                    profile.base_url.rstrip("/") + "/api/tags",
-                    timeout=min(15, profile.timeout),
-                )
-                response.raise_for_status()
-                names = {m["name"] for m in response.json().get("models", [])}
+                if profile.base_url not in available_by_endpoint:
+                    response = requests.get(
+                        profile.base_url.rstrip("/") + "/api/tags",
+                        timeout=min(15, profile.timeout),
+                    )
+                    response.raise_for_status()
+                    available_by_endpoint[profile.base_url] = {
+                        m["name"] for m in response.json().get("models", [])
+                    }
+                names = available_by_endpoint[profile.base_url]
                 if (
                     profile.model not in names
                     and profile.model + ":latest" not in names
                 ):
-                    raise ValueError(
-                        f"Ollama model is not installed for {role}: {profile.model}"
-                    )
+                    missing_models.append(f"{profile.model} ({', '.join(roles)})")
+        if missing_models:
+            raise OptimizationPreflightError(
+                "Ollama models are not installed: "
+                + "; ".join(missing_models)
+                + ". Pull them into the configured Ollama server, then start a new optimization."
+            )
 
     def verify_question(self, question):
         return self.call(

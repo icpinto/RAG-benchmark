@@ -279,8 +279,8 @@ pipeline:
 
 llm:
   provider: "ollama"
-  model: "${OLLAMA_MODEL:gpt-oss:20b}"
-  base_url: "${OLLAMA_BASE_URL:http://ollama:11434}"
+  model: "${OLLAMA_MODEL:qwen2.5:32b}"
+  base_url: "${OLLAMA_BASE_URL:http://100.110.250.66:11434}"
   temperature: 0.0
 
 metrics:

@@ -43,7 +43,7 @@ def judge_answer(example, answer, config: dict) -> dict:
                 ensure_ascii=False,
             )
         )
-        base_url = config.get("base_url", "http://ollama:11434").rstrip("/")
+        base_url = config.get("base_url", "http://100.110.250.66:11434").rstrip("/")
         if config.get("provider", "ollama") == "chat_completions":
             from ragbench_core.optimization.models import structured_call
             from ragbench_core.optimization.contracts import ModelProfile

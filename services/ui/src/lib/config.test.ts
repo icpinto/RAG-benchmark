@@ -23,7 +23,7 @@ describe("configuration round trips", () => {
     ).toBeUndefined();
     expect(edited.match(/^runtime:/gm)).toHaveLength(2);
     expect(edited).toContain("# Prefer docling");
-    expect(edited).toContain("${OLLAMA_MODEL:gpt-oss:20b}");
+    expect(edited).toContain("${OLLAMA_MODEL:qwen2.5:32b}");
   });
   it("preserves plugins, aliases, unknown keys and untouched scalar/list forms", () => {
     const source =

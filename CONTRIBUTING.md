@@ -44,7 +44,7 @@ For frontend work, install Node 22.12 or later, then run `npm ci` and `npm run d
 Ollama is included in the Compose stack. Pull the default model before running benchmarks that use local generation:
 
 ```bash
-docker compose exec ollama ollama pull gpt-oss:20b
+docker compose exec ollama ollama pull qwen2.5:32b
 ```
 
 If you already run Ollama on your host, set `OLLAMA_BASE_URL=http://host.docker.internal:11434` in `.env` and use your host service instead of the bundled container. Recreate the worker with `docker compose up -d --no-deps --force-recreate worker` after changing its environment or host mapping. See [host Ollama setup and connectivity checks](README.md#use-ollama-on-the-host), including the Linux listener configuration.

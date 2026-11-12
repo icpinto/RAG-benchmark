@@ -68,7 +68,7 @@ The ground-truth file is a JSON list. Each entry has this shape:
 
 ### Step 2: configure the experiment
 
-The operator selects or loads a YAML file in `/app/configs`, edits it, and saves it through the API. Saving parses the YAML first; invalid YAML is rejected rather than written. Environment placeholders such as `${OLLAMA_MODEL:gpt-oss:20b}` are resolved while loading.
+The operator selects or loads a YAML file in `/app/configs`, edits it, and saves it through the API. Saving parses the YAML first; invalid YAML is rejected rather than written. Environment placeholders such as `${OLLAMA_MODEL:qwen2.5:32b}` are resolved while loading.
 
 The important sections are:
 
@@ -285,7 +285,7 @@ The runner resolves components by configured name/provider. This keeps orchestra
 ```bash
 cp .env.example .env
 docker compose up --build
-docker compose exec ollama ollama pull gpt-oss:20b
+docker compose exec ollama ollama pull qwen2.5:32b
 
 curl -X POST http://localhost:7800/benchmarks/run \
   -H 'Content-Type: application/json' \

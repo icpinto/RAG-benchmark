@@ -95,7 +95,7 @@
               "key": "base_url",
               "label": "Base url",
               "type": "string",
-              "default": "http://ollama:11434"
+              "default": "http://100.110.250.66:11434"
             },
             {
               "key": "timeout",
@@ -2258,13 +2258,13 @@
               "key": "model",
               "label": "Model",
               "type": "string",
-              "default": "gpt-oss:20b"
+              "default": "qwen2.5:32b"
             },
             {
               "key": "base_url",
               "label": "Base url",
               "type": "string",
-              "default": "http://ollama:11434"
+              "default": "http://100.110.250.66:11434"
             },
             {
               "key": "temperature",

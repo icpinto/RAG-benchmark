@@ -14,8 +14,8 @@ class Contract(BaseModel):
 
 class ModelProfile(Contract):
     provider: Literal["ollama", "chat_completions"] = "ollama"
-    model: str = Field(default="gpt-oss:20b", min_length=1)
-    base_url: str = "http://ollama:11434"
+    model: str = Field(default="qwen2.5:32b", min_length=1)
+    base_url: str = "http://100.110.250.66:11434"
     api_key_env: str | None = None
     timeout: float = Field(default=120, gt=0, le=240)
     max_output_tokens: int = Field(default=2048, ge=128, le=8192)

@@ -77,7 +77,7 @@ User question
 | Query rewriting | None, HyDE via Ollama, multi-query paraphrases, step-back conceptual queries, decomposition, local synonym expansion |
 | Reranking | None, CrossEncoder reranker, FlashRank, RankLLM, ColBERT, Cohere, Jina, diversity/MMR reranker |
 | Context compression | None, top-N trimming |
-| Generation | Ollama, default model `gpt-oss:20b` |
+| Generation | Ollama, default model `qwen2.5:32b` |
 | Metrics | recall@k, precision@k, MRR, NDCG, latency, index size, simple citation validation, placeholder answer metrics |
 
 ## Architecture
@@ -139,10 +139,12 @@ by the `minio` Compose profile. The application currently writes artifacts to th
 shared `artifacts/` directory. The retained MinIO image may no longer be publicly
 pullable; normal startup does not require it.
 
-Ollama is included as a service. Pull the model after containers start:
+Ollama is included as a service. The supplied `.env` points to
+`http://100.110.250.66:11434`, where `qwen2.5:32b` is already installed. If you
+choose the bundled service, pull the model after containers start:
 
 ```bash
-docker compose exec ollama ollama pull gpt-oss:20b
+docker compose exec ollama ollama pull qwen2.5:32b
 ```
 
 ### Use Ollama on the host
@@ -172,7 +174,7 @@ configure `OLLAMA_HOST` on the host service and restart Ollama as described in t
 [Ollama server configuration guide](https://docs.ollama.com/faq#how-do-i-configure-ollama-server).
 
 Keep `llm.base_url` in your benchmark YAML set to
-`${OLLAMA_BASE_URL:http://ollama:11434}` to use the environment setting. If you
+`${OLLAMA_BASE_URL:http://100.110.250.66:11434}` to use the environment setting. If you
 instead use the bundled Ollama container, set `OLLAMA_BASE_URL=http://ollama:11434`.
 For a benchmark running directly on the host, use `http://localhost:11434`.
 
@@ -226,8 +228,8 @@ The benchmark YAML is organized around top-level experiment, data, pipeline, LLM
 | `data` | `remote_urls_file` | No | None | One HTTP(S) URL per line for `html_url`. |
 | `data` | `ground_truth_file` | Yes | None | Ground-truth QA JSON; see format below. |
 | `llm` | `provider` | Yes | None | Registered generator; built-in: `ollama`. |
-| `llm` | `model` | No | `gpt-oss:20b` in the Ollama generator | Ollama model; supports `${ENV_VAR:default}`. |
-| `llm` | `base_url` | No | `http://ollama:11434` | Ollama base URL; env substitution supported. |
+| `llm` | `model` | No | `qwen2.5:32b` in the Ollama generator | Ollama model; supports `${ENV_VAR:default}`. |
+| `llm` | `base_url` | No | `http://100.110.250.66:11434` | Ollama base URL; env substitution supported. |
 | `llm` | `temperature` | No | `0` | Ollama `options.temperature`. |
 | `llm` | `timeout` | No | `240` | Seconds; integer-compatible. |
 | `metrics` | `retrieval_k` | No | `[3, 5, 10]` for metrics, `[10]` for retrieval limit fallback | Non-empty positive integer list. |
@@ -457,8 +459,8 @@ metrics:
   judge:
     enabled: true
     provider: ollama
-    model: "${JUDGE_MODEL:your-local-judge-model}"
-    base_url: "${OLLAMA_BASE_URL:http://ollama:11434}"
+    model: "${JUDGE_MODEL:qwen2.5:32b}"
+    base_url: "${OLLAMA_BASE_URL:http://100.110.250.66:11434}"
     timeout: 240
 ```
 
