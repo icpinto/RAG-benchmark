@@ -191,6 +191,7 @@ describe("Auto Optimize", () => {
     });
     expect(payload.task).toBe("Support policy questions");
     expect(payload.allow_hosted).toBe(false);
+    expect(payload.evaluation_dataset_mode).toBe("reuse_if_compatible");
     expect(payload.planner.provider).toBe("ollama");
     for (const role of ["planner", "synthesizer", "verifier", "judge"]) {
       expect(payload[role]).toMatchObject({
@@ -198,6 +199,50 @@ describe("Auto Optimize", () => {
         base_url: "http://100.110.250.66:11434",
       });
     }
+  });
+  it("allows generating fresh evaluation questions", async () => {
+    mount();
+    fireEvent.change(screen.getByLabelText("Evaluation questions"), {
+      target: { value: "generate_new" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Start optimization" }));
+    await waitFor(() => {
+      const request = fetchMock.mock.calls.find(
+        ([path, options]) =>
+          path === "/api/optimizations" && options?.method === "POST",
+      );
+      expect(JSON.parse(request![1].body).evaluation_dataset_mode).toBe(
+        "generate_new",
+      );
+    });
+  });
+  it("shows reused questions and their origin without an editable draft", async () => {
+    overrideFetch((path) =>
+      path.endsWith("/dataset")
+        ? response({
+            ...dataset,
+            frozen: 1,
+            evaluation_dataset: {
+              status: "reused",
+              dataset_id: "copy",
+              source_dataset_id: "original",
+              source_session_id: "origin-session",
+              question_count: 1,
+            },
+          })
+        : undefined,
+    );
+    mount("/auto-optimize/session");
+    const origin = await screen.findByRole("link", {
+      name: "originating experiment",
+    });
+    expect(origin).toHaveAttribute("href", "/auto-optimize/origin-session");
+    expect(screen.getByText(/Reused evaluation questions/)).toBeInTheDocument();
+    expect(screen.getByText(/1 questions/)).toBeInTheDocument();
+    expect(screen.queryByText("Edit draft questions")).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Resume optimization" }),
+    ).toBeEnabled();
   });
   it("displays evidence and supports an explicit review resume", async () => {
     mount("/auto-optimize/session");

@@ -116,10 +116,8 @@ def step(stage, tools, dispatch):
         tools.generate_evaluation_dataset()
         return "freeze"
     if stage == "freeze":
-        dataset = store.dataset(session_id)
         if (
-            not dataset["frozen"]
-            and tools.session["request"]["review_before_freeze"]
+            tools.session["request"]["review_before_freeze"]
             and not tools.session["progress"].get("review_approved")
         ):
             store.update(session_id, status="paused")

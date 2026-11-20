@@ -22,6 +22,33 @@ The template's answer model stays fixed; its output is bounded to 1,024 tokens b
 default. Worker-reachable model endpoints can be configured separately for planning,
 synthesis, verification, and judging. Ollama models must already be installed.
 
+### Reuse evaluation questions
+
+**Evaluation questions** defaults to **Reuse matching questions when available**.
+After capturing and extracting the sources, Auto Optimize selects the newest
+compatible, validated frozen dataset. Matching requires the complete captured
+source contents and document IDs, extracted text, audience, task guidance, example
+questions, requested question count, and evaluation format/prompt version.
+Pipeline settings, answer/judge models, trial budgets, and snapshot locations do
+not affect matching. Changed file or URL contents and partial source-set overlap
+require new questions. If no usable match exists, questions are generated normally.
+
+Reuse copies the complete saved set, including reference answers, exact evidence,
+question IDs, review flags, and tuning/holdout assignments. The original accepted
+count is preserved; it is not topped up or truncated. Synthesis and semantic
+verification calls are skipped, and those unused model endpoints need not be
+available. Trials, judging, and confirmation still run for the new experiment.
+The dataset card links to the originating experiment; dataset manifests, session
+progress, and report exports retain dataset provenance. Reused holdouts are shared
+evaluation data across experiments, not independent fresh confirmation samples.
+
+Select **Generate fresh questions** to bypass reuse. **Start a new version** also
+generates fresh questions. **Pause for dataset review** pauses reused datasets for
+read-only inspection; resuming does not change inherited human-review flags.
+Generate a fresh set to edit questions. Existing frozen datasets become eligible
+automatically when their saved source, request, and validation artifacts establish
+compatibility. Incomplete historical records and drafts are not reused.
+
 Enable **Pause for dataset review** to inspect/edit the generated questions and
 source quotes before the split is frozen. Fewer than 30 accepted questions, or an
 inability to form independent evidence groups, requires input. Add/edit draft
@@ -98,6 +125,8 @@ credential values are redacted and snapshot/orchestration internals are omitted.
 `POST /optimizations` accepts `config_path`, optional `source_paths`, `urls`,
 `audience`, `task`, `example_questions`, four model profiles, `limits`,
 `allowed_components`, `allow_hosted`, and `review_before_freeze`.
+It also accepts `evaluation_dataset_mode`: `reuse_if_compatible` (the default,
+including older saved requests) or `generate_new`.
 
 Read `/optimizations/{id}` plus `/dataset`, `/trials`, `/events`, and
 `/recommendation`. Use `PUT .../dataset` only while paused before freezing;
@@ -123,3 +152,6 @@ Tests use deterministic model/index fixtures and an in-memory LangGraph checkpoi
 to cover discovery, replay, selection, and export without external services. The
 browser acceptance test stubs the API. A deployment smoke test still needs actual
 Postgres, Redis, Qdrant/OpenSearch, and the selected model endpoints.
+The dataset reuse migration test always covers SQLite. Set
+`RAGBENCH_TEST_POSTGRES_URL` to a test database to also run it in a temporary,
+isolated PostgreSQL schema; the schema is removed after the test.

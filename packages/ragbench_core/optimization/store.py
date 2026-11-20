@@ -36,6 +36,8 @@ class DatasetVersion(db.Base):
     version = Column(Integer, default=1)
     frozen = Column(Integer, default=0)
     payload = Column(JSON)
+    compatibility_key = Column(String, index=True, nullable=True)
+    source_dataset_id = Column(String, nullable=True)
 
 
 class OptimizationTrial(db.Base):
@@ -126,7 +128,14 @@ def dataset(session_id):
     return items[0] if items else None
 
 
-def save_dataset(session_id, questions, frozen=False):
+def save_dataset(
+    session_id,
+    questions,
+    frozen=False,
+    *,
+    compatibility_key=None,
+    source_dataset_id=None,
+):
     with locked(session_id) as (conn, _):
         row = conn.execute(
             select(DatasetVersion).where(DatasetVersion.session_id == session_id)
@@ -139,6 +148,31 @@ def save_dataset(session_id, questions, frozen=False):
         row.version = (row.version or 0) + 1
         row.payload = deepcopy(questions)
         row.frozen = int(frozen)
+        row.compatibility_key = compatibility_key if frozen else None
+        row.source_dataset_id = source_dataset_id if frozen else None
+
+
+def dataset_provenance(session_id):
+    current = dataset(session_id)
+    if current is None:
+        return None
+    origin_id = current["source_dataset_id"] or current["id"]
+    with db.SessionLocal() as conn:
+        origin = conn.get(DatasetVersion, origin_id)
+        return {
+            "status": "reused" if current["source_dataset_id"] else "generated",
+            "dataset_id": current["id"],
+            "source_dataset_id": origin_id,
+            "source_session_id": origin.session_id if origin else None,
+            "question_count": len(current["payload"]),
+        }
+
+
+def record_dataset_provenance(session_id):
+    provenance = dataset_provenance(session_id)
+    with locked(session_id) as (_, row):
+        row.progress = {**(row.progress or {}), "evaluation_dataset": provenance}
+    return provenance
 
 
 def acquire(session_id, owner, seconds=300):

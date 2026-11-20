@@ -97,6 +97,12 @@ export function RunConfigurationCard({ sessionId }: { sessionId: string }) {
                   ],
                 ),
                 ["Target questions", limits.target_questions],
+                [
+                  "Evaluation questions",
+                  request.evaluation_dataset_mode === "generate_new"
+                    ? "Generate fresh questions"
+                    : "Reuse matching questions when available",
+                ],
                 ["Retrieval trial limit", limits.retrieval_trials],
                 ["Answer trial limit", limits.answer_trials],
                 [

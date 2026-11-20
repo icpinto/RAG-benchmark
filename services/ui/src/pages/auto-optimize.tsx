@@ -31,6 +31,7 @@ interface Session {
     stop_reason?: string;
     answer_ranking?: Ranked[];
     retrieval_ranking?: Ranked[];
+    evaluation_dataset?: DatasetProvenance;
   };
 }
 interface Ranked {
@@ -68,6 +69,14 @@ interface Dataset {
   frozen: number;
   version: number;
   payload: SyntheticQuestion[];
+  evaluation_dataset?: DatasetProvenance;
+}
+interface DatasetProvenance {
+  status: "generated" | "reused";
+  dataset_id: string;
+  source_dataset_id: string;
+  source_session_id: string | null;
+  question_count: number;
 }
 interface Recommendation {
   yaml: string;
@@ -120,6 +129,9 @@ export default function AutoOptimize() {
   });
   const [allowHosted, setAllowHosted] = useState(false);
   const [review, setReview] = useState(false);
+  const [datasetMode, setDatasetMode] = useState<
+    "reuse_if_compatible" | "generate_new"
+  >("reuse_if_compatible");
   const [questions, setQuestions] = useState(100);
   const [retrievalTrials, setRetrievalTrials] = useState(20);
   const [answerTrials, setAnswerTrials] = useState(5);
@@ -197,6 +209,7 @@ export default function AutoOptimize() {
           ...models,
           allow_hosted: allowHosted,
           review_before_freeze: review,
+          evaluation_dataset_mode: datasetMode,
           allowed_components: JSON.parse(allowed),
           limits: {
             target_questions: questions,
@@ -254,7 +267,7 @@ export default function AutoOptimize() {
       <PageHeading
         eyebrow="AUTOMATED EXPERIMENTS"
         title="Auto Optimize"
-        description="Generate synthetic evaluation data, compare RAG pipelines, and inspect the evidence behind a recommendation."
+        description="Generate or reuse synthetic evaluation data, compare RAG pipelines, and inspect the evidence behind a recommendation."
       />
       <Notice>
         Generated references are synthetic evaluation data. Automated validation
@@ -338,6 +351,25 @@ export default function AutoOptimize() {
                 rows={2}
               />
             </label>
+            <label>
+              Evaluation questions
+              <select
+                value={datasetMode}
+                onChange={(e) =>
+                  setDatasetMode(e.target.value as typeof datasetMode)
+                }
+              >
+                <option value="reuse_if_compatible">
+                  Reuse matching questions when available
+                </option>
+                <option value="generate_new">Generate fresh questions</option>
+              </select>
+            </label>
+            <p>
+              Reuse requires matching source contents, audience, task guidance,
+              example questions, and target question count. Saved questions and
+              tuning / holdout splits stay fixed.
+            </p>
             <label>
               Audience (optional)
               <input
@@ -692,6 +724,26 @@ export default function AutoOptimize() {
               title={`Synthetic evaluation dataset · version ${dataset.data.version}`}
               description={`${dataset.data.payload.length} questions · ${dataset.data.frozen ? "Frozen tuning / holdout splits" : "Draft"}`}
             >
+              {dataset.data.evaluation_dataset && (
+                <p>
+                  {dataset.data.evaluation_dataset.status === "reused"
+                    ? "Reused evaluation questions"
+                    : "Generated evaluation questions"}
+                  {dataset.data.evaluation_dataset.status === "reused" &&
+                    dataset.data.evaluation_dataset.source_session_id && (
+                      <>
+                        {" from "}
+                        <Link
+                          to={`/auto-optimize/${dataset.data.evaluation_dataset.source_session_id}`}
+                        >
+                          originating experiment
+                        </Link>
+                        . Questions and tuning / holdout splits are preserved.
+                        Generate fresh questions to create an editable set.
+                      </>
+                    )}
+                </p>
+              )}
               <details>
                 <summary>Inspect questions and source evidence</summary>
                 <div className="optimizer-questions">

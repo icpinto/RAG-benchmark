@@ -60,6 +60,7 @@ def public_session(session):
                 "confirmed",
                 "retrieval_ranking",
                 "answer_ranking",
+                "evaluation_dataset",
             }
         },
         "budget": budget.totals(session["id"]),
@@ -302,7 +303,12 @@ def get_trial_configuration(session_id: str, trial_id: str):
 @router.get("/{session_id}/dataset")
 def get_dataset(session_id: str):
     session_or_404(session_id)
-    return store.dataset(session_id)
+    dataset = store.dataset(session_id)
+    return (
+        {**dataset, "evaluation_dataset": store.dataset_provenance(session_id)}
+        if dataset
+        else None
+    )
 
 
 @router.put("/{session_id}/dataset")
@@ -327,7 +333,8 @@ def edit_dataset(session_id: str, req: DatasetEdit):
     if rejected:
         raise HTTPException(400, {"rejected": rejected})
     store.save_dataset(session_id, [q.model_dump() for q in accepted])
-    return store.dataset(session_id)
+    store.record_dataset_provenance(session_id)
+    return get_dataset(session_id)
 
 
 @router.get("/{session_id}/trials")
@@ -369,9 +376,10 @@ def resume(session_id: str):
     from ragbench_core.optimization.workflow import progress
 
     dataset = store.dataset(session_id)
-    if dataset and not dataset["frozen"] and session["stage"] == "freeze":
-        reviewed = [{**q, "human_reviewed": True} for q in dataset["payload"]]
-        store.save_dataset(session_id, reviewed)
+    if dataset and session["stage"] == "freeze":
+        if not dataset["frozen"]:
+            reviewed = [{**q, "human_reviewed": True} for q in dataset["payload"]]
+            store.save_dataset(session_id, reviewed)
         progress(session_id, review_approved=True)
     store.update(session_id, status="queued", error=None)
     try:
@@ -399,7 +407,14 @@ def cancel(session_id: str):
 @router.post("/{session_id}/fork")
 def fork(session_id: str):
     session = session_or_404(session_id)
-    return create_optimization(OptimizationRequest.model_validate(session["request"]))
+    return create_optimization(
+        OptimizationRequest.model_validate(
+            {
+                **session["request"],
+                "evaluation_dataset_mode": "generate_new",
+            }
+        )
+    )
 
 
 @router.get("/{session_id}/recommendation")

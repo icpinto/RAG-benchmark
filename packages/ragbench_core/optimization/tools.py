@@ -20,6 +20,13 @@ from ragbench_core.optimization.contracts import (
     ToolResult,
     TrialRequest,
 )
+from ragbench_core.optimization.dataset_reuse import (
+    FORMAT_VERSION,
+    compatibility_key,
+    compatible_datasets,
+    generation_artifacts,
+    validate_frozen_payload,
+)
 from ragbench_core.optimization.datasets import (
     PROMPT_VERSION,
     freeze_split,
@@ -175,8 +182,14 @@ class OptimizationTools:
             )
 
     def _profile_corpus(self):
-        self.preflight_models()
-        manifest = self.read("corpus.json")
+        # Extraction must replay from the complete capture, not the usable subset
+        # written below (which excludes failed/duplicate documents).
+        original_manifest = self.root / "snapshot" / "corpus_manifest.json"
+        manifest = (
+            json.loads(original_manifest.read_text(encoding="utf-8"))
+            if original_manifest.exists()
+            else self.read("corpus.json")
+        )
         verify_corpus(manifest)
         ingestion = self.session["template"]["pipeline"]["ingestion"]
         documents, failures = [], []
@@ -235,6 +248,8 @@ class OptimizationTools:
         manifest["sources"] = [e for e in manifest["sources"] if e["doc_id"] in usable]
         self.write("corpus.json", manifest)
         self.write("documents.json", documents)
+        self.reuse_evaluation_dataset()
+        self.preflight_models()
         profile = {
             "documents": len(documents),
             "characters": sum(len(d["text"]) for d in documents),
@@ -286,9 +301,15 @@ class OptimizationTools:
                 raise OptimizationPreflightError(
                     f"Missing server embedding credential: {environment}"
                 )
+        dataset = store.dataset(self.session_id)
+        needed_roles = ["planner", "judge"]
+        if not dataset or not dataset["frozen"]:
+            needed_roles.extend(["synthesizer", "verifier"])
+        # Keep the usual role order for diagnostics.
         profiles = {
             role: ModelProfile.model_validate(self.session["request"][role])
             for role in ("planner", "synthesizer", "verifier", "judge")
+            if role in needed_roles
         }
         answer = self.session["template"]["llm"]
         profiles["answer"] = ModelProfile.model_validate(
@@ -347,7 +368,10 @@ class OptimizationTools:
         )
 
     def generate_evaluation_dataset(self):
+        self.reuse_evaluation_dataset()
         if store.dataset(self.session_id):
+            if store.dataset(self.session_id)["frozen"]:
+                self.materialize_evaluation_dataset()
             return self.result(
                 "dataset", count=len(store.dataset(self.session_id)["payload"])
             )
@@ -390,23 +414,31 @@ class OptimizationTools:
             )
             rejected.extend(failures)
         accepted = accepted[:target]
-        store.save_dataset(self.session_id, [q.model_dump() for q in accepted])
         self.write(
             "dataset_validation.json",
             {
                 "rejected": rejected,
                 "accepted": len(accepted),
                 "prompt_version": PROMPT_VERSION,
+                "format_version": FORMAT_VERSION,
                 "synthesizer": request["synthesizer"],
                 "verifier": request["verifier"],
                 "human_gold": False,
             },
+        )
+        store.save_dataset(self.session_id, [q.model_dump() for q in accepted])
+        store.record_dataset_provenance(self.session_id)
+        store.event(
+            self.session_id,
+            "dataset_generated",
+            **store.dataset_provenance(self.session_id),
         )
         return self.result("dataset", count=len(accepted), rejected=len(rejected))
 
     def validate_evaluation_dataset(self):
         dataset = store.dataset(self.session_id)
         if dataset["frozen"]:
+            self.materialize_evaluation_dataset()
             self.reserve_confirmation()
             return self.result("dataset", frozen=True)
         questions, rejected = validate_questions(
@@ -422,13 +454,93 @@ class OptimizationTools:
             return self.result(
                 "dataset", needs_input=True, count=len(questions), reason=str(exc)
             )
-        store.save_dataset(self.session_id, split, frozen=True)
+        store.save_dataset(
+            self.session_id,
+            split,
+            frozen=True,
+            compatibility_key=self.evaluation_compatibility_key(),
+        )
+        self.materialize_evaluation_dataset()
+        self.reserve_confirmation()
+        return self.result("dataset", frozen=True, count=len(split))
+
+    def evaluation_compatibility_key(self):
+        # Historical/incomplete sessions can still be inspected and exported.
+        if not (self.root / "corpus.json").exists():
+            return None
+        return compatibility_key(
+            self.session["request"],
+            self.read("corpus.json"),
+            self.read("documents.json"),
+        )
+
+    def reuse_evaluation_dataset(self):
+        existing = store.dataset(self.session_id)
+        if existing:
+            store.record_dataset_provenance(self.session_id)
+            return bool(existing["source_dataset_id"])
+        mode = self.session["request"].get(
+            "evaluation_dataset_mode", "reuse_if_compatible"
+        )
+        if mode == "generate_new":
+            return False
+        key = self.evaluation_compatibility_key()
+        if key is None:
+            return False
+        documents = self.read("documents.json")
+        for candidate in compatible_datasets(key, self.session_id):
+            try:
+                origin = store.get(candidate["session_id"])
+                corpus, saved_documents, validation = generation_artifacts(origin)
+                if compatibility_key(origin["request"], corpus, saved_documents) != key:
+                    raise ValueError("Saved generation identity no longer matches")
+                validate_frozen_payload(candidate["payload"], documents)
+            except (ValueError, TypeError, KeyError, OSError, AttributeError) as exc:
+                store.event(
+                    self.session_id,
+                    "dataset_reuse_rejected",
+                    source_dataset_id=candidate["id"],
+                    # Do not persist artifact paths or provider details.
+                    reason=str(exc)
+                    if isinstance(exc, ValueError)
+                    else type(exc).__name__,
+                )
+                continue
+            self.write("dataset_validation.json", validation)
+            store.save_dataset(
+                self.session_id,
+                candidate["payload"],
+                frozen=True,
+                compatibility_key=key,
+                source_dataset_id=candidate["id"],
+            )
+            provenance = store.record_dataset_provenance(self.session_id)
+            store.event(self.session_id, "dataset_reused", **provenance)
+            return True
+        # Profile and generate can both visit this path; emit one miss event.
+        with store.locked(self.session_id) as (_, row):
+            seen = (row.progress or {}).get("dataset_lookup_key") == key
+            row.progress = {**(row.progress or {}), "dataset_lookup_key": key}
+        if not seen:
+            store.event(
+                self.session_id,
+                "dataset_reuse_miss",
+                reason="No usable compatible frozen dataset",
+            )
+        return False
+
+    def materialize_evaluation_dataset(self):
+        """Repair session-local artifacts even if copying/freezing was interrupted."""
+        dataset = store.dataset(self.session_id)
+        split = dataset["payload"]
+        provenance = store.record_dataset_provenance(self.session_id)
         self.write(
             "dataset_manifest.json",
             {
-                "version": store.dataset(self.session_id)["version"],
+                "version": dataset["version"],
                 "questions": split,
                 "synthetic": True,
+                "evaluation_dataset": provenance,
             },
         )
         for name in ("tuning", "holdout"):
@@ -436,8 +548,6 @@ class OptimizationTools:
                 name + ".json",
                 [legacy_question(q) for q in split if q["split"] == name],
             )
-        self.reserve_confirmation()
-        return self.result("dataset", frozen=True, count=len(split))
 
     def reserve_confirmation(self):
         config = deepcopy(self.baseline())
@@ -709,6 +819,7 @@ class OptimizationTools:
             "report.json",
             {
                 **report,
+                "evaluation_dataset": store.dataset_provenance(self.session_id),
                 "evaluation_coverage": coverage,
                 "budget": budget.totals(self.session_id),
                 "profile": self.read("profile.json"),

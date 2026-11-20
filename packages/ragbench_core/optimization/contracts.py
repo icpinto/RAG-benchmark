@@ -68,6 +68,9 @@ class OptimizationRequest(Contract):
     limits: Limits = Field(default_factory=Limits)
     allow_hosted: bool = False
     review_before_freeze: bool = False
+    evaluation_dataset_mode: Literal["reuse_if_compatible", "generate_new"] = (
+        "reuse_if_compatible"
+    )
     allowed_components: dict[str, list[str]] = Field(default_factory=dict)
 
     @model_validator(mode="after")

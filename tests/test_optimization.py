@@ -840,3 +840,577 @@ def test_review_resume_marks_human_review_only_after_dataset_is_visible(
     api.resume(session)
     assert store.get(session)["progress"]["review_approved"]
     assert all(q["human_reviewed"] for q in store.dataset(session)["payload"])
+
+
+@pytest.fixture
+def reuse_factory(database, template, tmp_path):
+    """Real extraction/generation/freezing with deterministic provider responses."""
+    raw = questions()
+    source_dir = tmp_path / "shared-sources"
+    source_dir.mkdir()
+    paths = []
+    for question in raw:
+        evidence = question["evidence"][0]
+        path = source_dir / evidence["doc_id"]
+        path.write_text(evidence["quote"], encoding="utf-8")
+        paths.append(str(path))
+
+    def create(
+        name, *, request_changes=None, sources=None, created_at=1, preflight=False
+    ):
+        request = OptimizationRequest(
+            limits={"target_questions": 30, "retrieval_trials": 2, "answer_trials": 2},
+            **{
+                role: {"model": role}
+                for role in ("planner", "synthesizer", "verifier", "judge")
+            },
+        ).model_dump()
+        request.update(deepcopy(request_changes or {}))
+        with db.SessionLocal.begin() as conn:
+            conn.add(
+                store.OptimizationSession(
+                    id=name,
+                    request=request,
+                    template=deepcopy(template),
+                    progress={},
+                    created_at=created_at,
+                )
+            )
+        calls = []
+        cursor = 0
+
+        def model_call(profile, instruction, data):
+            nonlocal cursor
+            calls.append(profile.model)
+            if profile.model == "planner":
+                result = {"topics": ["requirements"]}
+            elif profile.model == "verifier":
+                result = {"answerable": True, "supported": True, "reason": "Supported"}
+            elif profile.model == "synthesizer":
+                result = {"questions": deepcopy(raw[cursor : cursor + 5])}
+                cursor += 5
+            else:
+                raise AssertionError(f"Unexpected model call: {profile.model}")
+            return result, {"prompt_tokens": 1, "completion_tokens": 1}
+
+        tools = OptimizationTools(name, fake_registry(), model_call=model_call)
+        tools.write(
+            "corpus.json",
+            capture_corpus(
+                paths if sources is None else sources, tools.root / "snapshot"
+            ),
+        )
+        if not preflight:
+            tools.preflight_models = lambda: None
+        return tools, calls
+
+    create.paths = paths
+    return create
+
+
+@pytest.fixture
+def reusable_origin(reuse_factory):
+    tools, _ = reuse_factory("origin")
+    tools.profile_corpus()
+    tools.generate_evaluation_dataset()
+    tools.validate_evaluation_dataset()
+    return tools
+
+
+def test_cross_session_reuse_preserves_payload_provenance_and_skips_models(
+    reusable_origin,
+    reuse_factory,
+):
+    origin = store.dataset("origin")
+    # A later trial failure does not invalidate the frozen evaluation set.
+    store.update("origin", status="failed")
+    tools, calls = reuse_factory("next")
+    tools.profile_corpus()
+    tools.generate_evaluation_dataset()
+    tools.validate_evaluation_dataset()
+    copied = store.dataset("next")
+    assert copied["frozen"]
+    assert copied["id"] != origin["id"]
+    assert copied["source_dataset_id"] == origin["id"]
+    assert copied["payload"] == origin["payload"]
+    assert tools.read("dataset_validation.json") == reusable_origin.read(
+        "dataset_validation.json"
+    )
+    assert calls == ["planner"]
+    assert not {"synthesizer", "verifier"} & {
+        usage["role"] for usage in store.rows(store.BudgetUsage, "next")
+    }
+    assert tools.read("dataset_manifest.json")["evaluation_dataset"] == {
+        "status": "reused",
+        "dataset_id": copied["id"],
+        "source_dataset_id": origin["id"],
+        "source_session_id": "origin",
+        "question_count": 30,
+    }
+    assert store.get("next")["progress"]["evaluation_dataset"]["status"] == "reused"
+    with pytest.raises(ValueError, match="frozen"):
+        store.save_dataset("next", [])
+    copied["payload"][0]["question"] = "Local mutation"
+    assert store.dataset("origin")["payload"] == origin["payload"]
+    tools.export_recommendation({"config": tools.baseline()})
+    assert (
+        tools.read("report.json")["evaluation_dataset"]["source_session_id"] == "origin"
+    )
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"audience": "New audience"},
+        {"task": "New task"},
+        {"example_questions": ["A different example?"]},
+        {
+            "limits": {
+                **OptimizationRequest().limits.model_dump(),
+                "target_questions": 31,
+            }
+        },
+        {"evaluation_dataset_mode": "generate_new"},
+    ],
+)
+def test_changed_guidance_and_explicit_fresh_mode_prevent_reuse(
+    reusable_origin,
+    reuse_factory,
+    change,
+):
+    tools, _ = reuse_factory("different", request_changes=change)
+    tools.profile_corpus()
+    assert store.dataset("different") is None
+    assert not tools.reuse_evaluation_dataset()
+
+
+@pytest.mark.parametrize(
+    "mutation", ["bytes", "membership", "doc_id", "extracted_text", "duplicate"]
+)
+def test_source_changes_prevent_reuse(
+    reusable_origin, reuse_factory, mutation, tmp_path
+):
+    paths = reuse_factory.paths.copy()
+    if mutation == "bytes":
+        path = Path(paths[0])
+        path.write_text(path.read_text() + " additional content", encoding="utf-8")
+    elif mutation == "membership":
+        paths.pop()
+    elif mutation == "doc_id":
+        alternate = tmp_path / "renamed.txt"
+        alternate.write_bytes(Path(paths[0]).read_bytes())
+        paths[0] = str(alternate)
+    elif mutation == "duplicate":
+        duplicate = tmp_path / "z_duplicate.txt"
+        duplicate.write_bytes(Path(paths[0]).read_bytes())
+        paths.append(str(duplicate))
+    tools, _ = reuse_factory("changed", sources=paths)
+    tools.profile_corpus()
+    if mutation == "extracted_text":
+        # Initially compatible; a changed extractor result must independently miss.
+        with db.SessionLocal.begin() as conn:
+            conn.delete(conn.get(store.DatasetVersion, store.dataset("changed")["id"]))
+        docs = tools.read("documents.json")
+        docs[0]["text"] += " different extractor output"
+        tools.write("documents.json", docs)
+    assert not tools.reuse_evaluation_dataset()
+    assert store.dataset("changed") is None
+
+
+def test_reuse_identity_ignores_order_paths_pipeline_models_and_other_limits(
+    reusable_origin,
+    reuse_factory,
+    tmp_path,
+):
+    relocated = tmp_path / "relocated"
+    relocated.mkdir()
+    paths = []
+    for source in reversed(reuse_factory.paths):
+        target = relocated / Path(source).name
+        target.write_bytes(Path(source).read_bytes())
+        paths.append(str(target))
+    tools, calls = reuse_factory(
+        "relocated",
+        sources=paths,
+        request_changes={
+            "synthesizer": {
+                **OptimizationRequest().synthesizer.model_dump(),
+                "model": "different",
+            },
+            "judge": {
+                **OptimizationRequest().judge.model_dump(),
+                "model": "another-judge",
+            },
+            "limits": {
+                **store.get("origin")["request"]["limits"],
+                "retrieval_trials": 10,
+            },
+        },
+    )
+    template = deepcopy(tools.session["template"])
+    template["llm"]["model"] = "new-answer"
+    template["pipeline"]["query"]["retrievers"] = [{"type": "bm25"}]
+    template["pipeline"]["ingestion"]["chunkers"][0]["chunk_size"] = 1024
+    store.update("relocated", template=template)
+    tools.profile_corpus()
+    assert (
+        store.dataset("relocated")["source_dataset_id"] == store.dataset("origin")["id"]
+    )
+    assert calls == ["planner"]
+
+
+def test_latest_original_selection_and_invalid_candidate_fallback(
+    reusable_origin,
+    reuse_factory,
+):
+    latest, _ = reuse_factory(
+        "latest",
+        created_at=2,
+        request_changes={"evaluation_dataset_mode": "generate_new"},
+    )
+    latest.profile_corpus()
+    latest.generate_evaluation_dataset()
+    latest.validate_evaluation_dataset()
+    first, _ = reuse_factory("first-copy", created_at=10)
+    first.profile_corpus()
+    assert (
+        store.dataset("first-copy")["source_dataset_id"]
+        == store.dataset("latest")["id"]
+    )
+    with db.SessionLocal.begin() as conn:
+        row = conn.get(store.DatasetVersion, store.dataset("latest")["id"])
+        corrupt = deepcopy(row.payload)
+        corrupt[0]["split"] = "unassigned"
+        row.payload = corrupt
+    fallback, _ = reuse_factory("fallback", created_at=11)
+    fallback.profile_corpus()
+    assert (
+        store.dataset("fallback")["source_dataset_id"] == store.dataset("origin")["id"]
+    )
+    assert any(
+        e["kind"] == "dataset_reuse_rejected"
+        for e in store.rows(store.OptimizationEvent, "fallback")
+    )
+
+
+def test_historical_indexing_and_draft_exclusion(reusable_origin, reuse_factory):
+    from ragbench_core.optimization.dataset_reuse import index_historical_datasets
+
+    validation = reusable_origin.read("dataset_validation.json")
+    validation.pop("format_version", None)
+    reusable_origin.write("dataset_validation.json", validation)
+    with db.SessionLocal.begin() as conn:
+        row = conn.get(store.DatasetVersion, store.dataset("origin")["id"])
+        row.compatibility_key = None
+        session_row = conn.get(store.OptimizationSession, "origin")
+        legacy_request = deepcopy(session_row.request)
+        legacy_request.pop("evaluation_dataset_mode")
+        session_row.request = legacy_request
+    draft, _ = reuse_factory("draft", created_at=20)
+    draft.profile_corpus()
+    # Make this newer dataset an unfrozen draft with the same key; it is ineligible.
+    with db.SessionLocal.begin() as conn:
+        row = conn.get(store.DatasetVersion, store.dataset("draft")["id"])
+        row.frozen = 0
+        row.source_dataset_id = None
+    index_historical_datasets()
+    assert store.dataset("origin")["compatibility_key"]
+    tools, _ = reuse_factory("from-history")
+    tools.profile_corpus()
+    assert (
+        store.dataset("from-history")["source_dataset_id"]
+        == store.dataset("origin")["id"]
+    )
+
+
+def test_reuse_replay_repairs_artifacts_and_reserves_confirmation_once(
+    reusable_origin,
+    reuse_factory,
+    monkeypatch,
+):
+    tools, calls = reuse_factory("replay")
+    tools.profile_corpus()
+    assert store.dataset("replay")["frozen"]
+    original_write = tools.write
+
+    def interrupted_write(name, data):
+        if name == "holdout.json":
+            raise OSError("simulated interruption")
+        return original_write(name, data)
+
+    monkeypatch.setattr(tools, "write", interrupted_write)
+    with pytest.raises(OSError, match="interruption"):
+        tools.validate_evaluation_dataset()
+    monkeypatch.setattr(tools, "write", original_write)
+    tools.generate_evaluation_dataset()
+    tools.validate_evaluation_dataset()
+    tokens = budget.totals("replay")["tokens"]
+    tools.validate_evaluation_dataset()
+    assert budget.totals("replay")["tokens"] == tokens
+    assert len(tools.read("holdout.json")) == 6
+    assert len(tools.read("tuning.json")) == 24
+    assert calls == ["planner"]
+
+
+def test_unused_generation_endpoints_are_not_preflighted(
+    reusable_origin,
+    reuse_factory,
+    monkeypatch,
+):
+    import requests
+
+    endpoints = []
+
+    def tags(url, timeout):
+        endpoints.append(url)
+        assert "unavailable" not in url
+        return SimpleNamespace(
+            raise_for_status=lambda: None,
+            json=lambda: {
+                "models": [
+                    {"name": name} for name in ("planner", "judge", "fixed-answer")
+                ]
+            },
+        )
+
+    monkeypatch.setattr(requests, "get", tags)
+    profile = OptimizationRequest().synthesizer.model_dump()
+    profile["base_url"] = "http://unavailable:11434"
+    tools, calls = reuse_factory(
+        "offline-generation",
+        preflight=True,
+        request_changes={
+            "synthesizer": profile,
+            "verifier": profile,
+        },
+    )
+    tools.profile_corpus()
+    assert store.dataset("offline-generation")["source_dataset_id"]
+    assert len(endpoints) == 1
+    assert calls == ["planner"]
+
+
+def test_reused_review_is_read_only_and_provenance_is_public(
+    reusable_origin,
+    reuse_factory,
+    monkeypatch,
+):
+    from langgraph.checkpoint.memory import InMemorySaver
+
+    from services.api.app import optimizations as api
+
+    tools, _ = reuse_factory(
+        "review-copy", request_changes={"review_before_freeze": True}
+    )
+    tools.profile_corpus()
+    graph = build_graph(InMemorySaver(), lambda _: None, lambda _: tools)
+    config = {"configurable": {"thread_id": "review-copy"}}
+    graph.invoke({"session_id": "review-copy", "stage": "freeze"}, config)
+    assert graph.get_state(config).interrupts
+    assert store.get("review-copy")["status"] == "paused"
+    before = store.dataset("review-copy")["payload"]
+    monkeypatch.setattr(api.advance_optimization, "apply_async", lambda **kwargs: None)
+    api.resume("review-copy")
+    assert store.get("review-copy")["progress"]["review_approved"]
+    assert store.dataset("review-copy")["payload"] == before
+    assert (
+        api.get_dataset("review-copy")["evaluation_dataset"]["source_session_id"]
+        == "origin"
+    )
+    assert (
+        api.get_optimization("review-copy")["progress"]["evaluation_dataset"]["status"]
+        == "reused"
+    )
+
+
+def test_fork_always_requests_fresh_questions(reusable_origin, monkeypatch):
+    from services.api.app import optimizations as api
+
+    submitted = []
+    monkeypatch.setattr(
+        api, "create_optimization", lambda req: submitted.append(req) or {"id": "fork"}
+    )
+    assert api.fork("origin") == {"id": "fork"}
+    assert submitted[0].evaluation_dataset_mode == "generate_new"
+
+
+@pytest.fixture(params=["sqlite", "postgresql"])
+def migration_database(request, database, monkeypatch):
+    if request.param == "sqlite":
+        yield
+        return
+    import os
+    import uuid
+
+    from sqlalchemy import text
+
+    uri = os.environ.get("RAGBENCH_TEST_POSTGRES_URL")
+    if not uri:
+        pytest.skip(
+            "Set RAGBENCH_TEST_POSTGRES_URL for the isolated PostgreSQL migration test"
+        )
+    schema = "test_dataset_reuse_" + uuid.uuid4().hex
+    admin = create_engine(uri)
+    with admin.begin() as conn:
+        conn.execute(text(f"CREATE SCHEMA {schema}"))
+    engine = create_engine(uri, connect_args={"options": f"-csearch_path={schema}"})
+    try:
+        monkeypatch.setattr(db, "engine", engine)
+        monkeypatch.setattr(db, "SessionLocal", sessionmaker(bind=engine))
+        db.init_db()
+        yield
+    finally:
+        engine.dispose()
+        with admin.begin() as conn:
+            conn.execute(text(f"DROP SCHEMA {schema} CASCADE"))
+        admin.dispose()
+
+
+def test_dataset_reuse_migration_is_additive_and_repeatable(migration_database):
+    from sqlalchemy import inspect, text
+
+    # Simulate the table as deployed before this feature.
+    with db.engine.begin() as conn:
+        conn.execute(text("DROP TABLE optimization_datasets"))
+        conn.execute(
+            text(
+                "CREATE TABLE optimization_datasets (id VARCHAR PRIMARY KEY, "
+                "session_id VARCHAR UNIQUE, version INTEGER, frozen INTEGER, payload JSON)"
+            )
+        )
+        conn.execute(
+            text(
+                "INSERT INTO optimization_datasets (id, session_id, version, frozen, payload) "
+                "VALUES ('legacy', 'old', 2, 1, '[]')"
+            )
+        )
+    db.init_db()
+    db.init_db()
+    assert {"compatibility_key", "source_dataset_id"} <= {
+        c["name"] for c in inspect(db.engine).get_columns("optimization_datasets")
+    }
+    assert "ix_optimization_datasets_compatibility_key" in {
+        index["name"]
+        for index in inspect(db.engine).get_indexes("optimization_datasets")
+    }
+    assert store.dataset("old")["version"] == 2
+
+
+def test_changed_url_response_bytes_prevent_reuse(reuse_factory, monkeypatch):
+    import re
+
+    import requests
+
+    content = b"<p>A remote policy document</p>"
+
+    def get(url, timeout, headers):
+        return SimpleNamespace(
+            content=content,
+            encoding="utf-8",
+            raise_for_status=lambda: None,
+        )
+
+    monkeypatch.setattr(requests, "get", get)
+
+    def with_html(tools):
+        tools.registry.extractors["html_url"] = SimpleNamespace(
+            extract=lambda source, cfg: (
+                [
+                    Document(
+                        "remote",
+                        source,
+                        re.sub(
+                            "<[^>]+>",
+                            "",
+                            Path(cfg["_snapshot_html"]).read_text(encoding="utf-8"),
+                        ),
+                    )
+                ]
+                if "_snapshot_html" in cfg
+                else []
+            )
+        )
+        template = deepcopy(tools.session["template"])
+        template["pipeline"]["ingestion"]["extractors"].append("html_url")
+        store.update(tools.session_id, template=template)
+
+    sources = reuse_factory.paths + ["https://example.test/policy"]
+    original, _ = reuse_factory("url-origin", sources=sources)
+    with_html(original)
+    original.profile_corpus()
+    original.generate_evaluation_dataset()
+    original.validate_evaluation_dataset()
+    same, _ = reuse_factory("same-url", sources=sources)
+    with_html(same)
+    same.profile_corpus()
+    assert store.dataset("same-url")["source_dataset_id"]
+    content = b"<article>A remote policy document</article>"
+    changed, _ = reuse_factory("changed-url", sources=sources)
+    with_html(changed)
+    changed.profile_corpus()
+    assert changed.read("documents.json") == same.read("documents.json")
+    assert store.dataset("changed-url") is None
+
+
+def test_reuse_preserves_original_count_and_review_flags(
+    reusable_origin, reuse_factory
+):
+    # A valid generation can freeze fewer accepted questions than requested.
+    with db.SessionLocal.begin() as conn:
+        row = conn.get(store.DatasetVersion, store.dataset("origin")["id"])
+        payload = deepcopy(row.payload)
+        payload[0]["human_reviewed"] = True
+        row.payload = payload
+        row.compatibility_key = None
+        session = conn.get(store.OptimizationSession, "origin")
+        req = deepcopy(session.request)
+        req["limits"]["target_questions"] = 100
+        session.request = req
+    tools, _ = reuse_factory(
+        "partial-target",
+        request_changes={
+            "limits": {
+                **store.get("origin")["request"]["limits"],
+                "target_questions": 100,
+            },
+        },
+    )
+    tools.profile_corpus()
+    tools.generate_evaluation_dataset()
+    assert (
+        store.dataset("partial-target")["payload"] == store.dataset("origin")["payload"]
+    )
+    assert len(store.dataset("partial-target")["payload"]) == 30
+    assert store.dataset("partial-target")["payload"][0]["human_reviewed"]
+
+
+def test_incomplete_history_and_unusable_candidates_generate_normally(
+    reusable_origin,
+    reuse_factory,
+):
+    # Without validation provenance, even a previously indexed record is skipped.
+    (reusable_origin.root / "dataset_validation.json").unlink()
+    tools, calls = reuse_factory("no-usable-history")
+    tools.profile_corpus()
+    assert store.dataset("no-usable-history") is None
+    tools.generate_evaluation_dataset()
+    tools.validate_evaluation_dataset()
+    assert "synthesizer" in calls and "verifier" in calls
+    assert store.dataset("no-usable-history")["source_dataset_id"] is None
+    assert store.dataset("no-usable-history")["compatibility_key"]
+
+
+def test_evaluation_version_and_invalid_ids_prevent_reuse(
+    reusable_origin, reuse_factory, monkeypatch
+):
+    from ragbench_core.optimization import dataset_reuse
+
+    monkeypatch.setattr(dataset_reuse, "FORMAT_VERSION", "incompatible-future-format")
+    tools, _ = reuse_factory("new-version")
+    tools.profile_corpus()
+    assert store.dataset("new-version") is None
+    docs = reusable_origin.read("documents.json")
+    raw = deepcopy(store.dataset("origin")["payload"])
+    raw[0]["question_id"] = "altered"
+    with pytest.raises(ValueError, match="question_id"):
+        dataset_reuse.validate_frozen_payload(raw, docs)

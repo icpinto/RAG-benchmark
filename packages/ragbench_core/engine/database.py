@@ -61,15 +61,23 @@ def _ensure_metadata_columns():
         "ALTER TABLE benchmark_results ADD COLUMN IF NOT EXISTS model_identifiers JSON",
     ]
     statements.append("ALTER TABLE benchmark_results ADD COLUMN IF NOT EXISTS question_id VARCHAR")
+    statements.extend([
+        "ALTER TABLE optimization_datasets ADD COLUMN IF NOT EXISTS compatibility_key VARCHAR",
+        "ALTER TABLE optimization_datasets ADD COLUMN IF NOT EXISTS source_dataset_id VARCHAR",
+    ])
     with engine.begin() as conn:
         inspector = inspect(conn)
-        existing = {name: {c["name"] for c in inspector.get_columns(name)} for name in ("benchmark_runs", "benchmark_results")}
+        existing = {name: {c["name"] for c in inspector.get_columns(name)} for name in ("benchmark_runs", "benchmark_results", "optimization_datasets")}
         for statement in statements:
             words = statement.split()
             table, column = words[2], words[8]
             if column not in existing[table]:
                 conn.execute(text(statement if engine.dialect.name == "postgresql" else statement.replace(" IF NOT EXISTS", "")))
                 existing[table].add(column)
+        conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_optimization_datasets_compatibility_key "
+            "ON optimization_datasets (compatibility_key)"
+        ))
 
 def upsert_run(run_id: str, name: str, status: str, config: dict, summary: dict | None = None, error: str | None = None, **metadata):
     init_db()
