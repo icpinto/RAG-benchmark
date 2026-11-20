@@ -219,6 +219,8 @@ def run_optimization_trial(run_id):
 def reconcile_optimizations():
     """Beat redelivers abandoned work; leases and operation keys reject duplicates."""
     store.db.init_db()
+    from services.worker.app.prompt_tasks import reconcile_prompt_jobs
+    reconcile_prompt_jobs()
     with store.db.SessionLocal() as conn:
         sessions = [
             store.payload(s)

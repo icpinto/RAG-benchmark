@@ -686,6 +686,8 @@ def _catalog():
             "pipeline.query.prompt_builders",
             [
                 component("default"),
+                component("compiled", [field("artifact", type="object", default={})],
+                          help="Immutable DSPy instructions and demonstrations. Compile or select a saved prompt in Benchmark Setup."),
                 component(
                     "preset",
                     [

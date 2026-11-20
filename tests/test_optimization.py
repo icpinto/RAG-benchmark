@@ -401,6 +401,74 @@ def test_graph_wait_resume_does_not_dispatch_trial_twice(session):
     assert len(calls) == 1
 
 
+def test_dspy_graph_compiles_once_and_confirms_without_training_leakage(session, monkeypatch):
+    import yaml
+    from langgraph.checkpoint.memory import InMemorySaver
+    from langgraph.types import Command
+    from ragbench_core.engine.data_loader import load_ground_truth
+    from ragbench_core.prompt_optimization.artifacts import CompiledPrompt
+    from ragbench_core.prompt_optimization.service import get_job, run_job
+    from services.worker.app import prompt_tasks
+
+    request = store.get(session)["request"]
+    request["prompt_optimization"] = {"configs": [{"preset": "mipro_zero_shot_v1"}]}
+    request["limits"]["answer_trials"] = 2
+    store.update(session, request=request, progress={"workflow_version": 3})
+    tools = OptimizationTools(session, fake_registry())
+    prepare_dataset(tools)
+    tools.reserve_confirmation()
+    dispatches, jobs = [], []
+    monkeypatch.setattr(prompt_tasks.compile_prompt_job, "apply_async", lambda args, **kwargs: jobs.append(args[0]))
+
+    def dispatch(run_id):
+        with db.SessionLocal() as conn:
+            trial = store.payload(conn.get(store.OptimizationTrial, run_id))
+        dispatches.append(trial)
+        case = expand_cases(trial["config"])[0]
+        compiled = case.query_config["prompt_builder"]["type"] == "compiled"
+        score = 0.95 if compiled else 0.3
+        for question in load_ground_truth(trial["config"]["_snapshot"]["ground_truth_file"]):
+            db.insert_result(run_id + question.question_id, run_id, case.case_id, question.question,
+                {"answer_correctness": score, "query_latency_seconds": 0.1}, "Answer", {}, question_id=question.question_id)
+        db.upsert_run(run_id, "fixture", "completed", trial["config"], dataset_hash=trial["config"]["_snapshot"]["dataset_hash"])
+        with db.SessionLocal.begin() as conn:
+            conn.get(store.OptimizationTrial, run_id).status = "completed"
+
+    graph = build_graph(InMemorySaver(), dispatch, lambda _: tools)
+    graph_config = {"configurable": {"thread_id": session}, "recursion_limit": 100}
+    graph.invoke({"session_id": session, "stage": "answer"}, graph_config)
+    assert graph.get_state(graph_config).interrupts and len(jobs) == 1
+    job = get_job(jobs[0])
+    holdout_ids = {q["question_id"] for q in store.dataset(session)["payload"] if q["split"] == "holdout"}
+    assert not set(job["splits"]["training"] + job["splits"]["validation"]) & holdout_ids
+
+    def compile_recipe(recipe, prepared, splits, config, judge, account):
+        return CompiledPrompt(instructions="Use evidence.", provenance={"training_question_ids": splits["training"], "validation_question_ids": splits["validation"]}).model_dump(), {"validation_score": 0.95}
+
+    run_job(job["id"], compiler=compile_recipe, prepare=lambda *args: [])
+    graph.invoke(Command(resume=True), graph_config)
+    assert store.get(session)["status"] == "completed"
+    assert store.get(session)["recommendation"]["confirmed_improvement"]
+    assert len(jobs) == 1
+    answers = [t for t in dispatches if t["phase"] == "answer"]
+    assert len(answers) == 2
+    assert all(set(t["config"]["_snapshot"]["question_ids"]) == set(job["splits"]["validation"]) for t in answers)
+    assert all(set(t["config"]["_snapshot"]["question_ids"]) == holdout_ids for t in dispatches if t["phase"] == "confirm")
+    from ragbench_core.engine.snapshots import snapshot_inputs
+    exported = yaml.safe_load((tools.root / "recommended.yaml").read_text())
+    assert set(snapshot_inputs("replay", exported)["_snapshot"]["question_ids"]) == holdout_ids
+
+
+def test_unapproved_compiled_prompt_cannot_enter_auto_search(session):
+    from ragbench_core.prompt_optimization.artifacts import CompiledPrompt, builder_config
+    store.update(session, progress={"workflow_version": 3})
+    tools = OptimizationTools(session, fake_registry())
+    config = tools.baseline()
+    config["pipeline"]["query"]["prompt_builders"] = [builder_config(CompiledPrompt(instructions="Unapproved").model_dump())]
+    with pytest.raises(ValueError, match="approved"):
+        tools.validate_candidate(config)
+
+
 def test_api_draft_edit_cannot_change_frozen_dataset(session):
     from fastapi import HTTPException
     from ragbench_core.optimization.contracts import DatasetEdit

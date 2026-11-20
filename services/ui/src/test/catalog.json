@@ -2228,6 +2228,18 @@
           "fields": []
         },
         {
+          "name": "compiled",
+          "fields": [
+            {
+              "key": "artifact",
+              "label": "Artifact",
+              "type": "object",
+              "default": {}
+            }
+          ],
+          "help": "Immutable DSPy instructions and demonstrations. Compile or select a saved prompt in Benchmark Setup."
+        },
+        {
           "name": "preset",
           "fields": [
             {

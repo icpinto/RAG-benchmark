@@ -222,6 +222,29 @@ beforeEach(() => {
   });
 });
 describe("Auto Optimize", () => {
+  it("sends selected DSPy recipes to Auto Optimize", async () => {
+    mount("/auto-optimize/new");
+    fireEvent.click(await screen.findByLabelText("Enable DSPy compilation"));
+    fireEvent.click(screen.getByLabelText("gepa_light_v1"));
+    fireEvent.click(screen.getByRole("button", { name: "Start optimization" }));
+    await waitFor(() =>
+      expect(
+        fetchMock.mock.calls.some(
+          ([url, options]) =>
+            url === "/api/optimizations" && options?.method === "POST",
+        ),
+      ).toBe(true),
+    );
+    const request = fetchMock.mock.calls.find(
+      ([url, options]) =>
+        url === "/api/optimizations" && options?.method === "POST",
+    );
+    expect(
+      JSON.parse(request![1].body).prompt_optimization.configs.map(
+        (c: { preset: string }) => c.preset,
+      ),
+    ).toEqual(["mipro_zero_shot_v1", "gepa_light_v1"]);
+  });
   it("opens history by default with newest-first metadata and detail links", async () => {
     const created = 1_790_000_000;
     overrideFetch((path) =>

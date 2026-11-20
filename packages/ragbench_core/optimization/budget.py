@@ -16,7 +16,7 @@ class OptimizationStopped(RuntimeError):
 
 
 def check_control(session_id):
-    session = store.get(session_id)
+    session = store.budget_owner(session_id)
     if session["status"] in {"paused", "cancelled"}:
         raise OptimizationStopped(session["status"])
     usage = store.rows(store.BudgetUsage, session_id)
@@ -29,7 +29,7 @@ def check_control(session_id):
 
 def reserve(session_id, operation, role, tokens, cost, seconds=0, credit=None):
     check_control(session_id)
-    with store.locked(session_id) as (conn, session):
+    with store.locked_budget_owner(session_id) as (conn, session):
         existing = conn.get(store.BudgetUsage, operation)
         if existing:
             return False
@@ -92,6 +92,26 @@ def settle(operation, tokens=None, cost=None, seconds=None, actual_tokens=None):
             row.status = "settled"
 
 
+def extend_reservation(session_id, operation, tokens, cost):
+    """Protect confirmation capacity when a compiled prompt grows longer."""
+    check_control(session_id)
+    with store.locked(session_id) as (conn, session):
+        held = conn.get(store.BudgetUsage, operation)
+        if held is None:
+            raise ValueError("Confirmation must be reserved before prompt compilation")
+        rows = conn.execute(select(store.BudgetUsage).where(store.BudgetUsage.session_id == session_id)).scalars().all()
+        extra_tokens = max(0, tokens - held.tokens)
+        if sum(r.tokens for r in rows) + extra_tokens > session.request["limits"]["max_tokens"]:
+            raise BudgetExhausted("Compiled prompt exceeds protected confirmation token capacity")
+        if session.request["limits"].get("max_cost") is not None:
+            if cost is None or any(r.cost is None for r in rows):
+                raise BudgetExhausted("Cannot protect confirmation without provider pricing")
+            if sum(r.cost for r in rows) + max(0, cost - (held.cost or 0)) > session.request["limits"]["max_cost"]:
+                raise BudgetExhausted("Compiled prompt exceeds protected confirmation monetary capacity")
+        held.tokens += extra_tokens
+        held.cost = None if cost is None or held.cost is None else max(held.cost, cost)
+
+
 def totals(session_id):
     rows = store.rows(store.BudgetUsage, session_id)
     return {
@@ -132,9 +152,12 @@ def trial_estimate(config, examples, documents, judge):
     output = config["llm"].get("max_output_tokens", 1024)
     end_to_end = config["runtime"]["mode"] != "retrieval_only"
     # Template bytes bound token overhead, including versioned prompt instructions.
+    from ragbench_core.prompt_optimization.artifacts import CompiledPromptBuilder
+    prompt_config = case.query_config["prompt_builder"]
+    resolved = CompiledPromptBuilder().build("", "", prompt_config) if prompt_config.get("type") == "compiled" else prompt_config.get("template", "")
     prompt_overhead = max(
         1024,
-        len(case.query_config["prompt_builder"].get("template", "").encode("utf-8")),
+        len(resolved.encode("utf-8")),
     )
     generation = (
         (questions + len(examples) * (context + output + prompt_overhead))

@@ -21,6 +21,10 @@ import {
   TrialConfiguration,
 } from "../components/optimization-config";
 import { OptimizationStages } from "../components/optimization-stages";
+import {
+  PromptOptimizerSettings,
+  type PromptSettings,
+} from "../components/prompt-optimization";
 
 interface ModelProfile {
   provider: "ollama" | "chat_completions";
@@ -268,6 +272,10 @@ function OptimizationEditor({ sessionId }: { sessionId?: string }) {
   const [maxQueryCost, setMaxQueryCost] = useState("");
   const [allowed, setAllowed] = useState("{}");
   const [datasetDraft, setDatasetDraft] = useState("");
+  const [promptSettings, setPromptSettings] = useState<PromptSettings>({
+    configs: [],
+  });
+  const [promptSettingsValid, setPromptSettingsValid] = useState(true);
 
   const session = useQuery({
     queryKey: ["optimization", sessionId],
@@ -332,6 +340,7 @@ function OptimizationEditor({ sessionId }: { sessionId?: string }) {
           review_before_freeze: review,
           evaluation_dataset_mode: datasetMode,
           allowed_components: JSON.parse(allowed),
+          prompt_optimization: promptSettings,
           limits: {
             target_questions: questions,
             retrieval_trials: retrievalTrials,
@@ -414,10 +423,21 @@ function OptimizationEditor({ sessionId }: { sessionId?: string }) {
           <form
             onSubmit={(event) => {
               event.preventDefault();
+              if (!promptSettingsValid) return;
               start.mutate();
             }}
             className="optimizer-form"
           >
+            <PromptOptimizerSettings
+              value={promptSettings}
+              onChange={setPromptSettings}
+              onValidityChange={setPromptSettingsValid}
+            />
+            {!promptSettingsValid && (
+              <Notice tone="error">
+                Fix the prompt optimizer JSON before starting.
+              </Notice>
+            )}
             <label>
               Benchmark template
               <select
@@ -724,7 +744,10 @@ function OptimizationEditor({ sessionId }: { sessionId?: string }) {
                 />
               </label>
             </details>
-            <Button type="submit" disabled={start.isPending}>
+            <Button
+              type="submit"
+              disabled={start.isPending || !promptSettingsValid}
+            >
               {start.isPending ? "Capturing corpus…" : "Start optimization"}
             </Button>
           </form>

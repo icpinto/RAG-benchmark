@@ -2,6 +2,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, ClassVar
 from ragbench_core.interfaces import *
+from ragbench_core.prompt_optimization.artifacts import CompiledPromptBuilder
 
 @dataclass
 class ComponentRegistry:
@@ -143,7 +144,7 @@ def register_builtin_components() -> ComponentRegistry:
         ],
         "compressors": [NoCompressor(), TopNCompressor()],
         "assemblers": [DefaultContextAssembler()],
-        "prompt_builders": [DefaultPromptBuilder(), PresetPromptBuilder()],
+        "prompt_builders": [DefaultPromptBuilder(), PresetPromptBuilder(), CompiledPromptBuilder()],
         "generators": [OllamaGenerator()],
         "citation_validators": [SimpleCitationValidator()],
         "metrics": [

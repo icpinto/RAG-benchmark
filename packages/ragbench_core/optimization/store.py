@@ -78,6 +78,54 @@ class BudgetUsage(db.Base):
     actual_tokens = Column(Integer, nullable=True)
 
 
+class PromptCompilationJob(db.Base):
+    __tablename__ = "prompt_compilation_jobs"
+    id = Column(String, primary_key=True)
+    operation_key = Column(String, unique=True, index=True)
+    session_id = Column(String, nullable=True, index=True)
+    status = Column(String, default="queued")
+    request = Column(JSON)
+    config = Column(JSON)
+    splits = Column(JSON)
+    progress = Column(JSON, default=dict)
+    error = Column(String, nullable=True)
+    attempts = Column(Integer, default=0)
+    created_at = Column(Float, default=time.time)
+    updated_at = Column(Float, default=time.time)
+    lease_owner = Column(String, nullable=True)
+    lease_until = Column(Float, default=0)
+
+
+class PromptArtifact(db.Base):
+    __tablename__ = "prompt_artifacts"
+    id = Column(String, primary_key=True)
+    job_id = Column(String, index=True)
+    payload = Column(JSON)
+    summary = Column(JSON)
+    created_at = Column(Float, default=time.time)
+
+
+def budget_owner(owner_id):
+    """Compilation jobs share accounting without pretending to be auto sessions."""
+    with db.SessionLocal() as conn:
+        row = conn.get(OptimizationSession, owner_id)
+        if row is None:
+            row = conn.get(PromptCompilationJob, owner_id)
+        if row is None:
+            raise KeyError("Budget owner not found")
+        return payload(row)
+
+
+@contextmanager
+def locked_budget_owner(owner_id):
+    with db.SessionLocal.begin() as conn:
+        row = conn.execute(select(OptimizationSession).where(OptimizationSession.id == owner_id).with_for_update()).scalar_one_or_none()
+        if row is None:
+            row = conn.execute(select(PromptCompilationJob).where(PromptCompilationJob.id == owner_id).with_for_update()).scalar_one()
+        yield conn, row
+        row.updated_at = time.time()
+
+
 def payload(row):
     return {c.name: deepcopy(getattr(row, c.name)) for c in row.__table__.columns}
 

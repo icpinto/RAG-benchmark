@@ -104,10 +104,13 @@ qualifying shortlist, variants use the baseline as their parent. Every candidate
 preserves its parent's ingestion, rewriting, and retrieval settings. The persisted
 queue is deterministic, deduplicated, and reused after recovery.
 
-Prompt choices are **Baseline** (the original prompt), **Concise v1**, and
+Without DSPy enabled, prompt choices are **Baseline** (the original prompt),
+**Concise v1**, and
 **Evidence-first v1**. All require context-grounded answers, exact citations, and
 insufficient-context handling. Trial snapshots and exported YAML retain the preset
-ID and resolved template. Custom and model-generated prompts are not supported.
+ID and resolved template. DSPy-enabled workflow-v3 sessions also compile approved
+prompt configurations; see [DSPy prompt optimization](prompt-optimization.md) for
+shared recipes, training/validation splits, compilation budgets, and manual reuse.
 
 The default answer-trial cap remains five. Search coverage lists scheduled, tested,
 and untested variants; small caps can leave entire dimensions unexplored. No cap

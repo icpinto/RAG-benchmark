@@ -290,6 +290,9 @@ def search_retrieval(tools, dispatch):
 
 
 def search_answers(tools, dispatch):
+    if tools.session["progress"].get("workflow_version", 1) >= 3:
+        from ragbench_core.prompt_optimization.auto import search_answers as search_prompt_answers
+        return search_prompt_answers(tools, dispatch, wait_for_trial, progress)
     session_id = tools.session_id
     state = tools.session["progress"]
     maximum = tools.session["request"]["limits"]["answer_trials"]

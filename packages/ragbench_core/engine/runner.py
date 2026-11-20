@@ -236,6 +236,7 @@ class BenchmarkRunner:
         self.control("query", example)
         ing=case.ingestion_config; qry=case.query_config
         retrieval_only = metric_config.get("runtime_mode") == "retrieval_only"
+        context_only = metric_config.get("runtime_mode") == "context_only"
         max_k = max(RetrievalMetrics._validate_retrieval_k(metric_config))
         embedder=self.registry.embedders[ing["embedder"]["provider"]]
         with timer() as query_timer:
@@ -259,10 +260,11 @@ class BenchmarkRunner:
             if not retrieval_only:
                 combined=self.registry.compressors[qry["compressor"]["type"]].compress(example.question, combined, qry["compressor"])
                 context=self.registry.assemblers[qry["context_assembler"]["type"]].assemble(combined, qry["context_assembler"])
-                prompt=self.registry.prompt_builders[qry["prompt_builder"]["type"]].build(example.question, context, qry["prompt_builder"])
+                if not context_only:
+                    prompt=self.registry.prompt_builders[qry["prompt_builder"]["type"]].build(example.question, context, qry["prompt_builder"])
             with timer() as generation_timer:
                 self.control("generation", example)
-                generation_result="" if retrieval_only else self.registry.generators[case.llm_config["provider"]].generate(prompt, case.llm_config)
+                generation_result="" if retrieval_only or context_only else self.registry.generators[case.llm_config["provider"]].generate(prompt, case.llm_config)
             if isinstance(generation_result, dict):
                 answer_text=str(generation_result.get("answer", ""))
                 generation_metadata=dict(generation_result.get("metadata") or {})
@@ -309,6 +311,11 @@ class BenchmarkRunner:
                 **({} if retrieval_only else {"generation_seconds":generation_timer["seconds"]}),
             },
         }
+
+    def prepare_context(self, example, case, ingestion, caches):
+        """Use the exact benchmark retrieval, compression and citation assembly path."""
+        return self._answer_question(example, case, ingestion["chunks"], ingestion["index_name"], caches,
+                                     {**case.metric_config, "runtime_mode": "context_only"})
 
     def _compute_and_persist_result(self, run_id, example, case, full_config, metric_config, ingestion, answer_payload):
         ing=case.ingestion_config; qry=case.query_config

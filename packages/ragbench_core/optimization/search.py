@@ -93,7 +93,7 @@ def get_search_space(template, allowed=None):
 
 
 def validate_candidate(
-    config, baseline, space, registry=None, *, allow_prompt_presets=False
+    config, baseline, space, registry=None, *, allow_prompt_presets=False, approved_prompt_artifacts=None
 ):
     validate_config(config)
     expanded = deepcopy(config)
@@ -115,7 +115,12 @@ def validate_candidate(
         from ragbench_core.components.context import PROMPT_PRESETS, preset_config
 
         prompt = qry["prompt_builder"]
-        if (
+        compiled_approved = False
+        if prompt.get("type") == "compiled" and approved_prompt_artifacts:
+            from ragbench_core.prompt_optimization.artifacts import CompiledPrompt
+            artifact = CompiledPrompt.model_validate(prompt.get("artifact"))
+            compiled_approved = artifact.model_dump() == approved_prompt_artifacts.get(artifact.content_hash) and set(prompt) == {"type", "artifact"}
+        if not compiled_approved and (
             not allow_prompt_presets
             or prompt.get("preset_id") not in PROMPT_PRESETS
             or prompt != preset_config(prompt["preset_id"])

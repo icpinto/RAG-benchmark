@@ -258,6 +258,9 @@ def stage_dashboard(session, *, redact=lambda value: value):
         split = "holdout" if phase == "confirm" else "tuning"
         phase_trials = [t for t in trials if t["phase"] == phase]
         question_ids = [q["question_id"] for q in payload if q.get("split") == split]
+        if phase == "answer" and state.get("prompt_splits"):
+            question_ids = state["prompt_splits"]["validation"]
+            split = "prompt validation"
         if not question_ids:
             question_ids = sorted(
                 {
@@ -445,11 +448,19 @@ def stage_dashboard(session, *, redact=lambda value: value):
             **entry,
             "trial_id": answers_by_hash.get(entry["candidate_hash"], {}).get("id"),
             "status": answers_by_hash.get(entry["candidate_hash"], {}).get("status")
+            or (entry.get("compilation_status") if entry.get("compilation_status") != "completed" else None)
             or ("planned" if entry["scheduled"] else "outside trial cap"),
         }
         for entry in plan
     ]
     sections["answer"].update(plan=plan, selected_trial_id=selected_id)
+    if state.get("prompt_splits"):
+        from ragbench_core.optimization.budget import totals
+        from ragbench_core.prompt_optimization.service import get_job
+        job_ids = {e["compilation_job_id"] for e in state.get("prompt_answer_plan", []) if e.get("compilation_job_id")}
+        sections["answer"]["compilations"] = [
+            {"id": jid, "status": get_job(jid)["status"], "progress": get_job(jid)["progress"], "usage": totals(jid)}
+            for jid in sorted(job_ids)]
     sections["retrieval"]["shortlist"] = shortlist
     comparison = deepcopy(state.get("comparison"))
     if comparison:

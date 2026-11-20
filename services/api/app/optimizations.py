@@ -159,6 +159,11 @@ def create_optimization(req: OptimizationRequest):
     try:
         config_path = confined(req.config_path, CONFIG_ROOT)
         template = load_yaml(str(config_path))
+        if "prompt_optimization" not in req.model_fields_set:
+            from ragbench_core.prompt_optimization.contracts import PromptOptimizationSettings
+            req.prompt_optimization = PromptOptimizationSettings.model_validate(template.get("prompt_optimization", {}))
+            req.policy()
+        template["prompt_optimization"] = req.prompt_optimization.model_dump()
         reject_secrets(template)
         template.setdefault("runtime", {})["artifact_dir"] = str(ARTIFACT_ROOT)
         template.setdefault("llm", {}).setdefault("max_output_tokens", 1024)
@@ -232,7 +237,7 @@ def create_optimization(req: OptimizationRequest):
                     id=session_id,
                     request=req.model_dump(),
                     template=template,
-                    progress={"workflow_version": 2},
+                    progress={"workflow_version": 3 if req.prompt_optimization.configs else 2},
                 )
             )
             conn.add(
@@ -408,6 +413,11 @@ def resume(session_id: str):
 def cancel(session_id: str):
     session_or_404(session_id)
     store.update(session_id, status="cancelled")
+    from ragbench_core.prompt_optimization.service import TERMINAL as PROMPT_TERMINAL
+    with store.db.SessionLocal.begin() as conn:
+        for job in conn.execute(store.select(store.PromptCompilationJob).where(store.PromptCompilationJob.session_id == session_id)).scalars():
+            if job.status not in PROMPT_TERMINAL:
+                job.status = "cancelled"
     return {"status": "cancelled"}
 
 

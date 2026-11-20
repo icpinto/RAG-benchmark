@@ -16,7 +16,7 @@ import {
   LogOut,
 } from "lucide-react";
 import { api, json } from "../lib/api";
-import { parseConfig, updateConfig } from "../lib/config";
+import { configValue, parseConfig, updateConfig } from "../lib/config";
 import type { Catalog } from "../lib/types";
 import { useDraft } from "../hooks/draft";
 import { useFiles, useQuestions } from "../hooks/data";
@@ -31,6 +31,10 @@ import {
   Tabs,
 } from "../components/common";
 import { Fields, StageEditor } from "../components/config-fields";
+import {
+  PromptCompilationPanel,
+  type PromptSettings,
+} from "../components/prompt-optimization";
 const YamlEditor = lazy(() => import("../components/yaml-editor"));
 type Mode = "all" | "selected" | "configured";
 export function selectionPayload(
@@ -296,6 +300,54 @@ export default function BenchmarkSetup() {
       <ErrorNotice
         error={error || load.error || save.error || run.error || initial.error}
       />
+      {!parsed.errors.length && (
+        <PromptCompilationPanel
+          settings={
+            (configValue(parsed.doc, ["prompt_optimization"]) as
+              PromptSettings | undefined) || { configs: [] }
+          }
+          onSettingsChange={(value) =>
+            change(updateConfig(draft.text, ["prompt_optimization"], value))
+          }
+          prepare={async () => {
+            if (
+              (sourceMode !== "configured" && !files.isSuccess) ||
+              (questionMode !== "configured" && !questions.isSuccess)
+            )
+              throw new Error(
+                "Load selected documents and evaluation questions before compilation.",
+              );
+            if (
+              questionMode === "selected" &&
+              questionSelection.revision &&
+              questionSelection.revision !== questionRevision
+            )
+              throw new Error(
+                "Questions changed; review the selection before compilation.",
+              );
+            const saved = await save.mutateAsync();
+            return selectionPayload(
+              saved.config_path,
+              sourceMode,
+              sourceMode === "all"
+                ? files.data?.files.map((f) => f.path) || []
+                : sources,
+              questionMode,
+              questionMode === "all"
+                ? questions.data?.questions.map((_, index) => index) || []
+                : selectedQuestions.map(Number),
+            );
+          }}
+          onApply={(yaml) => {
+            change(yaml);
+            setSourceMode("configured");
+            setQuestionMode("configured");
+            setMessage(
+              "Compiled prompt and frozen evaluation partition loaded. Save and run to benchmark.",
+            );
+          }}
+        />
+      )}
       <div className="setup-layout">
         <div className="setup-overview">
           <Card title="Configuration file">

@@ -75,6 +75,12 @@ interface Stage {
   primary_metric: string;
   trials: StageTrial[];
   plan?: Planned[];
+  compilations?: {
+    id: string;
+    status: string;
+    progress: { current_config?: number };
+    usage: { tokens: number; cost: number | null };
+  }[];
   outcome?: string;
   selected_trial_id?: string | null;
   baseline_retained?: boolean;
@@ -751,7 +757,7 @@ export function OptimizationStages({
             : phase === "retrieval"
               ? "Varied here: chunking, embeddings/index, rewriting, retrieval and reranking. Fixed: compression, context, prompts and answer model."
               : phase === "answer"
-                ? "Inherited: chunking, embeddings/index, rewriting and retrieval. Varied here: reranker, context/compression and prompt preset. Fixed: answer model and generation settings."
+                ? "Inherited: chunking, embeddings/index, rewriting and retrieval. Varied here: reranker, context/compression and answer prompt. Fixed: answer model and generation settings."
                 : "Fixed: the selected complete pipeline and baseline. No settings are tuned using holdout results."}
         </p>
         {query.isPending && <Loading label="Loading stage results..." />}
@@ -847,6 +853,25 @@ export function OptimizationStages({
                   }))}
                 />
               </details>
+            )}
+            {phase === "answer" && !!stage.compilations?.length && (
+              <>
+                <h3>DSPy prompt compilation</h3>
+                <p>
+                  Compilation usage is offline optimization work, separate from
+                  benchmark answer trials. Ranking uses the shared
+                  prompt-validation partition.
+                </p>
+                <DataTable
+                  name="prompt-compilations"
+                  rows={stage.compilations.map((job) => ({
+                    job: job.id,
+                    status: job.status,
+                    reserved_tokens: job.usage.tokens,
+                    cost: job.usage.cost ?? "Unknown pricing",
+                  }))}
+                />
+              </>
             )}
           </>
         )}

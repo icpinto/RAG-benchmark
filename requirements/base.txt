@@ -30,3 +30,5 @@ rerankers[rankllm]==0.10.0
 langgraph==1.2.20
 langgraph-checkpoint-postgres==3.2.0
 psycopg[binary]==3.3.8
+dspy==3.0.4
+litellm==1.64.1

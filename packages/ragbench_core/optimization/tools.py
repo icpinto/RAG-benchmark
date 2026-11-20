@@ -319,6 +319,9 @@ class OptimizationTools:
                 if key in ModelProfile.model_fields
             }
         )
+        for index, recipe in enumerate(self.session["request"].get("prompt_optimization", {}).get("configs", [])):
+            if recipe.get("proposal_model"):
+                profiles[f"prompt_proposal_{index}"] = ModelProfile.model_validate(recipe["proposal_model"])
         roles_by_identity = {}
         for role, profile in profiles.items():
             identity = (profile.provider, profile.base_url, profile.model)
@@ -580,6 +583,16 @@ class OptimizationTools:
             self.session["template"], self.session["request"]["allowed_components"]
         )
 
+    def reserve_prompt_confirmation(self, candidate):
+        examples = [QueryExample(**legacy_question(q)) for q in store.dataset(self.session_id)["payload"] if q["split"] == "holdout"]
+        estimates = []
+        for config in (self.baseline(), candidate):
+            config = deepcopy(config)
+            config["runtime"]["mode"] = "end_to_end"
+            estimates.append(budget.trial_estimate(config, examples, self.read("documents.json"), self.session["request"]["judge"]))
+        budget.extend_reservation(self.session_id, self.session_id + ":holdout",
+            sum(e[0] for e in estimates), sum(e[1] for e in estimates) if all(e[1] is not None for e in estimates) else None)
+
     def baseline(self):
         session = self.session
         space = self.get_search_space()
@@ -616,6 +629,13 @@ class OptimizationTools:
         if "pipeline" not in config:
             raise ValueError("Candidate must include pipeline")
         clean["pipeline"] = deepcopy(config["pipeline"])
+        approved = {}
+        if self.session["progress"].get("workflow_version", 1) >= 3:
+            from ragbench_core.prompt_optimization.service import artifacts_for_job
+            for entry in self.session["progress"].get("prompt_answer_plan", []):
+                if entry.get("compilation_job_id"):
+                    for artifact in artifacts_for_job(entry["compilation_job_id"]):
+                        approved[artifact["id"]] = artifact["payload"]
         return validate_candidate(
             clean,
             self.baseline(),
@@ -623,6 +643,7 @@ class OptimizationTools:
             self.registry,
             allow_prompt_presets=self.session["progress"].get("workflow_version", 1)
             >= 2,
+            approved_prompt_artifacts=approved,
         )
 
     def run_trial(self, request: TrialRequest, dispatch):
@@ -677,6 +698,7 @@ class OptimizationTools:
             QueryExample(**legacy_question(q))
             for q in dataset["payload"]
             if q["split"] == request.split
+            and (request.phase != "answer" or not self.session["progress"].get("prompt_splits") or q["question_id"] in self.session["progress"]["prompt_splits"]["validation"])
         ]
         run_id = str(uuid.uuid4())
         config["_snapshot"] = attach_evaluation(
@@ -793,6 +815,7 @@ class OptimizationTools:
             q["question_id"]
             for q in store.dataset(self.session_id)["payload"]
             if q["split"] == "tuning"
+            and (phase != "answer" or not self.session["progress"].get("prompt_splits") or q["question_id"] in self.session["progress"]["prompt_splits"]["validation"])
         ]
         return compare_trials(
             trials,
@@ -808,6 +831,7 @@ class OptimizationTools:
         all_questions = [
             QueryExample(**legacy_question(q))
             for q in store.dataset(self.session_id)["payload"]
+            if self.session["progress"].get("workflow_version", 1) < 3 or q["split"] == "holdout"
         ]
         config["_snapshot"] = attach_evaluation(
             self.read("corpus.json"), all_questions, self.root / "export_snapshot"
@@ -851,10 +875,18 @@ class OptimizationTools:
             },
             "human_reviewed_questions": sum(q["human_reviewed"] for q in questions),
         }
+        compilations = []
+        if self.session["progress"].get("workflow_version", 1) >= 3:
+            from ragbench_core.prompt_optimization.service import get_job
+            job_ids = {entry["compilation_job_id"] for entry in self.session["progress"].get("prompt_answer_plan", []) if entry.get("compilation_job_id")}
+            for job_id in sorted(job_ids):
+                job = get_job(job_id)
+                compilations.append({"id": job_id, "status": job["status"], "results": job["progress"].get("results", []), "usage": budget.totals(job_id), "attempts": job["attempts"]})
         self.write(
             "report.json",
             {
                 **report,
+                "prompt_compilations": compilations,
                 "evaluation_dataset": store.dataset_provenance(self.session_id),
                 "evaluation_coverage": coverage,
                 "budget": budget.totals(self.session_id),

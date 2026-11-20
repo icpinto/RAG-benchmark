@@ -11,7 +11,7 @@ from typing import Any
 from ragbench_core.models.schema import RetrievalResult, Chunk
 
 _VOLATILE_KEYS={"api_key","token","password","secret","created_at","updated_at"}
-_DEPENDENCIES=("rag-benchmark-platform","fastapi","sqlalchemy","pydantic","pandas","numpy","requests","qdrant-client","opensearch-py","sentence-transformers","llama-index-core","mlflow","wandb")
+_DEPENDENCIES=("rag-benchmark-platform","fastapi","sqlalchemy","pydantic","pandas","numpy","requests","qdrant-client","opensearch-py","sentence-transformers","llama-index-core","mlflow","wandb","dspy","gepa","litellm")
 
 
 def _json_default(value: Any):

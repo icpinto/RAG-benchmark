@@ -78,6 +78,7 @@ export function RunConfigurationCard({ sessionId }: { sessionId: string }) {
             <Fields
               entries={[
                 ["Benchmark template", request.config_path],
+                ["DSPy prompt configurations", request.prompt_optimization],
                 [
                   "Source documents",
                   request.source_paths ??

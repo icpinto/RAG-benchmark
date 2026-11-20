@@ -1,5 +1,9 @@
 # RAG Benchmark Platform
 
+DSPy answer-prompt compilation is available in Benchmark Setup and Auto Optimize.
+See [DSPy prompt optimization](docs/prompt-optimization.md) for reusable presets,
+training/evaluation splits, model settings, and API examples.
+
 A React and Python platform for benchmarking advanced RAG pipelines across ingestion and query stages.
 
 This project is intentionally modular. Every stage is implemented behind a small interface and registered through a plugin registry, so new chunkers, extractors, embedders, retrievers, rerankers, compressors, validators, and metrics can be added without rewriting the benchmark runner.

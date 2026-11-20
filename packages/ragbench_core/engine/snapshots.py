@@ -46,8 +46,15 @@ def validate_config(config: dict) -> None:
             or judge.get("timeout", 240) <= 0
         ):
             raise ValueError("Judge timeout must be positive")
-    if not expand_cases(config):
+    cases = expand_cases(config)
+    if not cases:
         raise ValueError("Benchmark must expand to at least one case")
+    from ragbench_core.prompt_optimization.artifacts import CompiledPrompt
+    from ragbench_core.prompt_optimization.contracts import PromptOptimizationSettings
+    PromptOptimizationSettings.model_validate(config.get("prompt_optimization", {}))
+    for case in cases:
+        if case.query_config["prompt_builder"].get("type") == "compiled":
+            CompiledPrompt.model_validate(case.query_config["prompt_builder"]["artifact"])
 
 
 def capture_corpus(sources: list[str], root: Path) -> dict:
@@ -108,6 +115,7 @@ def snapshot_inputs(run_id: str, config: dict) -> dict:
     validate_config(config)
     if "_snapshot" in config:
         verify_snapshot(config)
+        validate_prompt_evaluation(config)
         return config
     data = config["data"]
     sources = list_sources(data["input_dir"], data.get("remote_urls_file"))
@@ -132,7 +140,17 @@ def snapshot_inputs(run_id: str, config: dict) -> dict:
     root = artifact_root(config, run_id) / "snapshot"
     corpus = capture_corpus(sources, root)
     config["_snapshot"] = attach_evaluation(corpus, examples, root)
+    validate_prompt_evaluation(config)
     return config
+
+
+def validate_prompt_evaluation(config):
+    from ragbench_core.prompt_optimization.artifacts import assert_no_training_overlap
+    for case in expand_cases(config):
+        prompt = case.query_config["prompt_builder"]
+        if prompt.get("type") == "compiled":
+            internal_validation = bool(config.get("_optimization", {}).get("session_id")) and config.get("_optimization", {}).get("split") == "tuning"
+            assert_no_training_overlap(prompt["artifact"], load_ground_truth(config["_snapshot"]["ground_truth_file"]), allow_validation=internal_validation)
 
 
 
