@@ -133,6 +133,14 @@ function mount(path = "/auto-optimize") {
         ),
       },
       {
+        path: "/auto-optimize/new",
+        element: (
+          <DraftProvider>
+            <AutoOptimize />
+          </DraftProvider>
+        ),
+      },
+      {
         path: "/auto-optimize/:sessionId",
         element: (
           <DraftProvider>
@@ -171,8 +179,246 @@ beforeEach(() => {
   });
 });
 describe("Auto Optimize", () => {
-  it("submits bounded defaults and opens the captured session", async () => {
+  it("opens history by default with newest-first metadata and detail links", async () => {
+    const created = 1_790_000_000;
+    overrideFetch((path) =>
+      path === "/api/optimizations"
+        ? response([
+            { ...session, id: "older", created_at: created - 3600 },
+            {
+              ...session,
+              id: "newer",
+              status: "completed",
+              created_at: created,
+              budget: { tokens: 12345, active_seconds: 90, cost: 0.125 },
+            },
+          ])
+        : undefined,
+    );
     mount();
+    const table = within(
+      await screen.findByRole("table", { name: "optimization runs table" }),
+    );
+    expect(screen.queryByText("Start an optimization")).not.toBeInTheDocument();
+    expect(screen.getByText(/newest 100/)).toBeInTheDocument();
+    const rows = table.getAllByRole("row");
+    const newest = within(rows[1]);
+    expect(newest.getByRole("link", { name: "newer" })).toHaveAttribute(
+      "href",
+      "/auto-optimize/newer",
+    );
+    expect(newest.getByText("completed")).toBeInTheDocument();
+    expect(newest.getByText("12,345")).toBeInTheDocument();
+    expect(newest.getByText("1.5")).toBeInTheDocument();
+    expect(newest.getByText("0.1250")).toBeInTheDocument();
+    expect(rows[1].querySelector("time")).toHaveAttribute(
+      "datetime",
+      new Date(created * 1000).toISOString(),
+    );
+    expect(within(rows[2]).getByText("Unknown pricing")).toBeInTheDocument();
+    fireEvent.click(
+      newest.getByRole("link", { name: "View details for run newer" }),
+    );
+    await screen.findByRole("heading", { name: "Run configuration" });
+    expect(
+      screen.getByRole("link", { name: "Back to run history" }),
+    ).toHaveAttribute("href", "/auto-optimize");
+  });
+
+  it("searches, sorts and pages through history", async () => {
+    overrideFetch((path) =>
+      path === "/api/optimizations"
+        ? response(
+            Array.from({ length: 12 }, (_, index) => ({
+              ...session,
+              id: `run-${index}`,
+              created_at: 1_790_000_000 + index,
+            })),
+          )
+        : undefined,
+    );
+    mount();
+    const table = within(await screen.findByRole("table"));
+    expect(table.getAllByRole("row")).toHaveLength(11);
+    expect(screen.getByLabelText("Rows per page")).toHaveValue("10");
+    expect(table.queryByRole("link", { name: "run-0" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Next page" }));
+    expect(table.getByRole("link", { name: "run-0" })).toBeVisible();
+    fireEvent.change(screen.getByLabelText("Search optimization runs"), {
+      target: { value: "run-11" },
+    });
+    await waitFor(() => expect(table.getAllByRole("row")).toHaveLength(2));
+    expect(table.getByRole("link", { name: "run-11" })).toBeVisible();
+    fireEvent.change(screen.getByLabelText("Search optimization runs"), {
+      target: { value: "no-such-run" },
+    });
+    await screen.findByText("No matching rows.");
+    fireEvent.change(screen.getByLabelText("Search optimization runs"), {
+      target: { value: "" },
+    });
+    fireEvent.click(table.getByRole("button", { name: "created at" }));
+    expect(
+      table.getByRole("button", { name: "created at" }).closest("th"),
+    ).toHaveAttribute("aria-sort", "descending");
+    fireEvent.click(table.getByRole("button", { name: "created at" }));
+    await waitFor(() =>
+      expect(
+        within(table.getAllByRole("row")[1]).getByRole("link", {
+          name: "run-0",
+        }),
+      ).toBeVisible(),
+    );
+  });
+
+  it("shows loading, error, retry and empty history states separately", async () => {
+    let resolveHistory!: (value: Response) => void;
+    overrideFetch((path) =>
+      path === "/api/optimizations"
+        ? new Promise<Response>((resolve) => {
+            resolveHistory = resolve;
+          })
+        : undefined,
+    );
+    mount();
+    expect(screen.getByText("Loading run history...")).toBeInTheDocument();
+    expect(screen.queryByText("No optimizations yet")).not.toBeInTheDocument();
+    await act(async () =>
+      resolveHistory(
+        new Response(JSON.stringify({ detail: "History unavailable" }), {
+          status: 503,
+        }),
+      ),
+    );
+    await screen.findByText("History unavailable");
+    expect(screen.queryByText("No optimizations yet")).not.toBeInTheDocument();
+    overrideFetch((path) =>
+      path === "/api/optimizations" ? response([]) : undefined,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+    await screen.findByText("No optimizations yet");
+    expect(screen.queryByRole("table")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("link", { name: "New optimization" }));
+    await screen.findByRole("heading", { name: "Start an optimization" });
+    expect(
+      fetchMock.mock.calls.some(([path]) => path === "/api/optimizations/new"),
+    ).toBe(false);
+  });
+
+  it("refreshes run status in history every five seconds", async () => {
+    let status = "running";
+    overrideFetch((path) =>
+      path === "/api/optimizations"
+        ? response([{ ...session, status }])
+        : undefined,
+    );
+    mount();
+    await screen.findByText("running", { selector: ".status-badge" });
+    status = "completed";
+    await screen.findByText(
+      "completed",
+      { selector: ".status-badge" },
+      { timeout: 6500 },
+    );
+  }, 8000);
+
+  it.each(["completed", "failed", "cancelled", "budget_exhausted"])(
+    "opens a historical %s run with saved details and no live controls",
+    async (status) => {
+      const created = 1_790_000_000;
+      overrideFetch((path) =>
+        path === "/api/optimizations/session"
+          ? response({
+              ...session,
+              status,
+              created_at: created,
+              updated_at: created + 60,
+            })
+          : undefined,
+      );
+      mount("/auto-optimize/session");
+      await screen.findByRole("heading", { name: `Optimization · ${status}` });
+      const summary = card(`Optimization · ${status}`);
+      expect(
+        summary.getByText("session", { selector: "dd" }),
+      ).toBeInTheDocument();
+      expect(
+        summary.getByText(new Date(created * 1000).toLocaleString()),
+      ).toHaveAttribute("datetime", new Date(created * 1000).toISOString());
+      expect(
+        summary.getByText(new Date((created + 60) * 1000).toLocaleString()),
+      ).toBeInTheDocument();
+      await screen.findByText("saved-template.yaml");
+      expect(screen.queryByRole("button", { name: "Pause" })).toBeNull();
+      expect(screen.queryByRole("button", { name: "Cancel" })).toBeNull();
+      expect(screen.queryByRole("button", { name: /resume/i })).toBeNull();
+      expect(
+        screen.getByRole("button", { name: "Start a new version" }),
+      ).toBeEnabled();
+    },
+  );
+
+  it("keeps missing and invalid historical dates explicit", async () => {
+    overrideFetch((path) =>
+      path === "/api/optimizations"
+        ? response([
+            { ...session },
+            { ...session, id: "invalid-date", created_at: 1e30 },
+          ])
+        : undefined,
+    );
+    mount();
+    await screen.findByRole("table");
+    expect(screen.getAllByText("Date unavailable")).toHaveLength(2);
+  });
+
+  it("shows a retryable detail error without hiding history navigation", async () => {
+    let failed = true;
+    overrideFetch((path) =>
+      path === "/api/optimizations/missing"
+        ? failed
+          ? Promise.resolve(
+              new Response(
+                JSON.stringify({ detail: "Optimization session not found" }),
+                { status: 404 },
+              ),
+            )
+          : response(session)
+        : undefined,
+    );
+    mount("/auto-optimize/missing");
+    await screen.findByText("Optimization session not found");
+    expect(
+      screen.getByRole("link", { name: "Back to run history" }),
+    ).toBeVisible();
+    failed = false;
+    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+    await screen.findByRole("heading", { name: "Run configuration" });
+  });
+
+  it("clears unsaved dataset edits when switching runs", async () => {
+    const { router } = mount("/auto-optimize/session");
+    const draft = await screen.findByLabelText(
+      "Draft evaluation questions JSON",
+    );
+    fireEvent.change(draft, {
+      target: { value: "unsaved edits from previous run" },
+    });
+    await act(() => router.navigate("/auto-optimize/other"));
+    const nextDraft = await screen.findByLabelText(
+      "Draft evaluation questions JSON",
+    );
+    expect(nextDraft).not.toHaveValue("unsaved edits from previous run");
+    expect(nextDraft).toHaveValue(JSON.stringify(dataset.payload, null, 2));
+    expect(
+      screen.getByRole("button", { name: "Approve draft and resume" }),
+    ).toBeEnabled();
+    expect(
+      screen.getByRole("button", { name: "Save dataset edits" }),
+    ).toBeDisabled();
+  });
+
+  it("submits bounded defaults and opens the captured session", async () => {
+    mount("/auto-optimize/new");
     fireEvent.change(screen.getByLabelText("Task guidance (optional)"), {
       target: { value: "Support policy questions" },
     });
@@ -201,7 +447,7 @@ describe("Auto Optimize", () => {
     }
   });
   it("allows generating fresh evaluation questions", async () => {
-    mount();
+    mount("/auto-optimize/new");
     fireEvent.change(screen.getByLabelText("Evaluation questions"), {
       target: { value: "generate_new" },
     });

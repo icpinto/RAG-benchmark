@@ -30,6 +30,7 @@ const router = createBrowserRouter([
       { path: "knowledge-base", element: <KnowledgeBase /> },
       { path: "benchmark-setup", element: <BenchmarkSetup /> },
       { path: "auto-optimize", element: <AutoOptimize /> },
+      { path: "auto-optimize/new", element: <AutoOptimize /> },
       { path: "auto-optimize/:sessionId", element: <AutoOptimize /> },
       { path: "results", element: <ResultsExplorer /> },
       { path: "results/:runId", element: <ResultsExplorer /> },

@@ -1,5 +1,117 @@
 import { test, expect } from "@playwright/test";
 
+for (const width of [1280, 375]) {
+  test(`browse previous runs, reload details and start a new run at ${width}px`, async ({
+    page,
+  }) => {
+    const runs = ["completed", "failed", "cancelled", "budget_exhausted"].map(
+      (status, index) => ({
+        id: `historical-optimization-${status}-00000000-1111-2222-3333-444444444444`,
+        status,
+        stage: "done",
+        created_at: 1_790_000_000 - index * 3600,
+        updated_at: 1_790_000_100 - index * 3600,
+        budget: { tokens: 1000, active_seconds: 90, cost: null },
+        progress: {},
+      }),
+    );
+    const requested: string[] = [];
+    await page.route("**/api/**", async (route) => {
+      const path = new URL(route.request().url()).pathname.replace("/api", "");
+      requested.push(path);
+      let payload: unknown = null;
+      if (path === "/health") payload = { status: "ok" };
+      else if (path === "/configs") payload = { files: ["default.yaml"] };
+      else if (path === "/data/files") payload = { files: [] };
+      else if (path === "/optimizations") payload = runs;
+      else if (path.endsWith("/configuration"))
+        payload = {
+          request: { config_path: "historical-template.yaml", limits: {} },
+          template: { llm: { model: "historical-answer" } },
+        };
+      else if (path.endsWith("/trials") || path.endsWith("/events"))
+        payload = [];
+      else if (path.endsWith("/dataset") || path.endsWith("/recommendation"))
+        payload = null;
+      else payload = runs.find((run) => path === `/optimizations/${run.id}`);
+      await route.fulfill({ json: payload });
+    });
+    await page.setViewportSize({ width, height: 900 });
+    await page.goto("/auto-optimize");
+    await expect(
+      page.getByRole("heading", { name: "Run history" }),
+    ).toBeVisible();
+    await expect(page.getByText(/newest 100/)).toBeVisible();
+    await expect(
+      page.getByRole("heading", { name: "Start an optimization" }),
+    ).toHaveCount(0);
+    for (const run of runs) {
+      await page
+        .getByRole("link", {
+          name: `View details for run ${run.id}`,
+          exact: true,
+        })
+        .click();
+      await expect(page).toHaveURL(new RegExp(`/auto-optimize/${run.id}$`));
+      await expect(
+        page.getByRole("heading", { name: `Optimization · ${run.status}` }),
+      ).toBeVisible();
+      await expect(page.getByText(run.id, { exact: true })).toBeVisible();
+      await expect(
+        page.getByText("historical-template.yaml", { exact: true }),
+      ).toBeVisible();
+      await expect(
+        page.getByRole("button", { name: "Cancel", exact: true }),
+      ).toHaveCount(0);
+      await page.reload();
+      await expect(
+        page.getByRole("heading", { name: `Optimization · ${run.status}` }),
+      ).toBeVisible();
+      await expect(
+        page.getByText("historical-template.yaml", { exact: true }),
+      ).toBeVisible();
+      expect(
+        await page.evaluate(() => document.documentElement.scrollWidth),
+      ).toBeLessThanOrEqual(width);
+      await page.getByRole("link", { name: "Back to run history" }).click();
+      await expect(
+        page.getByRole("table", { name: "optimization runs table" }),
+      ).toBeVisible();
+    }
+    expect(
+      await page.evaluate(() => document.documentElement.scrollWidth),
+    ).toBeLessThanOrEqual(width);
+    if (width === 375) {
+      const scrolling = await page.getByRole("table").evaluate((table) => {
+        const container = table.parentElement!;
+        return {
+          scroll: container.scrollWidth,
+          client: container.clientWidth,
+          overflow: getComputedStyle(container).overflowX,
+        };
+      });
+      expect(scrolling.scroll).toBeGreaterThan(scrolling.client);
+      expect(scrolling.overflow).toBe("auto");
+      await page.screenshot({
+        path: "test-results/optimization-history-mobile.png",
+        fullPage: true,
+      });
+    }
+    await page
+      .getByRole("link", { name: "New optimization", exact: true })
+      .click();
+    await expect(page).toHaveURL(/\/auto-optimize\/new$/);
+    await expect(
+      page.getByRole("heading", { name: "Start an optimization" }),
+    ).toBeVisible();
+    expect(requested).not.toContain("/optimizations/new");
+    await page.getByRole("link", { name: "Back to run history" }).click();
+    await expect(
+      page.getByRole("heading", { name: "Run history" }),
+    ).toBeVisible();
+  });
+}
+
 test("select corpus, review synthetic references, inspect recommendation and export", async ({
   page,
 }) => {
@@ -99,6 +211,9 @@ test("select corpus, review synthetic references, inspect recommendation and exp
     await route.fulfill({ json: payload });
   });
   await page.goto("/auto-optimize");
+  await page
+    .getByRole("link", { name: "New optimization", exact: true })
+    .click();
   await page.getByLabel("Source documents").selectOption("selected");
   await page.getByRole("checkbox", { name: "policy.txt" }).check();
   await page

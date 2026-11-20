@@ -1,12 +1,21 @@
-import { useState } from "react";
-import { Link, useNavigate, useParams } from "react-router-dom";
+import { useMemo, useState } from "react";
+import { Link, useMatch, useNavigate, useParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, json } from "../lib/api";
 import { download } from "../lib/utils";
 import { useFiles } from "../hooks/data";
 import { useDraft } from "../hooks/draft";
 import { Button } from "../components/ui/button";
-import { Card, ErrorNotice, Notice, PageHeading } from "../components/common";
+import {
+  Card,
+  Empty,
+  ErrorNotice,
+  Loading,
+  Notice,
+  PageHeading,
+  StatusBadge,
+} from "../components/common";
+import { DataTable } from "../components/data-table";
 import {
   RunConfigurationCard,
   TrialConfiguration,
@@ -25,6 +34,8 @@ interface Session {
   id: string;
   status: string;
   stage: string;
+  created_at?: number | null;
+  updated_at?: number | null;
   error?: string;
   budget: { tokens: number; active_seconds: number; cost: number | null };
   progress: {
@@ -104,8 +115,123 @@ const terminal = (status?: string) =>
     status || "",
   );
 
+function RunDate({ seconds }: { seconds?: number | null }) {
+  const date = typeof seconds === "number" ? new Date(seconds * 1000) : null;
+  return date && Number.isFinite(date.getTime()) ? (
+    <time dateTime={date.toISOString()}>{date.toLocaleString()}</time>
+  ) : (
+    <>Date unavailable</>
+  );
+}
+
+function RunHistory() {
+  const sessions = useQuery({
+    queryKey: ["optimizations"],
+    queryFn: () => api<Session[]>("/optimizations"),
+    refetchInterval: 5000,
+  });
+  const rows = useMemo(
+    () =>
+      [...(sessions.data || [])]
+        .sort((a, b) => (b.created_at ?? 0) - (a.created_at ?? 0))
+        .map((run) => ({
+          run_id: run.id,
+          created_at: run.created_at,
+          status: run.status,
+          stage: run.stage,
+          reserved_tokens: run.budget.tokens,
+          active_runtime_minutes: run.budget.active_seconds / 60,
+          cost: run.budget.cost,
+          details: run.id,
+        })),
+    [sessions.data],
+  );
+  return (
+    <Card
+      title="Run history"
+      description="Browse the newest 100 optimization runs. Run status refreshes automatically every five seconds."
+    >
+      {sessions.isPending && <Loading label="Loading run history..." />}
+      <ErrorNotice
+        error={sessions.error}
+        retry={() => void sessions.refetch()}
+      />
+      {sessions.isSuccess && !rows.length && (
+        <Empty title="No optimizations yet">
+          Start a new optimization to compare pipelines and save the results
+          here.
+        </Empty>
+      )}
+      {!!rows.length && (
+        <DataTable
+          rows={rows}
+          name="optimization runs"
+          cell={(key, row) => {
+            const id = String(row.run_id);
+            if (key === "run_id")
+              return <Link to={`/auto-optimize/${id}`}>{id}</Link>;
+            if (key === "details")
+              return (
+                <Link
+                  to={`/auto-optimize/${id}`}
+                  aria-label={`View details for run ${id}`}
+                >
+                  View details
+                </Link>
+              );
+            if (key === "created_at")
+              return <RunDate seconds={row.created_at as number | undefined} />;
+            if (key === "status")
+              return <StatusBadge status={String(row.status)} />;
+            if (key === "reserved_tokens")
+              return Number(row.reserved_tokens).toLocaleString();
+            if (key === "active_runtime_minutes")
+              return Number(row.active_runtime_minutes).toFixed(1);
+            if (key === "cost")
+              return row.cost === null
+                ? "Unknown pricing"
+                : Number(row.cost).toFixed(4);
+          }}
+        />
+      )}
+    </Card>
+  );
+}
+
 export default function AutoOptimize() {
   const { sessionId } = useParams();
+  const isNew = !!useMatch("/auto-optimize/new");
+  return (
+    <>
+      <PageHeading
+        eyebrow="AUTOMATED EXPERIMENTS"
+        title="Auto Optimize"
+        description="Generate or reuse synthetic evaluation data, compare RAG pipelines, and inspect the evidence behind a recommendation."
+        actions={
+          <>
+            {(sessionId || isNew) && (
+              <Button variant="outline" asChild>
+                <Link to="/auto-optimize">Back to run history</Link>
+              </Button>
+            )}
+            {!isNew && (
+              <Button asChild>
+                <Link to="/auto-optimize/new">New optimization</Link>
+              </Button>
+            )}
+          </>
+        }
+      />
+      {sessionId || isNew ? (
+        <OptimizationEditor key={sessionId || "new"} sessionId={sessionId} />
+      ) : (
+        <RunHistory />
+      )}
+    </>
+  );
+}
+
+function OptimizationEditor({ sessionId }: { sessionId?: string }) {
   const navigate = useNavigate();
   const client = useQueryClient();
   const { setDraft } = useDraft();
@@ -143,11 +269,6 @@ export default function AutoOptimize() {
   const [allowed, setAllowed] = useState("{}");
   const [datasetDraft, setDatasetDraft] = useState("");
 
-  const sessions = useQuery({
-    queryKey: ["optimizations"],
-    queryFn: () => api<Session[]>("/optimizations"),
-    refetchInterval: 5000,
-  });
   const session = useQuery({
     queryKey: ["optimization", sessionId],
     queryFn: () => api<Session>(`/optimizations/${sessionId}`),
@@ -264,11 +385,6 @@ export default function AutoOptimize() {
 
   return (
     <>
-      <PageHeading
-        eyebrow="AUTOMATED EXPERIMENTS"
-        title="Auto Optimize"
-        description="Generate or reuse synthetic evaluation data, compare RAG pipelines, and inspect the evidence behind a recommendation."
-      />
       <Notice>
         Generated references are synthetic evaluation data. Automated validation
         and human review are recorded separately. The answer model stays fixed
@@ -278,15 +394,21 @@ export default function AutoOptimize() {
         error={
           start.error ||
           action.error ||
-          session.error ||
           dataset.error ||
           trials.error ||
           recommendation.error ||
-          sessions.error ||
-          files.error ||
-          configs.error
+          (!sessionId && (files.error || configs.error))
         }
       />
+      {sessionId && (
+        <>
+          {session.isPending && <Loading label="Loading optimization run..." />}
+          <ErrorNotice
+            error={session.error}
+            retry={() => void session.refetch()}
+          />
+        </>
+      )}
       {!sessionId && (
         <Card
           title="Start an optimization"
@@ -617,6 +739,24 @@ export default function AutoOptimize() {
             title={`Optimization · ${session.data.status}`}
             description={`Current stage: ${session.data.stage}`}
           >
+            <dl className="optimization-config-fields">
+              <div>
+                <dt>Run ID</dt>
+                <dd>{session.data.id}</dd>
+              </div>
+              <div>
+                <dt>Created</dt>
+                <dd>
+                  <RunDate seconds={session.data.created_at} />
+                </dd>
+              </div>
+              <div>
+                <dt>Updated</dt>
+                <dd>
+                  <RunDate seconds={session.data.updated_at} />
+                </dd>
+              </div>
+            </dl>
             <div className="optimizer-grid">
               <p>
                 Reserved tokens:{" "}
@@ -683,9 +823,6 @@ export default function AutoOptimize() {
                 onClick={() => action.mutate("fork")}
               >
                 Start a new version
-              </Button>
-              <Button variant="ghost" asChild>
-                <Link to="/auto-optimize">New optimization</Link>
               </Button>
             </div>
           </Card>
@@ -934,19 +1071,6 @@ export default function AutoOptimize() {
           </Card>
         </>
       )}
-      <Card title="Recent optimizations">
-        <ul>
-          {sessions.data?.map((item) => (
-            <li key={item.id}>
-              <Link to={`/auto-optimize/${item.id}`}>
-                {item.id.slice(0, 8)}
-              </Link>{" "}
-              · {item.status} · {item.stage}
-            </li>
-          ))}
-        </ul>
-        {!sessions.data?.length && <p>No optimizations yet.</p>}
-      </Card>
     </>
   );
 }

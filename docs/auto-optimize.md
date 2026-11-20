@@ -14,7 +14,12 @@ Existing databases gain optimizer tables through the additive startup migration;
 LangGraph creates its own versioned checkpoint tables on first use. To prepare
 both explicitly, run `python -m scripts.migrate_optimization` with database access.
 
-Open **Auto Optimize**, select a benchmark template and documents/URLs, optionally
+Open **Auto Optimize** to browse the newest 100 runs. Search, sort, or page through
+the history table and choose **View details** to inspect a saved run's configuration,
+dataset, trials, recommendation, and activity. Older runs remain accessible through
+their direct URLs. Run summaries include their full ID and created/updated dates.
+
+Choose **New optimization**, select a benchmark template and documents/URLs, optionally
 describe the audience and expected questions, and start. Defaults are 100 accepted
 questions, 20 retrieval trials, five answer trials, two reserved confirmation
 executions, 20 million conservatively reserved tokens, and two hours of active time.
