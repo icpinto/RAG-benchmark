@@ -273,6 +273,31 @@ class CompilationAccount:
                 )
 
 
+def ingestion_root_for_job(job):
+    artifact_dir = Path(job["config"]["runtime"]["artifact_dir"])
+    if job["session_id"]:
+        return artifact_dir / "optimizations" / job["session_id"] / "ingestion"
+    return artifact_dir / "prompt_optimizations" / job["id"] / "ingestion"
+
+
+def load_or_build_ingestion(reuse, runner, case, config, source_paths, account):
+    from qdrant_client.http.exceptions import ResponseHandlingException
+
+    for attempt in range(2):
+        try:
+            ingestion = reuse.load(case, config)
+            if ingestion is None:
+                config["_index_name"] = reuse.index_name(case, config)
+                ingestion = runner._ingest_case(case, source_paths, config)
+                reuse.save(case, config, ingestion)
+            return ingestion
+        except ResponseHandlingException:
+            if attempt == 1:
+                raise
+            account.check()
+            time.sleep(1)
+
+
 def prepare_examples(job, account):
     """Materialize retrieval contexts once, using the shared benchmark path."""
     from ragbench_core.engine.cache import build_retrieval_cache
@@ -306,18 +331,19 @@ def prepare_examples(job, account):
         "prompt_context", "", task_profile(config), tokens=tokens, cost=cost
     ):
         reuse = IngestionReuse(
-            root / "ingestion",
+            ingestion_root_for_job(job),
             job["session_id"] or job["id"],
             runner.registry,
             index_exists=backend_indexes_exist,
         )
-        ingestion = reuse.load(case, config)
-        if ingestion is None:
-            config["_index_name"] = reuse.index_name(case, config)
-            ingestion = runner._ingest_case(
-                case, [s["path"] for s in config["_snapshot"]["sources"]], config
-            )
-            reuse.save(case, config, ingestion)
+        ingestion = load_or_build_ingestion(
+            reuse,
+            runner,
+            case,
+            config,
+            [s["path"] for s in config["_snapshot"]["sources"]],
+            account,
+        )
         caches = {
             "embedding": ingestion["embedding_cache"],
             "retrieval": build_retrieval_cache(

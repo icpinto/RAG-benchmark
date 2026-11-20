@@ -36,6 +36,8 @@ from ragbench_core.prompt_optimization.service import (
     artifacts_for_job,
     create_job,
     get_job,
+    ingestion_root_for_job,
+    load_or_build_ingestion,
     run_job,
     task_profile,
     update_job,
@@ -230,6 +232,49 @@ def fake_prepare(job, account):
     return []
 
 
+def test_auto_compilation_reuses_session_ingestion(config, tmp_path):
+    job = {
+        "id": "prompt-job",
+        "session_id": "auto-session",
+        "config": config,
+    }
+    assert ingestion_root_for_job(job) == (
+        tmp_path / "artifacts" / "optimizations" / "auto-session" / "ingestion"
+    )
+    job["session_id"] = None
+    assert ingestion_root_for_job(job) == (
+        tmp_path / "artifacts" / "prompt_optimizations" / "prompt-job" / "ingestion"
+    )
+
+
+def test_context_preparation_retries_qdrant_timeout(monkeypatch):
+    from qdrant_client.http.exceptions import ResponseHandlingException
+    from ragbench_core.prompt_optimization import service
+
+    monkeypatch.setattr(service.time, "sleep", lambda seconds: None)
+    saves = []
+    reuse = SimpleNamespace(
+        load=lambda *args: None,
+        index_name=lambda *args: "index",
+        save=lambda *args: saves.append(args[-1]),
+    )
+    attempts = []
+
+    def ingest(*args):
+        attempts.append(args)
+        if len(attempts) == 1:
+            raise ResponseHandlingException(TimeoutError("timed out"))
+        return {"index_name": "index"}
+
+    runner = SimpleNamespace(_ingest_case=ingest)
+    result = load_or_build_ingestion(
+        reuse, runner, object(), {}, ["source.txt"], NullAccount()
+    )
+    assert result == {"index_name": "index"}
+    assert len(attempts) == 2
+    assert saves == [result]
+
+
 def fake_compile(recipe, prepared, splits, config, judge, account):
     with account.call("prompt_task", "test", task_profile(config)) as usage:
         usage.update(prompt_tokens=5, completion_tokens=3)
@@ -361,7 +406,7 @@ def test_gepa_does_not_swallow_budget_exhaustion_in_trace_bootstrap(
     monkeypatch.setattr(
         compiler,
         "judge_answer",
-        lambda *args: {
+        lambda *args, **kwargs: {
             "scores": {"answer_correctness": 0.9},
             "details": {
                 "status": "ok",
@@ -390,6 +435,48 @@ def test_gepa_does_not_swallow_budget_exhaustion_in_trace_bootstrap(
             account,
         )
     assert account.calls == 2 * len(splits["validation"]) + 1
+
+
+def test_compiler_retries_invalid_correctness_verdict(
+    dspy_runtime, config, examples, monkeypatch
+):
+    from ragbench_core.prompt_optimization import compiler
+
+    monkeypatch.setattr(compiler, "model_call", lambda *args, **kwargs: ("Answer", {}))
+    calls = []
+
+    def judge(*args, **kwargs):
+        calls.append(kwargs)
+        if len(calls) == 1:
+            return {
+                "scores": {"answer_correctness": None},
+                "details": {"status": "error", "error": "invalid JSON"},
+            }
+        return {
+            "scores": {"answer_correctness": 0.9},
+            "details": {
+                "status": "ok",
+                "verdicts": {"answer_correctness": {"score": 0.9, "reason": "Correct"}},
+            },
+        }
+
+    monkeypatch.setattr(compiler, "judge_answer", judge)
+    prepared = [
+        {**asdict(e), "context": "Evidence", "context_chunks": []}
+        for e in examples
+    ]
+    splits = split_questions([asdict(e) for e in examples])
+    _, summary = compiler.compile_prompt(
+        PromptOptimizationConfig(preset="bootstrap_small_v1"),
+        prepared,
+        splits,
+        {**config, "_snapshot": {"dataset_hash": "test"}},
+        task_profile(config).model_dump(),
+        NullAccount(),
+    )
+    assert summary["validation_score"] == pytest.approx(0.9)
+    assert len(calls) > len(splits["validation"])
+    assert all(call["correctness_only"] for call in calls)
 
 
 @pytest.mark.parametrize(
@@ -446,7 +533,7 @@ def test_real_optimizers_compile_with_deterministic_transport(
     monkeypatch.setattr(
         compiler,
         "judge_answer",
-        lambda *args: {
+        lambda *args, **kwargs: {
             "scores": {"answer_correctness": 0.9},
             "details": {
                 "status": "ok",

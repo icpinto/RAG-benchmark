@@ -241,6 +241,20 @@ def test_judge_bad_evidence_is_unavailable_not_zero(monkeypatch):
     assert result["details"]["status"] == "error"
 
 
+def test_prompt_correctness_judge_ignores_unneeded_evidence_verdicts(monkeypatch):
+    answer, calls = judge_fixture(monkeypatch, bad_evidence=True)
+    result = judge_answer(
+        QueryExample("Q", "14 days"),
+        answer,
+        {"model": "judge-model"},
+        correctness_only=True,
+    )
+    assert result["scores"]["answer_correctness"] == 1
+    assert result["details"]["status"] == "ok"
+    assert result["details"]["rubric_version"] == "ragbench-local-correctness-v1"
+    assert "claims" not in calls[0]["prompt"].split("Return only JSON with:", 1)[1].split("\n", 1)[0]
+
+
 def test_judge_missing_reference_is_unavailable(monkeypatch):
     answer, _ = judge_fixture(monkeypatch)
     assert (

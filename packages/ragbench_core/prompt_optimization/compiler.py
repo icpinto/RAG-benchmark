@@ -10,7 +10,7 @@ from pathlib import Path
 
 import requests
 
-from ragbench_core.components.judges import RUBRIC_VERSION, judge_answer
+from ragbench_core.components.judges import CORRECTNESS_RUBRIC_VERSION, judge_answer
 from ragbench_core.models.schema import Chunk, GeneratedAnswer, QueryExample
 from ragbench_core.optimization.profiles import ModelProfile
 from ragbench_core.prompt_optimization.artifacts import CompiledPrompt, render_prompt
@@ -257,14 +257,20 @@ def compile_prompt(recipe, prepared, splits, config, judge_config, account):
             )
             + " " * 4096
         )
-        with account.call("prompt_judge", bound, judge_profile) as usage:
-            result = judge_answer(example, answer, judge_profile.model_dump())
-            usage.update(result["details"].get("usage", {}))
-        if (
-            result["details"]["status"] != "ok"
-            or result["scores"]["answer_correctness"] is None
-        ):
-            raise RuntimeError("Prompt optimization judge failed")
+        for attempt in range(2):
+            with account.call("prompt_judge", bound, judge_profile) as usage:
+                result = judge_answer(
+                    example, answer, judge_profile.model_dump(), correctness_only=True
+                )
+                usage.update(result["details"].get("usage", {}))
+            if (
+                result["details"]["status"] == "ok"
+                and result["scores"]["answer_correctness"] is not None
+            ):
+                break
+            if attempt == 1:
+                reason = result["details"].get("error", "missing correctness score")
+                raise RuntimeError(f"Prompt optimization judge failed: {reason}")
         score = result["scores"]["answer_correctness"]
         if recipe.optimizer == "gepa":
             return dspy.Prediction(
@@ -274,8 +280,6 @@ def compile_prompt(recipe, prepared, splits, config, judge_config, account):
                         "correctness": result["details"]["verdicts"][
                             "answer_correctness"
                         ],
-                        "claims": result["details"]["verdicts"]["claims"],
-                        "citations": result["details"]["verdicts"]["citations"],
                     },
                     ensure_ascii=False,
                 ),
@@ -319,7 +323,7 @@ def compile_prompt(recipe, prepared, splits, config, judge_config, account):
                 **provenance(prepared, splits, recipe, config),
                 "dspy_version": DSPY_VERSION,
                 "judge_model": judge_profile.model_dump(),
-                "judge_rubric_version": RUBRIC_VERSION,
+                "judge_rubric_version": CORRECTNESS_RUBRIC_VERSION,
             },
         ).model_dump()
         scores = []

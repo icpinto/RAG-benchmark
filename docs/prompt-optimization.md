@@ -97,6 +97,11 @@ confirmation evaluates the exact selected pipeline against baseline on holdout.
 Only confirmed improvement replaces the baseline recommendation. Compiled prompts
 must come from an approved job; arbitrary generated prompt templates are rejected.
 
+During compilation, the judge requests only the correctness score used by DSPy's
+metric. Invalid judge responses receive one accounted retry. Auto Optimize prompt
+jobs reuse the session's ingestion index; a transient Qdrant timeout during context
+preparation receives one bounded retry.
+
 The Answering dashboard shows compilation progress, artifacts, and offline usage.
 Search coverage identifies scheduled and untested variants. Reports include
 `prompt_compilations`, compilation usage by role, configuration lineage, and the
