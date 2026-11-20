@@ -19,8 +19,8 @@ import { DataTable } from "../components/data-table";
 import {
   RunConfigurationCard,
   TrialConfiguration,
-  TrialConfigDetails,
 } from "../components/optimization-config";
+import { OptimizationStages } from "../components/optimization-stages";
 
 interface ModelProfile {
   provider: "ollama" | "chat_completions";
@@ -376,9 +376,6 @@ function OptimizationEditor({ sessionId }: { sessionId?: string }) {
       ...previous,
       [role]: { ...previous[role], ...change },
     }));
-  const ranking = session.data?.progress.answer_ranking?.length
-    ? session.data.progress.answer_ranking
-    : session.data?.progress.retrieval_ranking || [];
   const canReview =
     ["paused", "needs_input"].includes(session.data?.status || "") &&
     !dataset.data?.frozen;
@@ -934,66 +931,12 @@ function OptimizationEditor({ sessionId }: { sessionId?: string }) {
               )}
             </Card>
           )}
-          <Card
-            title="Trial leaderboard"
-            description="Retrieval screening uses NDCG@10; answer trials use semantic correctness on matched tuning questions."
-          >
-            {!trials.data?.length && (
-              <p>Trials begin after the dataset is validated and frozen.</p>
-            )}
-            <div className="table-scroll">
-              <table>
-                <thead>
-                  <tr>
-                    <th>Trial</th>
-                    <th>Phase</th>
-                    <th>Status</th>
-                    <th>Score</th>
-                    <th>Paired / missing</th>
-                    <th>p95 seconds</th>
-                    <th>Configuration</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {trials.data?.map((trial) => {
-                    const ranked = ranking.find((r) => r.trial_id === trial.id);
-                    return (
-                      <tr key={trial.id}>
-                        <td>
-                          <Link to={`/results/${trial.id}`}>
-                            {trial.id.slice(0, 8)}
-                          </Link>
-                        </td>
-                        <td>
-                          {trial.phase} / {trial.split}
-                        </td>
-                        <td>
-                          {trial.status}
-                          {ranked && !ranked.feasible
-                            ? " · exceeds limits"
-                            : ""}
-                        </td>
-                        <td>{ranked?.score.toFixed(3) ?? "—"}</td>
-                        <td>
-                          {ranked
-                            ? `${ranked.paired_count} / ${ranked.missing_count}`
-                            : "—"}
-                        </td>
-                        <td>{ranked?.p95_seconds?.toFixed(2) ?? "—"}</td>
-                        <td>
-                          <TrialConfigDetails
-                            key={`${sessionId}:${trial.id}`}
-                            sessionId={sessionId}
-                            trialId={trial.id}
-                          />
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          </Card>
+          <OptimizationStages
+            key={`stages:${sessionId}`}
+            sessionId={sessionId}
+            status={session.data.status}
+            currentStage={session.data.stage}
+          />
           {recommendation.data && (
             <Card
               title="Recommendation"

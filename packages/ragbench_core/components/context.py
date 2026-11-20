@@ -28,3 +28,48 @@ Context:
 Question: {question}
 
 Answer:"""
+
+
+BASELINE_PROMPT_TEMPLATE = DefaultPromptBuilder().build("{question}", "{context}", {})
+
+# Immutable, versioned additions: the default builder above deliberately stays unchanged.
+PROMPT_PRESETS = {
+    "concise_v1": """You are a careful RAG answer generator.
+Answer only using the provided context. Give a brief, direct answer without unnecessary background.
+Include citations using the exact source markers shown in the context.
+If the context is insufficient, say that the answer is not available in the provided context.
+
+Context:
+{context}
+
+Question: {question}
+
+Answer:""",
+    "evidence_first_v1": """You are a careful RAG answer generator.
+Answer only using the provided context. Organize the answer around the relevant supporting evidence, then state the conclusion.
+Include citations using the exact source markers shown in the context for each supported statement.
+If the context is insufficient, say that the answer is not available in the provided context.
+
+Context:
+{context}
+
+Question: {question}
+
+Answer:""",
+}
+
+
+def preset_config(preset_id: str) -> dict:
+    return {"type": "preset", "preset_id": preset_id, "template": PROMPT_PRESETS[preset_id]}
+
+
+class PresetPromptBuilder(BasePromptBuilder):
+    name = "preset"
+
+    def build(self, question: str, context: str, config: dict) -> str:
+        if config.get("preset_id") not in PROMPT_PRESETS:
+            raise ValueError("Prompt must match a supported versioned preset")
+        resolved = preset_config(config["preset_id"])
+        if {**config, "template": config.get("template", resolved["template"])} != resolved:
+            raise ValueError("Prompt must match a supported versioned preset")
+        return resolved["template"].format(question=question, context=context)

@@ -131,8 +131,15 @@ def trial_estimate(config, examples, documents, judge):
     rewrite = case.query_config["rewriter"]["type"] != "none"
     output = config["llm"].get("max_output_tokens", 1024)
     end_to_end = config["runtime"]["mode"] != "retrieval_only"
+    # Template bytes bound token overhead, including versioned prompt instructions.
+    prompt_overhead = max(
+        1024,
+        len(case.query_config["prompt_builder"].get("template", "").encode("utf-8")),
+    )
     generation = (
-        (questions + len(examples) * (context + output + 1024)) if end_to_end else 0
+        (questions + len(examples) * (context + output + prompt_overhead))
+        if end_to_end
+        else 0
     )
     rewriting = questions + len(examples) * (output + 1024) if rewrite else 0
     judging = (

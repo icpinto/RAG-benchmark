@@ -590,6 +590,20 @@ class OptimizationTools:
             }
         ):
             candidate = concrete_config(session["template"], case)
+            if session["progress"].get("workflow_version", 1) >= 2:
+                prompt = candidate["pipeline"]["query"]["prompt_builders"][0]
+                if prompt.get("type") == "default":
+                    from ragbench_core.components.context import (
+                        BASELINE_PROMPT_TEMPLATE,
+                    )
+
+                    prompt.update(
+                        preset_id="baseline_v1", template=BASELINE_PROMPT_TEMPLATE
+                    )
+                elif prompt.get("type") == "preset":
+                    from ragbench_core.components.context import preset_config
+
+                    prompt.update(preset_config(prompt["preset_id"]))
             try:
                 return validate_candidate(candidate, candidate, space, self.registry)
             except (ValueError, KeyError, TypeError):
@@ -603,7 +617,12 @@ class OptimizationTools:
             raise ValueError("Candidate must include pipeline")
         clean["pipeline"] = deepcopy(config["pipeline"])
         return validate_candidate(
-            clean, self.baseline(), self.get_search_space(), self.registry
+            clean,
+            self.baseline(),
+            self.get_search_space(),
+            self.registry,
+            allow_prompt_presets=self.session["progress"].get("workflow_version", 1)
+            >= 2,
         )
 
     def run_trial(self, request: TrialRequest, dispatch):
@@ -616,6 +635,23 @@ class OptimizationTools:
         ):
             raise ValueError("Select a candidate before evaluating holdout")
         config = self.validate_candidate(request.config)
+        if self.session["progress"].get("workflow_version", 1) >= 2:
+            if request.phase == "retrieval":
+                from ragbench_core.optimization.candidates import screen_config
+
+                if candidate_hash(config) != candidate_hash(
+                    screen_config(config, self.baseline())
+                ):
+                    raise ValueError(
+                        "Retrieval screening keeps context and prompts at baseline"
+                    )
+            if request.phase == "confirm" and candidate_hash(config) not in {
+                candidate_hash(self.baseline()),
+                candidate_hash(self.session["progress"]["selected_config"]),
+            }:
+                raise ValueError(
+                    "Confirmation must use the frozen selected pipeline or baseline"
+                )
         operation = stable_hash(
             {
                 "candidate": candidate_hash(config),

@@ -145,9 +145,11 @@ export function RunConfigurationCard({ sessionId }: { sessionId: string }) {
 export function TrialConfiguration({
   sessionId,
   trialId,
+  stage,
 }: {
   sessionId: string;
   trialId: string;
+  stage?: "retrieval" | "answer" | "confirm";
 }) {
   const query = useQuery({
     queryKey: ["optimization-trial-configuration", sessionId, trialId],
@@ -162,6 +164,10 @@ export function TrialConfiguration({
   const pipeline = object(config?.pipeline);
   const ingestion = object(pipeline.ingestion);
   const queryConfig = object(pipeline.query);
+  const label = (name: string, group: "retrieval" | "answer") =>
+    !stage
+      ? name
+      : `${name} · ${stage === "confirm" ? "Fixed for confirmation" : group === "retrieval" && stage === "answer" ? "Inherited" : group === "answer" && stage === "retrieval" ? "Fixed" : "Varied here"}`;
   return (
     <div>
       {query.isPending && <p role="status">Loading trial configuration...</p>}
@@ -171,13 +177,28 @@ export function TrialConfiguration({
           <>
             <Fields
               entries={[
-                ["Chunker", ingestion.chunkers],
-                ["Embedding model", ingestion.embeddings],
-                ["Retriever", queryConfig.retrievers],
-                ["Rewriter", queryConfig.rewriters],
-                ["Reranker", queryConfig.rerankers],
-                ["Compressor", queryConfig.compressors],
-                ["Context settings", queryConfig.context_assemblers],
+                [label("Chunker", "retrieval"), ingestion.chunkers],
+                [label("Embedding model", "retrieval"), ingestion.embeddings],
+                [label("Index strategy", "retrieval"), ingestion.indexers],
+                [label("Retriever", "retrieval"), queryConfig.retrievers],
+                [label("Rewriter", "retrieval"), queryConfig.rewriters],
+                [
+                  label(
+                    "Reranker",
+                    stage === "retrieval" ? "retrieval" : "answer",
+                  ),
+                  queryConfig.rerankers,
+                ],
+                [label("Compressor", "answer"), queryConfig.compressors],
+                [
+                  label("Context settings", "answer"),
+                  queryConfig.context_assemblers,
+                ],
+                [
+                  label("Prompt settings", "answer"),
+                  queryConfig.prompt_builders,
+                ],
+                ["Fixed answer model and generation settings", config.llm],
                 ["Runtime mode", object(config.runtime).mode],
               ]}
             />

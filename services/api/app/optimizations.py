@@ -232,7 +232,7 @@ def create_optimization(req: OptimizationRequest):
                     id=session_id,
                     request=req.model_dump(),
                     template=template,
-                    progress={},
+                    progress={"workflow_version": 2},
                 )
             )
             conn.add(
@@ -348,6 +348,13 @@ def get_trials(session_id: str):
         }
         for t in store.rows(store.OptimizationTrial, session_id)
     ]
+
+
+@router.get("/{session_id}/stages")
+def get_stages(session_id: str):
+    from ragbench_core.optimization.stages import stage_dashboard
+
+    return public_configuration(stage_dashboard(session_or_404(session_id), redact=public_configuration))
 
 
 @router.get("/{session_id}/events")

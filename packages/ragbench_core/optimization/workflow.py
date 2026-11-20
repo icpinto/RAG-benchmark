@@ -11,6 +11,7 @@ from langgraph.types import interrupt
 from ragbench_core.engine.comparison import paired_comparison
 from ragbench_core.engine.config_expander import expand_cases
 from ragbench_core.optimization import budget, store
+from ragbench_core.optimization.candidates import answer_plan, screen_config
 from ragbench_core.optimization.contracts import TrialRequest
 from ragbench_core.optimization.search import candidate_hash, seed_candidates
 from ragbench_core.optimization.selection import compare_trials
@@ -116,10 +117,9 @@ def step(stage, tools, dispatch):
         tools.generate_evaluation_dataset()
         return "freeze"
     if stage == "freeze":
-        if (
-            tools.session["request"]["review_before_freeze"]
-            and not tools.session["progress"].get("review_approved")
-        ):
+        if tools.session["request"]["review_before_freeze"] and not tools.session[
+            "progress"
+        ].get("review_approved"):
             store.update(session_id, status="paused")
             interrupt({"reason": "dataset_review"})
         result = tools.validate_evaluation_dataset()
@@ -199,6 +199,9 @@ def step(stage, tools, dispatch):
             "confirmed_improvement": bool(state.get("confirmed")),
             "comparison": state.get("comparison"),
             "tuning_ranking": state.get("answer_ranking", []),
+            "retrieval_shortlist": state.get("retrieval_shortlist", []),
+            "selected_trial_id": state.get("selected_trial_id"),
+            "answer_plan": state.get("answer_plan", []),
             "stop_reason": state.get("stop_reason"),
             "baseline_retained": not state.get("confirmed", False),
             "status": "budget_exhausted" if state.get("stop_reason") else "completed",
@@ -221,10 +224,14 @@ def search_retrieval(tools, dispatch):
     baseline, space = tools.baseline(), tools.get_search_space()
     maximum = tools.session["request"]["limits"]["retrieval_trials"]
     state = tools.session["progress"]
+    if state.get("workflow_version", 1) >= 2 and not state.get("baseline_config"):
+        progress(session_id, baseline_config=baseline)
     candidates = state.get("retrieval_candidates", [])
     if not candidates:
         for seed in seed_candidates(baseline, space):
             try:
+                if state.get("workflow_version", 1) >= 2:
+                    seed = screen_config(seed, baseline)
                 candidates.append(tools.validate_candidate(seed))
             except (ValueError, KeyError, TypeError):
                 continue
@@ -272,6 +279,8 @@ def search_retrieval(tools, dispatch):
     )
     progress(session_id, proposal_attempts=attempts + 1)
     try:
+        if state.get("workflow_version", 1) >= 2:
+            response = screen_config(response, baseline)
         candidate = tools.validate_candidate(response)
         if candidate_hash(candidate) not in hashes:
             progress(session_id, retrieval_candidates=candidates + [candidate])
@@ -285,6 +294,15 @@ def search_answers(tools, dispatch):
     state = tools.session["progress"]
     maximum = tools.session["request"]["limits"]["answer_trials"]
     candidates = state.get("answer_candidates")
+    if candidates is None and state.get("workflow_version", 1) >= 2:
+        plan = answer_plan(
+            tools,
+            store.rows(store.OptimizationTrial, session_id),
+            state.get("retrieval_ranking", []),
+            maximum,
+        )
+        progress(session_id, **plan)
+        candidates = plan["answer_candidates"]
     if candidates is None:
         trials = {t["id"]: t for t in store.rows(store.OptimizationTrial, session_id)}
         candidates = [tools.baseline()]
@@ -319,6 +337,7 @@ def search_answers(tools, dispatch):
     ranking = tools.compare_trials("answer")
     feasible = [r for r in ranking if r["feasible"]]
     selected = tools.baseline()
+    selected_trial_id = None
     if feasible:
         trial = next(
             t
@@ -326,5 +345,11 @@ def search_answers(tools, dispatch):
             if t["id"] == feasible[0]["trial_id"]
         )
         selected = tools.validate_candidate(trial["config"])
-    progress(session_id, selected_config=selected, answer_ranking=ranking)
+        selected_trial_id = trial["id"]
+    progress(
+        session_id,
+        selected_config=selected,
+        selected_trial_id=selected_trial_id,
+        answer_ranking=ranking,
+    )
     return "confirm"

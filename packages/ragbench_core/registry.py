@@ -88,7 +88,7 @@ def register_builtin_components() -> ComponentRegistry:
     from ragbench_core.components.filters import NoFilter
     from ragbench_core.components.rerankers import NoReranker, CrossEncoderReranker, FlashRankReranker, RankLLMReranker, ColBERTReranker, CohereReranker, JinaReranker, DiversityMMRReranker
     from ragbench_core.components.compressors import NoCompressor, TopNCompressor
-    from ragbench_core.components.context import DefaultContextAssembler, DefaultPromptBuilder
+    from ragbench_core.components.context import DefaultContextAssembler, DefaultPromptBuilder, PresetPromptBuilder
     from ragbench_core.components.generators import OllamaGenerator
     from ragbench_core.components.validators import SimpleCitationValidator
     from ragbench_core.components.metrics import RetrievalMetrics, OperationalMetric, CitationCoverageMetric, PlaceholderAnswerMetric, PlaceholderFaithfulnessMetric
@@ -143,7 +143,7 @@ def register_builtin_components() -> ComponentRegistry:
         ],
         "compressors": [NoCompressor(), TopNCompressor()],
         "assemblers": [DefaultContextAssembler()],
-        "prompt_builders": [DefaultPromptBuilder()],
+        "prompt_builders": [DefaultPromptBuilder(), PresetPromptBuilder()],
         "generators": [OllamaGenerator()],
         "citation_validators": [SimpleCitationValidator()],
         "metrics": [

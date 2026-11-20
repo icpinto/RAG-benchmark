@@ -1400,6 +1400,422 @@ def test_incomplete_history_and_unusable_candidates_generate_normally(
     assert store.dataset("no-usable-history")["compatibility_key"]
 
 
+def save_stage_trial(
+    tools, trial_id, config, phase, *, score=0.8, missing=0, failed=0, pricing=True
+):
+    """Persist real result rows so dashboard tests exercise the SQL read path."""
+    split = "holdout" if phase == "confirm" else "tuning"
+    payload = [
+        q for q in store.dataset(tools.session_id)["payload"] if q["split"] == split
+    ]
+    with db.SessionLocal.begin() as conn:
+        conn.add(
+            store.OptimizationTrial(
+                id=trial_id,
+                session_id=tools.session_id,
+                operation_key=trial_id,
+                phase=phase,
+                split=split,
+                status="completed",
+                config=config,
+                summary={"pricing_known": pricing, "errors": failed},
+            )
+        )
+    db.upsert_run(
+        trial_id, trial_id, "completed_with_errors" if failed else "completed", config
+    )
+    case = expand_cases(config)[0]
+    for index, question in enumerate(payload):
+        metrics = {
+            "raw_retrieval_ndcg@10": 0.4,
+            "reranked_ndcg@10": score,
+            "reranked_recall@10": 0.9,
+            "query_latency_seconds": 0,
+            "answer_correctness": score,
+            "claim_support": 0.7,
+            "citation_support": 0.6,
+            "total_estimated_cost": 0,
+            "estimated_generation_cost": 0,
+            "chunk_count": 8,
+            "context_tokens": 100,
+        }
+        if index < missing:
+            metrics.pop("reranked_ndcg@10")
+            metrics.pop("answer_correctness")
+        if index < failed:
+            metrics = {}
+        db.insert_result(
+            f"{trial_id}-{index}",
+            trial_id,
+            case.case_id,
+            question["question"],
+            metrics,
+            "Answer",
+            {"outcome": "failed"} if index < failed else {},
+            question_id=question["question_id"],
+        )
+
+
+def test_stage_dashboard_keeps_independent_metrics_and_explicit_missing_values(session):
+    from ragbench_core.optimization.stages import stage_dashboard
+
+    tools = OptimizationTools(session, fake_registry())
+    prepare_dataset(tools)
+    baseline = tools.baseline()
+    save_stage_trial(tools, "retrieval-zero", baseline, "retrieval", score=0)
+    save_stage_trial(tools, "answer-zero", baseline, "answer", score=0, pricing=False)
+    save_stage_trial(tools, "answer-errors", baseline, "answer", missing=3, failed=2)
+    save_stage_trial(tools, "confirmation", baseline, "confirm", score=0.9)
+    store.update(
+        session,
+        stage="done",
+        status="completed",
+        progress={"selected_config": baseline},
+    )
+    before = store.get(session)
+    data = stage_dashboard(before)
+    retrieval = data["stages"]["retrieval"]["trials"][0]
+    answer, errors = data["stages"]["answer"]["trials"]
+    assert retrieval["ranking"]["score"] == 0
+    assert answer["ranking"]["score"] == 0
+    assert answer["metrics"]["answer_correctness"]["mean"] == 0
+    assert answer["p95_seconds"] == 0
+    assert answer["metrics"]["total_estimated_cost"]["mean"] is None
+    assert answer["metrics"]["total_estimated_cost"]["reason"] == "unknown pricing"
+    assert answer["metrics"]["estimated_generation_cost"]["reason"] == "unknown pricing"
+    assert errors["ranking"] is None
+    assert errors["score_reason"] == "insufficient coverage"
+    assert errors["metrics"]["answer_correctness"]["mean"] == pytest.approx(0.8)
+    assert errors["display_status"] == "Completed with errors"
+    assert errors["coverage"]["failed"] == 2
+    assert data["stages"]["confirm"]["trials"][0]["metrics"]["answer_correctness"][
+        "mean"
+    ] == pytest.approx(0.9)
+    assert data["stages"]["confirm"]["outcome"] == "candidate is baseline"
+    assert store.get(session) == before
+
+
+def test_stage_api_is_scoped_redacted_and_uses_batched_reads(session):
+    from fastapi import HTTPException
+    from sqlalchemy import event
+
+    from services.api.app import optimizations as api
+
+    tools = OptimizationTools(session, fake_registry())
+    prepare_dataset(tools)
+    config = tools.baseline()
+    config["llm"]["api_key"] = "hidden-api-key"
+    for index in range(8):
+        variant = deepcopy(config)
+        variant["pipeline"]["query"]["rerankers"][0]["api_key"] = (
+            f"private-reranker-{index}"
+        )
+        save_stage_trial(tools, f"trial-{index}", variant, "retrieval")
+    calls = []
+
+    def record(conn, cursor, statement, parameters, context, executemany):
+        calls.append(statement)
+
+    event.listen(db.engine, "before_cursor_execute", record)
+    try:
+        data = api.get_stages(session)
+    finally:
+        event.remove(db.engine, "before_cursor_execute", record)
+    assert len(calls) == 5  # session, trials, runs, results, dataset
+    assert "hidden-api-key" not in json.dumps(data)
+    assert "private-reranker" not in json.dumps(data)
+    assert "[REDACTED]" in json.dumps(data)
+    with pytest.raises(HTTPException) as exc:
+        api.get_stages("unrelated")
+    assert exc.value.status_code == 404
+
+
+@pytest.mark.parametrize("maximum", [1, 2, 5, 20])
+def test_answer_plan_shortlists_distinct_retrieval_and_respects_caps(session, maximum):
+    from ragbench_core.optimization.candidates import answer_plan, retrieval_identity
+    from ragbench_core.optimization.search import candidate_hash
+
+    store.update(session, progress={"workflow_version": 2})
+    registry = fake_registry()
+    registry.rerankers["diversity_mmr"] = object()
+    tools = OptimizationTools(session, registry)
+    base = tools.baseline()
+    first = deepcopy(base)
+    first["pipeline"]["query"]["retrievers"] = [{"type": "bm25"}]
+    duplicate = deepcopy(first)
+    duplicate["pipeline"]["query"]["rerankers"] = [{"type": "diversity_mmr"}]
+    second = deepcopy(first)
+    second["pipeline"]["ingestion"]["chunkers"][0]["chunk_size"] = 1024
+    trials = [
+        {"id": name, "phase": "retrieval", "config": cfg}
+        for name, cfg in (
+            ("base", base),
+            ("best", first),
+            ("duplicate", duplicate),
+            ("second", second),
+        )
+    ]
+    ranking = [{"trial_id": t["id"], "feasible": True} for t in trials[1:] + trials[:1]]
+    plan = answer_plan(tools, trials, ranking, maximum)
+    assert [x["trial_id"] for x in plan["retrieval_shortlist"]] == ["best", "second"][
+        : maximum - 1
+    ]
+    assert candidate_hash(plan["answer_candidates"][0]) == candidate_hash(base)
+    assert len(plan["answer_candidates"]) <= maximum
+    assert len({candidate_hash(c) for c in plan["answer_candidates"]}) == len(
+        plan["answer_candidates"]
+    )
+    assert plan == answer_plan(tools, trials, ranking, maximum)
+    for candidate, entry in zip(plan["answer_candidates"], plan["answer_plan"]):
+        parent = next(
+            t["config"] for t in trials if t["id"] == entry["source_trial_id"]
+        )
+        assert retrieval_identity(candidate) == retrieval_identity(parent)
+    if maximum == 5:
+        assert all(
+            c["pipeline"]["query"]["prompt_builders"][0]["preset_id"] == "concise_v1"
+            for c in plan["answer_candidates"][3:]
+        )
+        assert any(not entry["scheduled"] for entry in plan["answer_plan"])
+    if maximum == 20:
+        assert any(
+            entry["variant"].startswith("reranker:") and entry["scheduled"]
+            for entry in plan["answer_plan"]
+        )
+
+
+def test_prompt_presets_are_distinct_versioned_and_phase_restricted(session):
+    from ragbench_core.components.context import (
+        BASELINE_PROMPT_TEMPLATE,
+        DefaultPromptBuilder,
+        PresetPromptBuilder,
+        preset_config,
+    )
+    from ragbench_core.optimization.search import candidate_hash
+
+    store.update(session, progress={"workflow_version": 2})
+    tools = OptimizationTools(session, fake_registry())
+    prepare_dataset(tools)
+    baseline = tools.baseline()
+    assert DefaultPromptBuilder().build(
+        "Question?", "Evidence", {}
+    ) == BASELINE_PROMPT_TEMPLATE.format(question="Question?", context="Evidence")
+    concise = deepcopy(baseline)
+    concise["pipeline"]["query"]["prompt_builders"] = [preset_config("concise_v1")]
+    assert candidate_hash(tools.validate_candidate(concise)) != candidate_hash(baseline)
+    assert PresetPromptBuilder().build(
+        "Question?", "Evidence", preset_config("concise_v1")
+    ) != DefaultPromptBuilder().build("Question?", "Evidence", {})
+    invalid = deepcopy(concise)
+    invalid["pipeline"]["query"]["prompt_builders"][0]["template"] = "Unapproved"
+    with pytest.raises(ValueError, match="approved"):
+        tools.validate_candidate(invalid)
+    with pytest.raises(ValueError, match="baseline"):
+        tools.run_trial(
+            TrialRequest(session_id=session, config=concise, phase="retrieval"),
+            lambda _: None,
+        )
+    store.update(session, progress={"workflow_version": 2, "selected_config": baseline})
+    with pytest.raises(ValueError, match="frozen"):
+        tools.run_trial(
+            TrialRequest(
+                session_id=session, config=concise, phase="confirm", split="holdout"
+            ),
+            lambda _: None,
+        )
+    store.update(session, progress={})
+    with pytest.raises(ValueError):
+        tools.validate_candidate(concise)
+
+
+def test_version_two_workflow_confirms_exact_selected_prompt_and_exports_it(session):
+    from langgraph.checkpoint.memory import InMemorySaver
+    from ragbench_core.engine.data_loader import load_ground_truth
+    from ragbench_core.optimization.search import candidate_hash
+    from ragbench_core.optimization.stages import stage_dashboard
+
+    request = store.get(session)["request"]
+    request["limits"]["answer_trials"] = 5
+    store.update(session, request=request, progress={"workflow_version": 2})
+    tools = OptimizationTools(session, fake_registry())
+    prepare_dataset(tools)
+    tools.call = lambda *args: pytest.fail(
+        "Two seeded retrieval trials fit the cap; holdout must never reach planner"
+    )
+    dispatched = []
+
+    def dispatch(run_id):
+        with db.SessionLocal() as conn:
+            trial = store.payload(conn.get(store.OptimizationTrial, run_id))
+        cfg = trial["config"]
+        case = expand_cases(cfg)[0]
+        prompt = case.query_config["prompt_builder"].get("preset_id")
+        score = (
+            0.95
+            if prompt == "concise_v1"
+            else 0.6
+            if case.query_config["retriever"]["type"] == "bm25"
+            else 0.3
+        )
+        dispatched.append((trial["phase"], candidate_hash(cfg)))
+        for q in load_ground_truth(cfg["_snapshot"]["ground_truth_file"]):
+            db.insert_result(
+                f"{run_id}-{q.question_id}",
+                run_id,
+                case.case_id,
+                q.question,
+                {
+                    "reranked_ndcg@10": score,
+                    "reranked_recall@10": 1,
+                    "answer_correctness": score,
+                    "query_latency_seconds": 0.1,
+                },
+                "Answer",
+                {},
+                question_id=q.question_id,
+            )
+        db.upsert_run(
+            run_id,
+            run_id,
+            "completed",
+            cfg,
+            dataset_hash=cfg["_snapshot"]["dataset_hash"],
+        )
+        with db.SessionLocal.begin() as conn:
+            row = conn.get(store.OptimizationTrial, run_id)
+            row.status = "completed"
+            row.summary = {"pricing_known": False}
+
+    graph = build_graph(InMemorySaver(), dispatch, lambda _: tools)
+    graph.invoke(
+        {"session_id": session, "stage": "retrieval"},
+        {"configurable": {"thread_id": session}},
+    )
+    final = store.get(session)
+    assert final["status"] == "completed"
+    assert final["progress"]["confirmed"]
+    selected = final["progress"]["selected_config"]
+    assert (
+        selected["pipeline"]["query"]["prompt_builders"][0]["preset_id"] == "concise_v1"
+    )
+    assert dispatched[-1] == ("confirm", candidate_hash(selected))
+    assert (
+        tools.read("report.json")["selected_trial_id"]
+        == final["progress"]["selected_trial_id"]
+    )
+    assert "concise_v1" in (tools.root / "recommended.yaml").read_text()
+    data = stage_dashboard(final)
+    assert data["stages"]["confirm"]["outcome"] == "confirmed improvement"
+    selected_trial = next(
+        t
+        for t in data["stages"]["answer"]["trials"]
+        if "selected for holdout" in t["roles"]
+    )
+    assert selected_trial["source_trial_id"] in {
+        t["id"] for t in data["stages"]["retrieval"]["trials"]
+    }
+    assert any(p["trial_id"] for p in data["stages"]["answer"]["plan"])
+
+
+def test_historical_lineage_is_only_inferred_when_unambiguous(session):
+    from ragbench_core.optimization.stages import stage_dashboard
+
+    tools = OptimizationTools(session, fake_registry())
+    prepare_dataset(tools)
+    base = tools.baseline()
+    save_stage_trial(tools, "origin", base, "retrieval")
+    save_stage_trial(tools, "answer", base, "answer")
+    data = stage_dashboard(store.get(session))
+    assert data["stages"]["answer"]["trials"][0]["source_trial_id"] == "origin"
+    save_stage_trial(tools, "ambiguous", base, "retrieval")
+    data = stage_dashboard(store.get(session))
+    assert data["stages"]["answer"]["trials"][0]["source_trial_id"] is None
+
+
+def test_version_two_answer_queue_survives_interrupt_without_redispatch(session):
+    from langgraph.checkpoint.memory import InMemorySaver
+    from langgraph.types import Command
+
+    store.update(session, progress={"workflow_version": 2})
+    tools = OptimizationTools(session, fake_registry())
+    prepare_dataset(tools)
+    calls = []
+    graph = build_graph(InMemorySaver(), calls.append, lambda _: tools)
+    config = {"configurable": {"thread_id": session}}
+    graph.invoke({"session_id": session, "stage": "answer"}, config)
+    saved = deepcopy(store.get(session)["progress"])
+    assert graph.get_state(config).interrupts
+    assert len(calls) == 1
+    assert saved["answer_plan"]
+    graph.invoke(Command(resume=True), config)
+    assert len(calls) == 1
+    assert (
+        store.get(session)["progress"]["answer_candidates"]
+        == saved["answer_candidates"]
+    )
+    assert store.get(session)["progress"]["answer_plan"] == saved["answer_plan"]
+
+
+@pytest.mark.parametrize(
+    "mode,expected",
+    [
+        ("none", "confirmation not run"),
+        ("failed", "failed confirmation"),
+        ("missing", "insufficient evidence"),
+        ("inconclusive", "improvement not demonstrated"),
+        ("confirmed", "confirmed improvement"),
+    ],
+)
+def test_confirmation_dashboard_outcomes_and_unknown_costs(session, mode, expected):
+    from ragbench_core.optimization.stages import stage_dashboard
+
+    tools = OptimizationTools(session, fake_registry())
+    prepare_dataset(tools)
+    baseline = tools.baseline()
+    candidate = deepcopy(baseline)
+    candidate["pipeline"]["query"]["retrievers"] = [{"type": "bm25"}]
+    progress = {
+        "baseline_config": baseline,
+        "selected_config": candidate,
+        "confirmed": mode == "confirmed",
+    }
+    if mode != "none":
+        save_stage_trial(tools, "control", baseline, "confirm", pricing=False)
+        save_stage_trial(tools, "candidate", candidate, "confirm", pricing=False)
+        if mode == "failed":
+            with db.SessionLocal.begin() as conn:
+                conn.get(store.OptimizationTrial, "candidate").status = "failed"
+        progress["comparison"] = {
+            "baseline_run_id": "control",
+            "run_id": "candidate",
+            "compatible": True,
+            "metrics": [
+                {
+                    "metric": "answer_correctness",
+                    "ci95": None if mode == "missing" else [-0.1, 0.2],
+                    "paired_count": 6,
+                    "missing_count": 0,
+                },
+                {
+                    "metric": "total_estimated_cost",
+                    "baseline_mean": 0,
+                    "candidate_mean": 0,
+                    "mean_delta": 0,
+                    "ci95": [0, 0],
+                },
+            ],
+        }
+    store.update(session, progress=progress, status="completed", stage="done")
+    data = stage_dashboard(store.get(session))["stages"]["confirm"]
+    assert data["outcome"] == expected
+    if mode == "none":
+        assert data["status"] == "not run"
+    if mode != "none":
+        cost = data["comparison"]["metrics"][1]
+        assert cost["baseline_mean"] is None and cost["candidate_mean"] is None
+        assert cost["mean_delta"] is None and cost["reason"] == "unknown pricing"
+
+
 def test_evaluation_version_and_invalid_ids_prevent_reuse(
     reusable_origin, reuse_factory, monkeypatch
 ):

@@ -102,14 +102,56 @@ const trial = (id: string, status: string) => ({
   split: "tuning",
 });
 
+function stagePayload(trials: ReturnType<typeof trial>[] = []) {
+  return {
+    session_id: "session",
+    workflow_version: 1,
+    stages: Object.fromEntries(
+      ["retrieval", "answer", "confirm"].map((phase) => [
+        phase,
+        {
+          status: "running",
+          split: phase === "confirm" ? "holdout" : "tuning",
+          question_count: 30,
+          primary_metric:
+            phase === "retrieval" ? "reranked_ndcg@10" : "answer_correctness",
+          trials: trials
+            .filter((t) => t.phase === phase)
+            .map((t) => ({
+              ...t,
+              display_status: t.status,
+              metrics: {},
+              ranking: null,
+              score_reason: "pending",
+              p95_seconds: null,
+              coverage: { expected: 30, valid: 0, missing: 30, failed: 0 },
+              configuration: null,
+              roles: [],
+              selection_reasons: [],
+              source_trial_id: null,
+              source_answer_trial_id: null,
+              changes_from_baseline: [],
+            })),
+        },
+      ]),
+    ),
+  };
+}
+
 function overrideFetch(
   handler: (path: string) => ReturnType<typeof response> | undefined,
 ) {
   const fallback = fetchMock.getMockImplementation()!;
-  fetchMock.mockImplementation(
-    (path: string, options?: RequestInit) =>
-      handler(path) ?? fallback(path, options),
-  );
+  fetchMock.mockImplementation((path: string, options?: RequestInit) => {
+    const direct = handler(path);
+    if (direct) return direct;
+    if (path.endsWith("/stages")) {
+      const trials = handler(path.replace(/\/stages$/, "/trials"));
+      if (trials)
+        return trials.then(async (r) => response(stagePayload(await r.json())));
+    }
+    return fallback(path, options);
+  });
 }
 
 function card(title: string) {
@@ -171,6 +213,7 @@ beforeEach(() => {
     if (path.endsWith("/configuration")) return response(savedConfiguration);
     if (path.endsWith("/config")) return response({ config: trialConfig });
     if (path.endsWith("/dataset")) return response(dataset);
+    if (path.endsWith("/stages")) return response(stagePayload());
     if (path.endsWith("/trials") || path.endsWith("/events"))
       return response([]);
     if (path.endsWith("/recommendation")) return response(null);
@@ -687,6 +730,11 @@ describe("Auto Optimize", () => {
     const { client } = mount("/auto-optimize/session");
     await screen.findByRole("article", { name: "Running trial final-trial" });
     await screen.findByText("retrieval_only");
+    await waitFor(() =>
+      expect(
+        fetchMock.mock.calls.filter(([path]) => path.endsWith("/stages")),
+      ).toHaveLength(1),
+    );
     finished = true;
     act(() =>
       client.setQueryData(["optimization", "session"], {
@@ -696,6 +744,11 @@ describe("Auto Optimize", () => {
       }),
     );
     await screen.findByText("No trial is currently running.");
+    await waitFor(() =>
+      expect(
+        fetchMock.mock.calls.filter(([path]) => path.endsWith("/stages")),
+      ).toHaveLength(2),
+    );
     expect(
       screen.queryByRole("article", { name: "Running trial final-trial" }),
     ).not.toBeInTheDocument();

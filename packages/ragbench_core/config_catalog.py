@@ -192,9 +192,17 @@ def _catalog():
                     "enabled",
                     help="Select metric names. Omit to compute all applicable metrics; an empty list disables scoring. Placeholder scores are lexical heuristics.",
                 ),
-                obj("judge", [flag("enabled"), field("provider", default="ollama", choices=["ollama"]),
-                              field("model"), field("base_url", default="http://100.110.250.66:11434"), number("timeout", 240, minimum=1)],
-                    help="Optional local semantic judge, configured independently of answer generation. Failures yield unavailable scores."),
+                obj(
+                    "judge",
+                    [
+                        flag("enabled"),
+                        field("provider", default="ollama", choices=["ollama"]),
+                        field("model"),
+                        field("base_url", default="http://100.110.250.66:11434"),
+                        number("timeout", 240, minimum=1),
+                    ],
+                    help="Optional local semantic judge, configured independently of answer generation. Failures yield unavailable scores.",
+                ),
             ],
         },
         {
@@ -202,8 +210,12 @@ def _catalog():
             "label": "Runtime",
             "fields": [
                 number("max_combinations", 32, minimum=1),
-                field("mode", default="end_to_end", choices=["end_to_end", "retrieval_only"],
-                      help="Retrieval-only skips answer generation and answer metrics. LLM-backed rewriters can still call Ollama."),
+                field(
+                    "mode",
+                    default="end_to_end",
+                    choices=["end_to_end", "retrieval_only"],
+                    help="Retrieval-only skips answer generation and answer metrics. LLM-backed rewriters can still call Ollama.",
+                ),
                 field("collection_prefix", default="ragbench"),
                 field("artifact_dir", default="/app/artifacts"),
                 obj("embedding_cache", cache),
@@ -672,7 +684,20 @@ def _catalog():
             "prompt_builders",
             "Prompt construction",
             "pipeline.query.prompt_builders",
-            [component("default")],
+            [
+                component("default"),
+                component(
+                    "preset",
+                    [
+                        field(
+                            "preset_id",
+                            default="concise_v1",
+                            choices=["concise_v1", "evidence_first_v1"],
+                        )
+                    ],
+                    help="Versioned built-in prompts. Auto-optimization saves the resolved template with the preset ID.",
+                ),
+            ],
             help="The current engine uses only the first entry.",
         ),
         stage(

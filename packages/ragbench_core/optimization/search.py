@@ -92,7 +92,9 @@ def get_search_space(template, allowed=None):
     return result
 
 
-def validate_candidate(config, baseline, space, registry=None):
+def validate_candidate(
+    config, baseline, space, registry=None, *, allow_prompt_presets=False
+):
     validate_config(config)
     expanded = deepcopy(config)
     expanded.setdefault("runtime", {})["max_combinations"] = 2
@@ -106,9 +108,21 @@ def validate_candidate(config, baseline, space, registry=None):
     for key in ("extractors", "extractor_configs", "cleaners", "metadata_enrichers"):
         if ing[key] != original.ingestion_config[key]:
             raise ValueError(f"Ingestion stage is fixed: {key}")
-    for key in ("prompt_builder", "citation_validator", "filters"):
+    for key in ("citation_validator", "filters"):
         if qry[key] != original.query_config[key]:
             raise ValueError(f"Query stage is fixed: {key}")
+    if qry["prompt_builder"] != original.query_config["prompt_builder"]:
+        from ragbench_core.components.context import PROMPT_PRESETS, preset_config
+
+        prompt = qry["prompt_builder"]
+        if (
+            not allow_prompt_presets
+            or prompt.get("preset_id") not in PROMPT_PRESETS
+            or prompt != preset_config(prompt["preset_id"])
+        ):
+            raise ValueError(
+                "Query stage is fixed except approved answer prompt presets"
+            )
     for group, component in (
         ("chunkers", ing["chunker"]),
         ("retrievers", qry["retriever"]),

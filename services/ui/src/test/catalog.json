@@ -2226,6 +2226,19 @@
         {
           "name": "default",
           "fields": []
+        },
+        {
+          "name": "preset",
+          "fields": [
+            {
+              "key": "preset_id",
+              "label": "Preset id",
+              "type": "string",
+              "default": "concise_v1",
+              "choices": ["concise_v1", "evidence_first_v1"]
+            }
+          ],
+          "help": "Versioned built-in prompts. Auto-optimization saves the resolved template with the preset ID."
         }
       ],
       "help": "The current engine uses only the first entry."

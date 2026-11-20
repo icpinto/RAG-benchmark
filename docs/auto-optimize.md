@@ -63,6 +63,62 @@ new session rather than reusing an old holdout for tuning.
 
 ## What is measured
 
+### Stage dashboards
+
+Each optimization has three linked tabs. Share a view using
+`/auto-optimize/{id}?stage=retrieval`, `?stage=answer`, or `?stage=confirm`.
+The selected tab survives polling and reloads; active dashboards refresh every
+three seconds and fetch a final update when the session finishes.
+
+- **Retrieval / tuning** shows NDCG@10 selection scores, raw versus reranked
+  NDCG/recall/precision/MRR at 3, 5, and 10, latency, coverage, and chunk counts.
+  Trial rows show chunking units/size/overlap, embeddings, indexes, rewriting,
+  retrieval, and reranking. New sessions keep context, compression, and prompts
+  at baseline during screening.
+- **Answering / tuning** shows correctness, claim/citation support, latency,
+  token/context usage, and known estimated costs. Each trial identifies its source
+  retrieval trial and its reranker, context, and prompt settings. Configuration
+  inspection distinguishes inherited, varied, and fixed settings.
+- **Confirmation / holdout** shows baseline/candidate paired metrics, correctness
+  delta and its 95% bootstrap interval, coverage, configuration differences, and
+  the confirmation outcome. It links back to the selected answer configuration.
+
+Measured descriptive means remain visible even when a trial is not eligible for
+ranking. Selection scores use matched questions with at least 95% coverage.
+Missing values explain whether they are pending, unmeasured, lack historical data,
+or have unknown pricing. A numeric zero remains a zero. Partial benchmark failures
+display as **Completed with errors**; expand **View config** for all metrics and
+selection/exclusion reasons.
+
+### Retrieval shortlist and answer search
+
+New sessions use workflow version 2. They shortlist up to two distinct feasible
+retrieval setups, excluding a duplicate baseline. Setup identity includes
+ingestion, rewriting, retrieval, and fixed filters; the highest-ranked
+representative is retained when only downstream settings differ.
+
+Answer evaluation runs the unchanged baseline first, then unchanged shortlisted
+pipelines. Remaining slots test prompt variants, then bounded context/compression
+presets, then approved rerankers, interleaving shortlisted parents. Without a
+qualifying shortlist, variants use the baseline as their parent. Every candidate
+preserves its parent's ingestion, rewriting, and retrieval settings. The persisted
+queue is deterministic, deduplicated, and reused after recovery.
+
+Prompt choices are **Baseline** (the original prompt), **Concise v1**, and
+**Evidence-first v1**. All require context-grounded answers, exact citations, and
+insufficient-context handling. Trial snapshots and exported YAML retain the preset
+ID and resolved template. Custom and model-generated prompts are not supported.
+
+The default answer-trial cap remains five. Search coverage lists scheduled, tested,
+and untested variants; small caps can leave entire dimensions unexplored. No cap
+is raised automatically. The winning configuration is the best observed complete
+pipeline, never an untested combination of individually winning settings.
+
+Confirmation evaluates that exact pipeline and the baseline on holdout, with one
+execution if they are identical. Only confirmed improvement replaces the baseline
+recommendation. Existing sessions retain their original workflow and saved queues;
+historical dashboards infer source trials only when matching is unambiguous.
+
 - Sources, including URL response bytes, are captured once. Later edits cannot
   change a running experiment. Unreadable documents and identical extracted copies
   are excluded and reported.
@@ -137,6 +193,16 @@ Read `/optimizations/{id}` plus `/dataset`, `/trials`, `/events`, and
 `/recommendation`. Use `PUT .../dataset` only while paused before freezing;
 `POST .../pause`, `/resume`, `/cancel`, and `/fork` manage the lifecycle.
 The OpenAPI schema documents the typed request contracts.
+
+`GET /optimizations/{id}/stages` is a read-only dashboard summary. Its `stages`
+mapping contains `retrieval`, `answer`, and `confirm`, with independent trial
+metrics (`mean`, `valid_count`, `missing_count`, `reason`), matched-question
+rankings, compact redacted configurations, coverage/error counts, selection roles,
+and lineage. Answering includes the candidate plan and dispatch status;
+confirmation includes the paired comparison and outcome. It reads saved results
+in batches and never dispatches trials or changes recommendations. Workflow
+version, lineage, and selection metadata use existing JSON storage; no database
+migration is needed.
 
 `GET /optimizations/{id}/configuration` returns `{request, template}` from the
 stored session. `GET /optimizations/{id}/trials/{trial_id}/config` returns `{config}`

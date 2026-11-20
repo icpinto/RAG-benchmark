@@ -1,4 +1,5 @@
 import { test, expect } from "@playwright/test";
+import { stageFixture } from "./stage-fixture";
 
 for (const width of [1280, 375]) {
   test(`browse previous runs, reload details and start a new run at ${width}px`, async ({
@@ -29,6 +30,7 @@ for (const width of [1280, 375]) {
           request: { config_path: "historical-template.yaml", limits: {} },
           template: { llm: { model: "historical-answer" } },
         };
+      else if (path.endsWith("/stages")) payload = stageFixture();
       else if (path.endsWith("/trials") || path.endsWith("/events"))
         payload = [];
       else if (path.endsWith("/dataset") || path.endsWith("/recommendation"))
@@ -188,6 +190,10 @@ test("select corpus, review synthetic references, inspect recommendation and exp
         },
       ];
     else if (path.endsWith("/config")) payload = { config: trialConfig };
+    else if (path.endsWith("/stages"))
+      payload = stageFixture([
+        { id: "saved-trial", phase: "answer", status: "completed" },
+      ]);
     else if (path.endsWith("/events")) payload = [];
     else if (path.endsWith("/recommendation"))
       payload = resumed
@@ -232,11 +238,12 @@ test("select corpus, review synthetic references, inspect recommendation and exp
     "target_questions: 100",
   );
   await expect(page.getByText("No trial is currently running.")).toBeVisible();
+  await page.getByRole("tab", { name: /Answering/ }).click();
   await page.getByText("View config", { exact: true }).click();
   await expect(
-    page.getByText("type: recursive, chunk_size: 512, overlap: 0.1", {
-      exact: true,
-    }),
+    page
+      .locator("dd")
+      .filter({ hasText: /^type: recursive, chunk_size: 512, overlap: 0\.1$/ }),
   ).toBeVisible();
   await page
     .getByText("Full trial configuration YAML", { exact: true })
@@ -313,6 +320,14 @@ test("inspect running configs on a narrow screen and follow trial completion", a
           runtime: { mode: "retrieval_only" },
         },
       };
+    else if (path.endsWith("/stages"))
+      payload = stageFixture([
+        {
+          id: "live-trial",
+          phase: "retrieval",
+          status: finished ? "completed" : "running",
+        },
+      ]);
     else if (path.endsWith("/events")) payload = [];
     await route.fulfill({ json: payload });
   });
@@ -349,6 +364,7 @@ test("inspect running configs on a narrow screen and follow trial completion", a
   finished = true;
   await expect(page.getByText("Optimization · completed")).toBeVisible();
   await expect(page.getByText("No trial is currently running.")).toBeVisible();
+  await page.getByRole("tab", { name: /Retrieval/ }).click();
   await page.getByText("View config", { exact: true }).click();
   await expect(page.getByText("retrieval_only", { exact: true })).toBeVisible();
 });
