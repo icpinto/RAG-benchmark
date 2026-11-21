@@ -3,9 +3,10 @@
 import uuid
 from copy import deepcopy
 from dataclasses import asdict
+from typing import Annotated
 
 import yaml
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 from ragbench_core.engine.config_expander import expand_cases
 from ragbench_core.engine.data_loader import load_ground_truth
 from ragbench_core.engine.snapshots import attach_evaluation, snapshot_inputs
@@ -19,6 +20,10 @@ from ragbench_core.prompt_optimization.contracts import (
     PromptOptimizationSettings,
 )
 from ragbench_core.prompt_optimization.datasets import split_questions
+from ragbench_core.prompt_optimization.history_store import (
+    get_candidate,
+    list_candidates,
+)
 from ragbench_core.prompt_optimization.service import (
     TERMINAL,
     artifacts_for_job,
@@ -201,6 +206,33 @@ def cancel(job_id: str):
         if row.status not in TERMINAL:
             row.status = "cancelled"
     return {"id": job_id, "status": get_job(job_id)["status"]}
+
+
+@router.get("/prompt-optimizations/{job_id}/candidates")
+def candidates(
+    job_id: str,
+    config_index: Annotated[int | None, Query(ge=0)] = None,
+    offset: Annotated[int, Query(ge=0)] = 0,
+    limit: Annotated[int, Query(ge=1, le=100)] = 25,
+    q: Annotated[str, Query(max_length=500)] = "",
+):
+    return public_configuration(
+        list_candidates(
+            job_or_404(job_id),
+            config_index=config_index,
+            offset=offset,
+            limit=limit,
+            query=q,
+        )
+    )
+
+
+@router.get("/prompt-optimizations/{job_id}/candidates/{candidate_id}")
+def candidate(job_id: str, candidate_id: str):
+    value = get_candidate(job_or_404(job_id), candidate_id)
+    if value is None:
+        raise HTTPException(404, "Prompt candidate not found")
+    return public_configuration(value)
 
 
 @router.get("/prompt-artifacts")

@@ -1585,6 +1585,34 @@ input[type="checkbox"] {
   padding: 16px 0;
   border-bottom: 1px solid var(--border, #d9e0e7);
 }
+.prompt-candidate-history,
+.prompt-candidate-content {
+  min-width: 0;
+  margin: 12px 0;
+}
+.prompt-candidate-history table {
+  min-width: 900px;
+}
+.prompt-candidate-history td .button {
+  white-space: nowrap;
+}
+.prompt-candidate-content h4 {
+  margin: 16px 0 8px;
+  font-weight: 600;
+}
+.prompt-candidate-content pre {
+  margin: 8px 0 16px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  max-height: none;
+}
+.prompt-candidate-preview {
+  min-width: 180px;
+  max-width: 360px;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
 .optimizer-questions blockquote {
   padding: 12px;
   margin: 12px 0;

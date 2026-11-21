@@ -539,8 +539,7 @@ def test_compiler_retries_invalid_correctness_verdict(
 
     monkeypatch.setattr(compiler, "judge_answer", judge)
     prepared = [
-        {**asdict(e), "context": "Evidence", "context_chunks": []}
-        for e in examples
+        {**asdict(e), "context": "Evidence", "context_chunks": []} for e in examples
     ]
     splits = split_questions([asdict(e) for e in examples])
     _, summary = compiler.compile_prompt(
@@ -648,6 +647,83 @@ def test_real_optimizers_compile_with_deterministic_transport(
     assert summary["validation_score"] == pytest.approx(0.9)
     assert artifact["provenance"]["training_question_ids"] == splits["training"]
     assert outputs
+    candidates = summary["candidate_history"]["candidates"]
+    selected = [item for item in candidates if item["selected"]]
+    assert len(selected) == 1
+    assert selected[0]["instructions"] == artifact["instructions"]
+    assert selected[0]["demonstrations"] == artifact["demonstrations"]
+    assert selected[0]["evaluations"][-1] == {
+        "score": pytest.approx(0.9),
+        "sample_count": len(splits["validation"]),
+        "partition": "validation",
+        "scope": "full",
+        "stage": "final_validation",
+    }
+    assert any("initial" in item["sources"] for item in candidates)
+    if "mipro" in preset:
+        assert any(
+            item["kind"] == "instruction" and not item["evaluations"]
+            for item in candidates
+        )
+        assert any(item["kind"] == "demonstrations" for item in candidates)
+        assert any(
+            any(source.startswith("mipro_trial:") for source in item["sources"])
+            for item in candidates
+        )
+        assert any(
+            any(source.startswith("mipro_proposal:") for source in item["sources"])
+            for item in candidates
+        )
+    if preset != "bootstrap_small_v1":
+        evaluations = [
+            evaluation
+            for item in candidates
+            for evaluation in item["evaluations"]
+            if evaluation["stage"] == "optimizer"
+        ]
+        assert evaluations
+        assert all(
+            evaluation["score"] == pytest.approx(0.9) for evaluation in evaluations
+        )
+    assert "candidate_history" not in artifact
+    # Compare with DSPy's original proposal path. Observations must not change
+    # the selected artifact or add task/proposal/judge budget operations.
+    observed_calls = []
+
+    class RecordingAccount(NullAccount):
+        @contextmanager
+        def call(self, role, *args, **kwargs):
+            observed_calls.append(role)
+            yield {}
+
+    optimizer_factory = compiler.make_optimizer
+    captured, _ = compiler.compile_prompt(
+        recipe,
+        prepared,
+        splits,
+        config,
+        task_profile(config).model_dump(),
+        RecordingAccount(),
+    )
+    capture_calls = list(observed_calls)
+    observed_calls.clear()
+    monkeypatch.setattr(
+        compiler,
+        "make_optimizer",
+        lambda dspy, recipe, metric, proposal, history: optimizer_factory(
+            dspy, recipe, metric, proposal
+        ),
+    )
+    original, _ = compiler.compile_prompt(
+        recipe,
+        prepared,
+        splits,
+        config,
+        task_profile(config).model_dump(),
+        RecordingAccount(),
+    )
+    assert original == captured == artifact
+    assert observed_calls == capture_calls
 
 
 def test_manual_api_compiles_and_exports_evaluation(
@@ -693,6 +769,232 @@ def test_manual_api_compiles_and_exports_evaluation(
         ]
         == exported["config"]["_snapshot"]["dataset_hash"]
     )
+
+
+def fake_compile_with_history(*args):
+    from ragbench_core.prompt_optimization.history import CandidateHistory
+
+    artifact, summary = fake_compile(*args)
+    history = CandidateHistory([], {})
+    history.observe(
+        "Unused suggestion 100%", None, kind="instruction", source="proposal"
+    )
+    history.observe(artifact["instructions"], [], source="initial")
+    return artifact, {**summary, "candidate_history": history.finish(artifact, [], 0.9)}
+
+
+def test_candidate_history_is_job_scoped_and_reuses_artifacts(
+    database, config, examples
+):
+    from services.api.app import prompt_optimizations as api
+
+    first_id = make_job(config, examples)
+    first = get_job(first_id)
+    second_id = create_job(
+        first["config"], settings(), first["splits"], task_profile(config)
+    )
+    update_job(first_id, attempts=1, lease_until=0, status="running")
+    for job_id in (first_id, second_id):
+        run_job(job_id, compiler=fake_compile_with_history, prepare=fake_prepare)
+    assert artifacts_for_job(first_id)[0]["id"] == artifacts_for_job(second_id)[0]["id"]
+    page = api.candidates(first_id, limit=1)
+    assert page["total"] == 2
+    assert len(page["items"]) == 1
+    assert page["history"]["candidate_count"] == 2
+    assert page["history"]["pending"] is False
+    assert page["items"][0]["attempt"] == 2
+    assert "instructions" not in page["items"][0]
+    selected = api.candidates(first_id, offset=1, limit=1)["items"][0]
+    assert selected["selected"] is True
+    full = api.candidate(first_id, selected["id"])
+    assert full["instructions"] == "Use evidence."
+    assert full["demonstrations"] == []
+    assert full["evaluations"][0]["score"] == 0.9
+    with pytest.raises(api.HTTPException) as error:
+        api.candidate(second_id, selected["id"])
+    assert error.value.status_code == 404
+    assert api.candidates(first_id, q="100%")["total"] == 1
+    assert api.candidates(first_id, q="100_")["total"] == 0
+    assert api.candidates(first_id, config_index=1)["total"] == 0
+    assert api.candidates(first_id, offset=100)["items"] == []
+    before = budget.totals(first_id)
+    run_job(first_id, compiler=lambda *args: pytest.fail("completed work repeated"))
+    assert api.candidates(first_id)["total"] == 2
+    assert budget.totals(first_id) == before
+
+
+def test_candidate_history_groups_configurations(database, config, examples):
+    from services.api.app import prompt_optimizations as api
+
+    first = get_job(make_job(config, examples))
+    recipe = settings().configs[0]
+    job_id = create_job(
+        first["config"],
+        PromptOptimizationSettings(configs=[recipe, recipe]),
+        first["splits"],
+        task_profile(config),
+    )
+    run_job(job_id, compiler=fake_compile_with_history, prepare=fake_prepare)
+    page = api.candidates(job_id)
+    assert page["total"] == 4
+    assert [item["config_index"] for item in page["items"]] == [0, 0, 1, 1]
+    assert len({item["id"] for item in page["items"]}) == 4
+    assert api.candidates(job_id, config_index=1)["total"] == 2
+    assert len(artifacts_for_job(job_id)) == 1
+    assert len(page["history"]["configurations"]) == 2
+
+
+def test_candidate_history_commits_with_result(database, config, examples, monkeypatch):
+    from ragbench_core.prompt_optimization import history_store
+
+    from services.api.app import prompt_optimizations as api
+
+    job_id = make_job(config, examples)
+    save = history_store.save_history
+
+    def fail_save(*args):
+        save(*args)
+        args[0].flush()
+        raise RuntimeError("transaction failed")
+
+    monkeypatch.setattr(history_store, "save_history", fail_save)
+    run_job(job_id, compiler=fake_compile_with_history, prepare=fake_prepare)
+    assert get_job(job_id)["status"] == "failed"
+    assert api.candidates(job_id)["items"] == []
+    assert artifacts_for_job(job_id) == []
+
+
+def test_candidate_history_legacy_and_http_validation(database, config, examples):
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from services.api.app import prompt_optimizations as api
+
+    job_id = make_job(config, examples)
+    assert api.candidates(job_id)["history"]["pending"] is True
+    run_job(job_id, compiler=fake_compile, prepare=fake_prepare)
+    page = api.candidates(job_id)
+    assert page["history"]["available"] is False
+    assert len(page["items"]) == 1
+    saved = page["items"][0]
+    assert saved["historical"] is True
+    assert api.candidate(job_id, saved["id"])["instructions"] == "Use evidence."
+    app = FastAPI()
+    app.include_router(api.router)
+    with TestClient(app) as client:
+        for query in (
+            "limit=0",
+            "limit=101",
+            "offset=-1",
+            "config_index=-1",
+            "q=" + "x" * 501,
+        ):
+            assert (
+                client.get(
+                    f"/prompt-optimizations/{job_id}/candidates?{query}"
+                ).status_code
+                == 422
+            )
+        assert client.get("/prompt-optimizations/missing/candidates").status_code == 404
+        assert (
+            client.get(f"/prompt-optimizations/{job_id}/candidates/missing").status_code
+            == 404
+        )
+        assert (
+            client.get(
+                f"/prompt-optimizations/{job_id}/candidates/{saved['id']}"
+            ).status_code
+            == 200
+        )
+
+
+def test_candidate_history_distinguishes_examples_and_evaluation_scopes(dspy_runtime):
+    from ragbench_core.prompt_optimization.history import (
+        CandidateHistory,
+        evaluation_callback,
+    )
+
+    prepared = [
+        {"question_id": f"q{i}", "question": str(i), "context": "context"}
+        for i in range(3)
+    ]
+    history = CandidateHistory(
+        prepared, {"training": ["q0"], "validation": ["q1", "q2"]}
+    )
+    demo = {"question": "Example?", "context": "Evidence", "answer": "Answer"}
+    empty = history.observe("Instructions", [], source="initial")
+    with_examples = history.observe("Instructions", [demo])
+    assert empty != with_examples
+    assert history.observe("Instructions", [], source="executed") == empty
+    validation = [SimpleNamespace(question=str(i), context="context") for i in (1, 2)]
+    callback = evaluation_callback(None, history)
+    program = SimpleNamespace(
+        answer=SimpleNamespace(
+            signature=SimpleNamespace(instructions="Instructions"), demos=[]
+        )
+    )
+    for call_id, dataset, raw_score in (
+        ("a", validation, 0),
+        ("b", validation[:1], 50),
+        ("c", validation, 90),
+    ):
+        callback.on_evaluate_start(
+            call_id, SimpleNamespace(devset=dataset), {"program": program}
+        )
+        callback.on_evaluate_end(call_id, SimpleNamespace(score=raw_score))
+    evaluations = history.items[empty]["evaluations"]
+    assert [item["score"] for item in evaluations] == [0, 0.5, 0.9]
+    assert [item["scope"] for item in evaluations] == ["full", "minibatch", "full"]
+    assert [item["sample_count"] for item in evaluations] == [2, 1, 2]
+
+
+def test_gepa_history_includes_rejected_proposals(
+    dspy_runtime, config, examples, monkeypatch
+):
+    from ragbench_core.prompt_optimization import compiler
+
+    def model_call(profile, prompt, **kwargs):
+        if prompt.startswith("You are a careful RAG answer generator."):
+            return ("bad" if "Worse suggestion" in prompt else "good"), {}
+        return "```Worse suggestion```", {}
+
+    def judge(example, answer, *args, **kwargs):
+        score = 0.0 if answer.answer == "bad" else 0.8
+        return {
+            "scores": {"answer_correctness": score},
+            "details": {
+                "status": "ok",
+                "verdicts": {"answer_correctness": {"score": score}},
+            },
+        }
+
+    monkeypatch.setattr(compiler, "model_call", model_call)
+    monkeypatch.setattr(compiler, "judge_answer", judge)
+    prepared = [
+        {**asdict(e), "context": "Evidence", "context_chunks": []} for e in examples
+    ]
+    recipe = PromptOptimizationConfig(
+        preset="gepa_light_v1", parameters={"max_metric_calls": 30}
+    )
+    artifact, summary = compiler.compile_prompt(
+        recipe,
+        prepared,
+        split_questions([asdict(e) for e in examples]),
+        {**config, "_snapshot": {"dataset_hash": "test"}},
+        task_profile(config).model_dump(),
+        NullAccount(),
+    )
+    rejected = next(
+        item
+        for item in summary["candidate_history"]["candidates"]
+        if item["instructions"] == "Worse suggestion"
+    )
+    assert "gepa_proposal" in rejected["sources"]
+    assert "gepa_retained" not in rejected["sources"]
+    assert rejected["selected"] is False
+    assert rejected["evaluations"]
+    assert all(item["score"] == 0 for item in rejected["evaluations"])
+    assert "Worse suggestion" not in artifact["instructions"]
 
 
 def test_auto_plan_prioritizes_selected_dspy_configs(database, config, monkeypatch):

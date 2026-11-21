@@ -5,6 +5,10 @@ import { api } from "../lib/api";
 import { Card, Empty, ErrorNotice, Loading, Notice } from "./common";
 import { DataTable } from "./data-table";
 import { TrialConfiguration } from "./optimization-config";
+import {
+  PromptCandidateHistory,
+  type CompilationHistorySummary,
+} from "./prompt-candidate-history";
 
 type Phase = "retrieval" | "answer" | "confirm";
 type Config = Record<string, unknown>;
@@ -81,6 +85,7 @@ interface Stage {
     status: string;
     progress: { current_config?: number };
     usage: { tokens: number; cost: number | null };
+    history?: CompilationHistorySummary;
   }[];
   outcome?: string;
   selected_trial_id?: string | null;
@@ -875,6 +880,14 @@ export function OptimizationStages({
                     cost: job.usage.cost ?? "Unknown pricing",
                   }))}
                 />
+                {stage.compilations.map((job) => (
+                  <PromptCandidateHistory
+                    key={job.id}
+                    jobId={job.id}
+                    status={job.status}
+                    history={job.history}
+                  />
+                ))}
               </>
             )}
           </>

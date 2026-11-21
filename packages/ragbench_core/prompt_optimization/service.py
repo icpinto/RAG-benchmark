@@ -431,6 +431,8 @@ def run_job(job_id, *, compiler=None, prepare=None):
                     account,
                 )
                 payload = CompiledPrompt.model_validate(payload).model_dump()
+                summary = dict(summary)
+                history = summary.pop("candidate_history", None)
                 account.check()
                 result = {
                     "index": index,
@@ -439,11 +441,22 @@ def run_job(job_id, *, compiler=None, prepare=None):
                     "artifact_id": payload["content_hash"],
                     **summary,
                 }
+                if history is not None:
+                    result["candidate_history"] = {
+                        "version": history["version"], "attempt": job["attempts"],
+                        "count": len(history["candidates"]),
+                    }
                 with store.locked_budget_owner(job_id) as (conn, row):
                     if row.status == "cancelled" or row.lease_owner != owner:
                         raise budget.OptimizationStopped(
                             "Compilation cancelled or lease lost"
                         )
+                    if history is not None:
+                        from ragbench_core.prompt_optimization.history_store import (
+                            save_history,
+                        )
+
+                        save_history(conn, job_id, index, job["attempts"], recipe.preset, history)
                     if conn.get(store.PromptArtifact, payload["content_hash"]) is None:
                         conn.add(
                             store.PromptArtifact(

@@ -467,11 +467,16 @@ def stage_dashboard(session, *, redact=lambda value: value):
     sections["answer"].update(plan=plan, selected_trial_id=selected_id)
     if state.get("prompt_splits"):
         from ragbench_core.optimization.budget import totals
+        from ragbench_core.prompt_optimization.history_store import history_status
         from ragbench_core.prompt_optimization.service import get_job
         job_ids = {e["compilation_job_id"] for e in state.get("prompt_answer_plan", []) if e.get("compilation_job_id")}
-        sections["answer"]["compilations"] = [
-            {"id": jid, "status": get_job(jid)["status"], "progress": get_job(jid)["progress"], "usage": totals(jid)}
-            for jid in sorted(job_ids)]
+        sections["answer"]["compilations"] = []
+        for jid in sorted(job_ids):
+            job = get_job(jid)
+            sections["answer"]["compilations"].append({
+                "id": jid, "status": job["status"], "progress": job["progress"],
+                "usage": totals(jid), "history": history_status(job),
+            })
     sections["retrieval"]["shortlist"] = shortlist
     comparison = deepcopy(state.get("comparison"))
     if comparison:

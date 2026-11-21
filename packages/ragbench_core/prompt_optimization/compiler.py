@@ -15,6 +15,10 @@ from ragbench_core.models.schema import Chunk, GeneratedAnswer, QueryExample
 from ragbench_core.optimization.profiles import ModelProfile
 from ragbench_core.prompt_optimization.artifacts import CompiledPrompt, render_prompt
 from ragbench_core.prompt_optimization.contracts import DSPY_VERSION
+from ragbench_core.prompt_optimization.history import (
+    CandidateHistory,
+    evaluation_callback,
+)
 from ragbench_core.prompt_optimization.service import provenance, task_profile
 
 
@@ -103,7 +107,7 @@ def model_call(profile, prompt, *, generator=None, generation_config=None):
     return body["choices"][0]["message"]["content"], body.get("usage", {})
 
 
-def make_bridges(dspy, account, config, recipe):
+def make_bridges(dspy, account, config, recipe, history=None):
     from ragbench_core.registry import register_builtin_components
 
     profile = task_profile(config)
@@ -158,6 +162,8 @@ def make_bridges(dspy, account, config, recipe):
             if set(signature.output_fields) == {"answer"} and set(
                 signature.input_fields
             ) == {"question", "context"}:
+                if history is not None:
+                    history.observe(signature.instructions, demos)
                 prompt = render_prompt(
                     signature.instructions, demos, inputs["question"], inputs["context"]
                 )
@@ -172,7 +178,7 @@ def make_bridges(dspy, account, config, recipe):
     )
 
 
-def make_optimizer(dspy, recipe, metric, proposal):
+def make_optimizer(dspy, recipe, metric, proposal, history=None):
     params = deepcopy(recipe.parameters)
     if recipe.optimizer == "bootstrap_few_shot":
         return dspy.BootstrapFewShot(metric=metric, max_errors=1, **params), {}
@@ -184,7 +190,35 @@ def make_optimizer(dspy, recipe, metric, proposal):
             "minibatch_full_eval_steps",
         }
         compile_params = {k: params.pop(k) for k in list(params) if k in compile_keys}
-        return dspy.MIPROv2(
+
+        class ObservedMIPRO(dspy.MIPROv2):
+            def _bootstrap_fewshot_examples(self, *args, **kwargs):
+                pools = super()._bootstrap_fewshot_examples(*args, **kwargs)
+                if history is not None and pools:
+                    for predictor, pool in pools.items():
+                        for index, demos in enumerate(pool):
+                            history.observe(
+                                None,
+                                demos,
+                                kind="demonstrations",
+                                source=f"demonstration_pool:{predictor}:{index}",
+                            )
+                return pools
+
+            def _propose_instructions(self, *args, **kwargs):
+                pools = super()._propose_instructions(*args, **kwargs)
+                if history is not None:
+                    for predictor, pool in pools.items():
+                        for index, instructions in enumerate(pool):
+                            history.observe(
+                                instructions,
+                                None,
+                                kind="instruction",
+                                source=f"instruction_pool:{predictor}:{index}",
+                            )
+                return pools
+
+        return ObservedMIPRO(
             metric=metric,
             prompt_model=proposal,
             num_threads=1,
@@ -192,8 +226,36 @@ def make_optimizer(dspy, recipe, metric, proposal):
             seed=recipe.seed,
             **params,
         ), compile_params
+
+    def propose(candidate, reflective_dataset, components_to_update):
+        # Same implementation as GEPA's default proposer, with observation before
+        # minibatch acceptance. Detailed results alone omit rejected proposals.
+        from gepa.strategies.instruction_proposal import InstructionProposalSignature
+
+        texts = {
+            name: InstructionProposalSignature.run(
+                lm=lambda prompt: proposal(prompt)[0],
+                input_dict={
+                    "current_instruction_doc": candidate[name],
+                    "dataset_with_feedback": reflective_dataset[name],
+                },
+            )["new_instruction"]
+            for name in components_to_update
+        }
+        if history is not None:
+            history.observe(
+                texts.get("answer", candidate["answer"]), [], source="gepa_proposal"
+            )
+        return texts
+
     return dspy.GEPA(
-        metric=metric, reflection_lm=proposal, num_threads=1, seed=recipe.seed, **params
+        metric=metric,
+        reflection_lm=proposal,
+        num_threads=1,
+        seed=recipe.seed,
+        track_stats=True,
+        instruction_proposer=propose if history is not None else None,
+        **params,
     ), {}
 
 
@@ -209,7 +271,9 @@ def compile_prompt(recipe, prepared, splits, config, judge_config, account):
 
     if importlib.metadata.version("dspy") != DSPY_VERSION:
         raise RuntimeError(f"Prompt compilation requires dspy=={DSPY_VERSION}")
-    task, proposal, adapter = make_bridges(dspy, account, config, recipe)
+    history = CandidateHistory(prepared, splits)
+    task, proposal, adapter = make_bridges(dspy, account, config, recipe, history)
+    callback = evaluation_callback(dspy, history)
 
     class AnswerSignature(dspy.Signature):
         """Give a direct, evidence-grounded answer to the question."""
@@ -302,15 +366,32 @@ def compile_prompt(recipe, prepared, splits, config, judge_config, account):
     if not train or not validation:
         raise ValueError("Prompt training and validation partitions must be nonempty")
     with dspy.context(lm=task, adapter=adapter, max_errors=1):
-        optimizer, compile_params = make_optimizer(dspy, recipe, metric, proposal)
+        optimizer, compile_params = make_optimizer(
+            dspy, recipe, metric, proposal, history
+        )
     if recipe.optimizer != "bootstrap_few_shot":
         compile_params["valset"] = validation
     if compile_params.get("minibatch"):
         compile_params["minibatch_size"] = min(
             compile_params.get("minibatch_size", 25), len(validation)
         )
-    with dspy.context(lm=task, adapter=adapter, max_errors=1):
-        program = optimizer.compile(AnswerProgram(), trainset=train, **compile_params)
+    with dspy.context(
+        lm=task,
+        adapter=adapter,
+        max_errors=1,
+        callbacks=[*dspy.settings.get("callbacks", []), callback],
+    ):
+        initial = AnswerProgram()
+        history.program(initial, source="initial")
+        program = optimizer.compile(initial, trainset=train, **compile_params)
+        for trial, entry in getattr(program, "trial_logs", {}).items():
+            for key in ("full_eval_program", "mb_program"):
+                if key in entry:
+                    history.program(entry[key], source=f"mipro_trial:{trial}")
+        for candidate in getattr(
+            getattr(program, "detailed_results", None), "candidates", []
+        ):
+            history.program(candidate, source="gepa_retained")
         predictor = program.answer
         demos = [
             {k: getattr(demo, k) for k in ("question", "context", "answer")}
@@ -335,4 +416,7 @@ def compile_prompt(recipe, prepared, splits, config, judge_config, account):
         "validation_score": sum(scores) / len(scores),
         "validation_count": len(scores),
         "demonstration_count": len(demos),
+        "candidate_history": history.finish(
+            payload, validation, sum(scores) / len(scores)
+        ),
     }

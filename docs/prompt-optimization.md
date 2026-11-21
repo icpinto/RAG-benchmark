@@ -2,8 +2,8 @@
 
 DSPy is an optional workflow feature. Rebuild the API, worker, optimizer, and
 scheduler after updating dependencies. Application startup creates the additive
-`prompt_compilation_jobs` and `prompt_artifacts` tables; existing optimization
-sessions retain their saved workflow and answer queues.
+`prompt_compilation_jobs`, `prompt_artifacts`, and `prompt_compilation_candidates`
+tables; existing optimization sessions retain their saved workflow and answer queues.
 
 ## Shared configurations
 
@@ -103,6 +103,24 @@ jobs reuse the session's ingestion index; a transient Qdrant timeout during cont
 preparation receives one bounded retry.
 
 The Answering dashboard shows compilation progress, artifacts, and offline usage.
+Expand **View prompt suggestions** under **DSPy prompt compilation** to inspect
+all captured instruction suggestions, example sets, and evaluated prompt
+combinations. History becomes available after each configuration completes
+successfully. Search the saved content or filter by configuration, then choose
+**View prompt** for complete instructions, examples, and repeated evaluations.
+Identical content is grouped under its first observation, retaining proposal
+sources and all evaluation results. Instruction and example pools are shown
+separately; combinations that DSPy never tried are not generated for inspection.
+
+**Selected by DSPy** identifies the configuration's compiled output, separately
+from answer-trial ranking and holdout confirmation. Optimizer scores use a 0–1
+scale and identify training versus validation and full-set versus minibatch
+coverage. Final artifact validation is shown separately. GEPA history includes
+proposals rejected during minibatch screening. BootstrapFewShot selects examples
+instead of proposing new instructions. Older jobs can show their saved output,
+but display **Candidate history was not recorded** for discarded suggestions.
+Interrupted or unsuccessful configurations do not publish candidate history.
+
 Search coverage identifies scheduled and untested variants. Reports include
 `prompt_compilations`, compilation usage by role, configuration lineage, and the
 winning embedded prompt. Workflow-v3 recommendation YAML uses holdout questions
@@ -137,6 +155,11 @@ compiled again.
 - `POST /prompt-optimizations`: saved config path, optional source/question selection,
   concrete `case_id`, shared `prompt_optimization`, optional `judge`, and `allow_hosted`.
 - `GET /prompt-optimizations/{id}`: status, splits, attempts, results, artifacts, usage.
+- `GET /prompt-optimizations/{id}/candidates`: candidate summaries, history status,
+  and pagination (`offset`, `limit` up to 100), with optional `config_index` and
+  full-content search `q`.
+- `GET /prompt-optimizations/{id}/candidates/{candidate_id}`: complete instructions,
+  examples, evaluation history, and selected-output marker for one job's candidate.
 - `POST /prompt-optimizations/{id}/cancel`
 - `GET /prompt-artifacts` and `GET /prompt-artifacts/{id}`
 - `GET /prompt-artifacts/{id}/config`: runnable evaluation configuration and YAML.

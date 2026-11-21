@@ -557,7 +557,10 @@ def test_dspy_graph_compiles_once_and_confirms_without_training_leakage(
 
 
 def test_unapproved_compiled_prompt_cannot_enter_auto_search(session):
-    from ragbench_core.prompt_optimization.artifacts import CompiledPrompt, builder_config
+    from ragbench_core.prompt_optimization.artifacts import (
+        CompiledPrompt,
+        builder_config,
+    )
     store.update(session, progress={"workflow_version": 3})
     tools = OptimizationTools(session, fake_registry())
     config = tools.baseline()
@@ -1658,6 +1661,30 @@ def test_stage_dashboard_keeps_independent_metrics_and_explicit_missing_values(s
     ] == pytest.approx(0.9)
     assert data["stages"]["confirm"]["outcome"] == "candidate is baseline"
     assert store.get(session) == before
+
+
+def test_stage_dashboard_reports_prompt_history_without_candidate_content(session):
+    from ragbench_core.optimization.stages import stage_dashboard
+
+    tools = OptimizationTools(session, fake_registry())
+    prepare_dataset(tools)
+    with db.SessionLocal.begin() as conn:
+        conn.add(store.PromptCompilationJob(
+            id="prompt-job", status="completed", request={}, progress={"results": [{
+                "index": 0, "preset": "mipro_zero_shot_v1", "status": "completed",
+                "candidate_history": {"version": 1, "attempt": 2, "count": 3},
+            }]},
+        ))
+    store.update(session, progress={
+        "workflow_version": 3, "prompt_splits": {"training": [], "validation": []},
+        "prompt_answer_plan": [{"compilation_job_id": "prompt-job"}],
+    })
+    compilation = stage_dashboard(store.get(session))["stages"]["answer"]["compilations"][0]
+    assert compilation["id"] == "prompt-job"
+    assert compilation["history"]["available"] is True
+    assert compilation["history"]["candidate_count"] == 3
+    assert compilation["history"]["configurations"][0]["attempt"] == 2
+    assert "candidates" not in compilation
 
 
 def test_stage_api_is_scoped_redacted_and_uses_batched_reads(session):

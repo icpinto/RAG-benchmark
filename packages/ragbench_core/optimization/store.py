@@ -8,7 +8,16 @@ import uuid
 from contextlib import contextmanager
 from copy import deepcopy
 
-from sqlalchemy import JSON, Column, Float, Integer, String, UniqueConstraint, select
+from sqlalchemy import (
+    JSON,
+    Column,
+    Float,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+    select,
+)
 
 from ragbench_core.engine import database as db
 
@@ -103,6 +112,19 @@ class PromptArtifact(db.Base):
     payload = Column(JSON)
     summary = Column(JSON)
     created_at = Column(Float, default=time.time)
+
+
+class PromptCandidate(db.Base):
+    __tablename__ = "prompt_compilation_candidates"
+    id = Column(String, primary_key=True)
+    job_id = Column(String, index=True, nullable=False)
+    config_index = Column(Integer, nullable=False)
+    attempt = Column(Integer, nullable=False)
+    proposal_order = Column(Integer, nullable=False)
+    summary = Column(JSON, nullable=False)
+    payload = Column(JSON, nullable=False)
+    search_text = Column(Text, nullable=False)
+    __table_args__ = (UniqueConstraint("job_id", "config_index", "attempt", "proposal_order"),)
 
 
 def budget_owner(owner_id):
