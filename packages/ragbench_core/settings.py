@@ -9,6 +9,7 @@ class Settings(BaseSettings):
     postgres_password: str = "ragbench"
     redis_url: str = "redis://redis:6379/0"
     qdrant_url: str = "http://qdrant:6333"
+    qdrant_timeout_seconds: int = Field(default=30, ge=1)
     opensearch_url: str = "http://opensearch:9200"
     opensearch_user: str = "admin"
     opensearch_password: str = "admin"

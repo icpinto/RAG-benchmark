@@ -66,6 +66,8 @@ Rebuild the API, worker, optimizer, scheduler, and UI with `docker compose up --
 The optimizer and scheduler are new services. The scheduler reconciles abandoned
 sessions every minute; the optimizer consumes only the `optimization` queue, and
 the benchmark worker consumes `ragbench`. Run only one scheduler per deployment.
+Qdrant collection operations use a 30-second client timeout by default; set
+`QDRANT_TIMEOUT_SECONDS` if collection creation needs more time on your deployment.
 Existing databases gain optimizer tables through the additive startup migration;
 LangGraph creates its own versioned checkpoint tables on first use. To prepare
 both explicitly, run `python -m scripts.migrate_optimization` with database access.

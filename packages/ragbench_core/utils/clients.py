@@ -41,8 +41,9 @@ def get_qdrant_client(url: str):
     start = time.perf_counter()
     try:
         from qdrant_client import QdrantClient
+        from ragbench_core.settings import settings
 
-        return QdrantClient(url=url)
+        return QdrantClient(url=url, timeout=settings.qdrant_timeout_seconds)
     finally:
         _record_client_init(start)
 
