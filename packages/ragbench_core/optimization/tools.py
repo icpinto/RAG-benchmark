@@ -589,9 +589,22 @@ class OptimizationTools:
             min(600, self.session["request"]["limits"]["active_seconds"] // 4),
         )
 
-    def get_search_space(self):
-        return get_search_space(
+    def get_search_space(self, phase=None):
+        space = get_search_space(
             self.session["template"], self.session["request"]["allowed_components"]
+        )
+        if phase == "retrieval" and self.session["progress"].get("workflow_version", 1) >= 5:
+            space["rerankers"] = ["none"]
+        return space
+
+    def retrieval_config(self, config=None):
+        from ragbench_core.optimization.candidates import screen_config
+
+        baseline = self.baseline()
+        return screen_config(
+            baseline if config is None else config,
+            baseline,
+            self.session["progress"].get("workflow_version", 1),
         )
 
     def reserve_prompt_confirmation(self, candidate):
@@ -634,7 +647,7 @@ class OptimizationTools:
                 continue
         raise ValueError("No compatible baseline in template")
 
-    def validate_candidate(self, config):
+    def validate_candidate(self, config, *, phase=None):
         # Only pipeline choices cross the model/tool boundary. All other sections are server-owned.
         clean = deepcopy(self.baseline())
         if "pipeline" not in config:
@@ -655,7 +668,7 @@ class OptimizationTools:
         return validate_candidate(
             clean,
             self.baseline(),
-            self.get_search_space(),
+            self.get_search_space(phase),
             self.registry,
             allow_prompt_presets=self.session["progress"].get("workflow_version", 1)
             >= 2,
@@ -671,17 +684,19 @@ class OptimizationTools:
             "selected_config"
         ):
             raise ValueError("Select a candidate before evaluating holdout")
-        config = self.validate_candidate(request.config)
+        config = self.validate_candidate(request.config, phase=request.phase)
         if self.session["progress"].get("workflow_version", 1) >= 2:
-            if request.phase == "retrieval":
-                from ragbench_core.optimization.candidates import screen_config
-
-                if candidate_hash(config) != candidate_hash(
-                    screen_config(config, self.baseline())
-                ):
-                    raise ValueError(
-                        "Retrieval screening keeps context and prompts at baseline"
+            if request.phase == "retrieval" and candidate_hash(config) != candidate_hash(
+                self.retrieval_config(config)
+            ):
+                raise ValueError(
+                    "Retrieval screening keeps compression, context and prompts at baseline"
+                    + (
+                        " and disables reranking"
+                        if self.session["progress"].get("workflow_version", 1) >= 5
+                        else ""
                     )
+                )
             if request.phase == "confirm" and candidate_hash(config) not in {
                 candidate_hash(self.baseline()),
                 candidate_hash(self.session["progress"]["selected_config"]),
@@ -839,6 +854,7 @@ class OptimizationTools:
             ids,
             phase,
             self.session["request"]["limits"],
+            workflow_version=self.session["progress"].get("workflow_version", 1),
         )
 
     def export_recommendation(self, report):

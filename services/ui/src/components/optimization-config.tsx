@@ -147,10 +147,12 @@ export function TrialConfiguration({
   sessionId,
   trialId,
   stage,
+  workflowVersion = 1,
 }: {
   sessionId: string;
   trialId: string;
   stage?: "retrieval" | "answer" | "confirm";
+  workflowVersion?: number;
 }) {
   const query = useQuery({
     queryKey: ["optimization-trial-configuration", sessionId, trialId],
@@ -186,7 +188,9 @@ export function TrialConfiguration({
                 [
                   label(
                     "Reranker",
-                    stage === "retrieval" ? "retrieval" : "answer",
+                    stage === "retrieval" && workflowVersion < 5
+                      ? "retrieval"
+                      : "answer",
                   ),
                   queryConfig.rerankers,
                 ],

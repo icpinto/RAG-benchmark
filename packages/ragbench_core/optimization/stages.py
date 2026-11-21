@@ -9,9 +9,14 @@ from sqlalchemy import select
 
 from ragbench_core.engine.config_expander import expand_cases
 from ragbench_core.optimization import store
-from ragbench_core.optimization.candidates import retrieval_identity
+from ragbench_core.optimization.candidates import retrieval_identity, screen_config
 from ragbench_core.optimization.search import candidate_hash, concrete_config
-from ragbench_core.optimization.selection import compare_trials, finite, percentile
+from ragbench_core.optimization.selection import (
+    compare_trials,
+    finite,
+    percentile,
+    primary_metric,
+)
 
 PHASES = ("retrieval", "answer", "confirm")
 TERMINAL = {"completed", "failed", "cancelled", "budget_exhausted"}
@@ -280,6 +285,7 @@ def stage_dashboard(session, *, redact=lambda value: value):
                 question_ids,
                 "answer" if phase == "confirm" else phase,
                 session["request"]["limits"],
+                workflow_version=state.get("workflow_version", 1),
             )
             if question_ids
             else []
@@ -291,9 +297,7 @@ def stage_dashboard(session, *, redact=lambda value: value):
             if question_ids:
                 rows = [r for r in rows if r["question_id"] in question_set]
             metrics = _metrics(trial, rows, question_ids)
-            primary = (
-                "reranked_ndcg@10" if phase == "retrieval" else "answer_correctness"
-            )
+            primary = primary_metric(phase, state.get("workflow_version", 1))
             valid = metrics[primary]["valid_count"]
             ranked = ranks.get(trial["id"])
             unavailable = None
@@ -319,7 +323,12 @@ def stage_dashboard(session, *, redact=lambda value: value):
                 )
                 if entry and entry.get("reason"):
                     reasons.append(entry["reason"])
-            if _hash(trial["config"]) == baseline_hash:
+            control_hash = (
+                _hash(screen_config(baseline, baseline, state["workflow_version"]))
+                if baseline and phase == "retrieval" and state.get("workflow_version", 1) >= 5
+                else baseline_hash
+            )
+            if _hash(trial["config"]) == control_hash:
                 roles.append("baseline")
             if trial["id"] in shortlist_ids:
                 roles.append("shortlisted")
@@ -446,9 +455,7 @@ def stage_dashboard(session, *, redact=lambda value: value):
             "split": split,
             "status": stage_status,
             "question_count": len(question_ids),
-            "primary_metric": "reranked_ndcg@10"
-            if phase == "retrieval"
-            else "answer_correctness",
+            "primary_metric": primary_metric(phase, state.get("workflow_version", 1)),
             "trials": output,
         }
 

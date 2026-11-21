@@ -160,10 +160,12 @@ function Inspector({
   sessionId,
   trial,
   annotateSettings,
+  workflowVersion,
 }: {
   sessionId: string;
   trial: StageTrial;
   annotateSettings: boolean;
+  workflowVersion: number;
 }) {
   const [open, setOpen] = useState(false);
   const metrics = Object.entries(trial.metrics).map(([metric, value]) => ({
@@ -210,6 +212,7 @@ function Inspector({
             sessionId={sessionId}
             trialId={trial.id}
             stage={annotateSettings ? trial.phase : undefined}
+            workflowVersion={workflowVersion}
           />
           <h3>Measured metrics</h3>
           <p>
@@ -264,12 +267,22 @@ function ScoreBars({ trials, label }: { trials: StageTrial[]; label: string }) {
   );
 }
 
-function RetrievalComparison({ trials }: { trials: StageTrial[] }) {
+function RetrievalComparison({
+  trials,
+  rawOnly = false,
+}: {
+  trials: StageTrial[];
+  rawOnly?: boolean;
+}) {
   const [metric, setMetric] = useState("ndcg");
   const [k, setK] = useState("10");
   return (
     <div className="stage-figure">
-      <h3>Raw retrieval versus reranked evidence</h3>
+      <h3>
+        {rawOnly
+          ? "Raw retrieval evidence"
+          : "Raw retrieval versus reranked evidence"}
+      </h3>
       <div className="actions">
         <label>
           Metric{" "}
@@ -307,10 +320,14 @@ function RetrievalComparison({ trials }: { trials: StageTrial[] }) {
             mean(trial, `raw_retrieval_${metric}@${k}`) ??
             trial.metrics[`raw_retrieval_${metric}@${k}`]?.reason ??
             "Not measured",
-          reranked:
-            mean(trial, `reranked_${metric}@${k}`) ??
-            trial.metrics[`reranked_${metric}@${k}`]?.reason ??
-            "Not measured",
+          ...(!rawOnly
+            ? {
+                reranked:
+                  mean(trial, `reranked_${metric}@${k}`) ??
+                  trial.metrics[`reranked_${metric}@${k}`]?.reason ??
+                  "Not measured",
+              }
+            : {}),
         }))}
       />
     </div>
@@ -506,11 +523,13 @@ function TrialTable({
   phase,
   sessionId,
   annotateSettings,
+  workflowVersion,
 }: {
   stage: Stage;
   phase: Phase;
   sessionId: string;
   annotateSettings: boolean;
+  workflowVersion: number;
 }) {
   const { hash } = useLocation();
   const target = stage.trials.find((t) => hash === `#trial-${t.id}`);
@@ -643,6 +662,7 @@ function TrialTable({
                 sessionId={sessionId}
                 trial={trial}
                 annotateSettings={annotateSettings}
+                workflowVersion={workflowVersion}
               />
             </>
           );
@@ -769,7 +789,9 @@ export function OptimizationStages({
           {query.data?.workflow_version === 1
             ? "Historical workflow: these are the original saved trial settings. Expanded stage search applies to new sessions. Source-trial links are inferred only when matching is unambiguous."
             : phase === "retrieval"
-              ? "Varied here: chunking, embeddings/index, rewriting, retrieval and reranking. Fixed: compression, context, prompts and answer model."
+              ? (query.data?.workflow_version ?? 1) >= 5
+                ? "Varied here: chunking, embeddings/index, rewriting and retrieval. Reranking is disabled. Fixed: compression, context, prompts and answer model."
+                : "Varied here: chunking, embeddings/index, rewriting, retrieval and reranking. Fixed: compression, context, prompts and answer model."
               : phase === "answer"
                 ? "Inherited: chunking, embeddings/index, rewriting and retrieval. Varied here: reranker, context/compression and answer prompt. Fixed: answer model and generation settings."
                 : "Fixed: the selected complete pipeline and baseline. No settings are tuned using holdout results."}
@@ -824,7 +846,9 @@ export function OptimizationStages({
                       trials={stage.trials}
                       label={
                         phase === "retrieval"
-                          ? "Selection score: reranked NDCG@10"
+                          ? stage.primary_metric === "raw_retrieval_ndcg@10"
+                            ? "Selection score: raw retrieval NDCG@10"
+                            : "Selection score: reranked NDCG@10"
                           : "Selection score: answer correctness"
                       }
                     />
@@ -834,7 +858,10 @@ export function OptimizationStages({
                   </div>
                 )}
                 {phase === "retrieval" && (
-                  <RetrievalComparison trials={stage.trials} />
+                  <RetrievalComparison
+                    trials={stage.trials}
+                    rawOnly={(query.data?.workflow_version ?? 1) >= 5}
+                  />
                 )}
                 <h3>{names[phase]} trials</h3>
                 <p>
@@ -848,6 +875,7 @@ export function OptimizationStages({
                   phase={phase}
                   sessionId={sessionId}
                   annotateSettings={query.data?.workflow_version !== 1}
+                  workflowVersion={query.data?.workflow_version ?? 1}
                 />
               </>
             )}

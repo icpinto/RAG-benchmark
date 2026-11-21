@@ -23,8 +23,16 @@ def percentile(values, fraction=0.95):
     )
 
 
-def compare_trials(trials, results_by_trial, question_ids, phase, limits):
-    metric = "reranked_ndcg@10" if phase == "retrieval" else "answer_correctness"
+def primary_metric(phase, workflow_version=1):
+    if phase != "retrieval":
+        return "answer_correctness"
+    return "raw_retrieval_ndcg@10" if workflow_version >= 5 else "reranked_ndcg@10"
+
+
+def compare_trials(
+    trials, results_by_trial, question_ids, phase, limits, *, workflow_version=1
+):
+    metric = primary_metric(phase, workflow_version)
     by_trial = {
         t["id"]: {r["question_id"]: r for r in results_by_trial.get(t["id"], [])}
         for t in trials
@@ -68,7 +76,12 @@ def compare_trials(trials, results_by_trial, question_ids, phase, limits):
             cost is None or cost > limits["max_query_cost"]
         ):
             violations.append("query cost")
-        recall = [rows[q]["metrics"].get("reranked_recall@10") for q in common]
+        recall_metric = (
+            "raw_retrieval_recall@10"
+            if phase == "retrieval" and workflow_version >= 5
+            else "reranked_recall@10"
+        )
+        recall = [rows[q]["metrics"].get(recall_metric) for q in common]
         ranked.append(
             {
                 "trial_id": trial["id"],

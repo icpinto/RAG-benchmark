@@ -13,7 +13,7 @@ from ragbench_core.optimization.adaptive_contracts import (
     AnswerDecision,
     RetrievalDecision,
 )
-from ragbench_core.optimization.candidates import answer_plan, screen_config
+from ragbench_core.optimization.candidates import answer_plan
 from ragbench_core.optimization.memory import (
     INSTRUCTION,
     MAX_INPUT_BYTES,
@@ -90,8 +90,8 @@ def initialize(tools, phase):
     from ragbench_core.optimization.workflow import progress
 
     if phase == "retrieval":
-        config = tools.baseline()
-        progress(tools.session_id, baseline_config=config)
+        progress(tools.session_id, baseline_config=tools.baseline())
+        config = tools.retrieval_config()
         action = {
             "config": config,
             "hypothesis": "Measure the baseline retrieval configuration",
@@ -153,7 +153,11 @@ def initialize(tools, phase):
         )
         action = {
             "candidate_id": entries[0]["candidate_id"],
-            "hypothesis": "Measure the unchanged retrieval winner as the answer-stage control",
+            "hypothesis": (
+                "Measure the retrieval winner with the template reranker as the answer-stage control"
+                if tools.session["progress"].get("workflow_version", 1) >= 5
+                else "Measure the unchanged retrieval winner as the answer-stage control"
+            ),
         }
     path = tools.write("initial_" + phase + "_action.json", action)
     save_state(
@@ -354,9 +358,11 @@ def available_candidates(tools, phase):
         if t["phase"] == phase
     }
     seeds = []
-    for seed in seed_candidates(tools.baseline(), tools.get_search_space()):
+    for seed in seed_candidates(
+        tools.retrieval_config(), tools.get_search_space("retrieval")
+    ):
         try:
-            seed = tools.validate_candidate(screen_config(seed, tools.baseline()))
+            seed = tools.validate_candidate(tools.retrieval_config(seed), phase="retrieval")
         except (ValueError, KeyError, TypeError):
             continue
         if candidate_hash(seed) not in tried:
@@ -392,12 +398,19 @@ def validate_decision(tools, phase, response, force_stop):
     if phase == "retrieval":
         if not isinstance(decision["pipeline"], dict):
             raise ValueError("A retrieval run requires a pipeline object")
-        config = tools.validate_candidate({"pipeline": decision["pipeline"]})
+        config = tools.validate_candidate(
+            {"pipeline": decision["pipeline"]}, phase="retrieval"
+        )
         if candidate_hash(config) != candidate_hash(
-            screen_config(config, tools.baseline())
+            tools.retrieval_config(config)
         ):
             raise ValueError(
                 "Retrieval must preserve baseline compression, context and prompt"
+                + (
+                    " and disable reranking"
+                    if tools.session["progress"].get("workflow_version", 1) >= 5
+                    else ""
+                )
             )
         if any(
             candidate_hash(t["config"]) == candidate_hash(config)

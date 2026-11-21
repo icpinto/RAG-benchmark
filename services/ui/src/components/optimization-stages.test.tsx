@@ -234,6 +234,60 @@ beforeEach(() => {
 });
 
 describe("Optimization stage dashboards", () => {
+  it("shows raw retrieval metrics and fixed reranking for version five", async () => {
+    fetchMock.mockImplementation((path: string) => {
+      if (!path.endsWith("/stages")) {
+        return response({
+          config: { pipeline: { query: { rerankers: [{ type: "none" }] } } },
+        });
+      }
+      const data = dashboard();
+      data.workflow_version = 5;
+      data.stages.retrieval.primary_metric = "raw_retrieval_ndcg@10";
+      return response(data);
+    });
+    mount();
+    expect(
+      await screen.findByRole("figure", {
+        name: "Selection score: raw retrieval NDCG@10",
+      }),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/Reranking is disabled/)).toBeInTheDocument();
+    expect(screen.getByText("Raw retrieval evidence")).toBeInTheDocument();
+    expect(
+      screen.queryByText("Raw retrieval versus reranked evidence"),
+    ).not.toBeInTheDocument();
+    const comparison = screen.getByRole("table", {
+      name: "raw-and-reranked table",
+    });
+    expect(
+      within(comparison).queryByRole("columnheader", { name: /reranked/i }),
+    ).not.toBeInTheDocument();
+    const row = (
+      await screen.findAllByRole("link", { name: "retrieva" })
+    )[0].closest("tr")!;
+    fireEvent.click(within(row).getByText("View config"));
+    expect(
+      await within(row).findByText("Reranker · Fixed"),
+    ).toBeInTheDocument();
+    expect(
+      within(row).queryByText("Reranker · Varied here"),
+    ).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("tab", { name: /Answering/ }));
+    expect(
+      await screen.findByText(
+        /Varied here: reranker, context\/compression and answer prompt/,
+      ),
+    ).toBeInTheDocument();
+    const answerRow = (
+      await screen.findByRole("link", { name: "answer-b" })
+    ).closest("tr")!;
+    fireEvent.click(within(answerRow).getByText("View config"));
+    expect(
+      await within(answerRow).findByText("Reranker · Varied here"),
+    ).toBeInTheDocument();
+  });
+
   it.each([
     "Highest-ranked feasible retrieval trial; sole parent for answer search",
     "Baseline fallback: no feasible ranked retrieval trial was available",

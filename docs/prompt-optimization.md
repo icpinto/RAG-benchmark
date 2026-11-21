@@ -81,9 +81,11 @@ Select recipes in the new optimization form, in execution order. API clients can
 send `prompt_optimization` on `POST /optimizations`; omitting it inherits the
 template settings, while an explicit empty list disables the feature.
 
-New sessions use workflow version 4, with an adaptive outer experiment loop described
+New sessions use workflow version 5, with an adaptive outer experiment loop described
 in [Auto Optimize](auto-optimize.md#adaptive-experiment-loop). Existing DSPy sessions
-retain workflow version 3 and their saved queues. Retrieval screening metrics are unchanged.
+retain their workflow version and saved state. Version 5 disables reranking during
+retrieval screening and selects retrieval winners using raw NDCG@10. Answering and
+DSPy compilation restore the template reranker on the winning retrieval settings.
 The frozen tuning partition is split 75/25 into prompt training and validation,
 preserving evidence groups. The existing final holdout remains separate. Too few
 independent tuning groups requires a fresh dataset/version with additional evidence.

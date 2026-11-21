@@ -23,11 +23,13 @@ def retrieval_identity(config):
     )
 
 
-def screen_config(config, baseline):
+def screen_config(config, baseline, workflow_version=1):
     config = deepcopy(config)
     query = config["pipeline"]["query"]
     for key in ("compressors", "context_assemblers", "prompt_builders"):
         query[key] = deepcopy(baseline["pipeline"]["query"][key])
+    if workflow_version >= 5:
+        query["rerankers"] = [{"type": "none"}]
     return config
 
 
@@ -44,17 +46,25 @@ def answer_plan(tools, trials, ranking, maximum):
         None,
     )
     if winner is not None:
-        parent = tools.validate_candidate(winner["config"])
+        parent = deepcopy(winner["config"])
+        if tools.session["progress"].get("workflow_version", 1) >= 5:
+            parent["pipeline"]["query"]["rerankers"] = deepcopy(
+                baseline["pipeline"]["query"]["rerankers"]
+            )
+        parent = tools.validate_candidate(parent)
         source = winner["id"]
         reason = "Highest-ranked feasible retrieval trial; sole parent for answer search"
         shortlist = [{"trial_id": source, "reason": reason}]
         parent_variant = "inherited"
     else:
         parent = baseline
+        control = screen_config(
+            baseline, baseline, tools.session["progress"].get("workflow_version", 1)
+        )
         baseline_sources = [
             t["id"]
             for t in trials
-            if candidate_hash(t["config"]) == candidate_hash(baseline)
+            if candidate_hash(t["config"]) == candidate_hash(control)
         ]
         source = baseline_sources[0] if len(baseline_sources) == 1 else None
         reason = "Baseline fallback: no feasible ranked retrieval trial was available"
@@ -84,7 +94,7 @@ def answer_plan(tools, trials, ranking, maximum):
     add(parent, source, parent_variant)
 
     space = tools.get_search_space()
-    # Each dimension changes independently from the unchanged retrieval winner.
+    # Each dimension changes independently from the answer-stage control.
     for dimension in ("prompt", "context", "reranker"):
         if dimension == "prompt":
             for name in PROMPT_PRESETS:

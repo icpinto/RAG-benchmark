@@ -84,6 +84,8 @@ def complete(tools, run_id, score=0.5, failed=False):
                             "answer_correctness": score,
                             "reranked_ndcg@10": score,
                             "reranked_recall@10": score,
+                            "raw_retrieval_ndcg@10": score,
+                            "raw_retrieval_recall@10": score,
                             "query_latency_seconds": 0.1,
                         },
                         case_config={

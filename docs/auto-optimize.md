@@ -6,13 +6,19 @@ the same benchmark engine.
 
 ## Adaptive experiment loop
 
-New sessions and forks use workflow version 4. Existing sessions retain versions
-1–3, including their saved queues. Startup creates the additive
+New sessions and forks use workflow version 5. Existing sessions retain versions
+1–4, including their saved queues and ranking policies. Startup creates the additive
 `optimization_iterations` table; rebuild the API, worker, optimizer, scheduler,
 and UI to activate the new workflow. No existing runs are converted.
 
-Retrieval starts with the baseline. Answering starts with the unchanged highest-ranked
-feasible retrieval configuration, or the existing baseline fallback. Each stage then
+Retrieval starts with the baseline retrieval settings and reranking disabled
+(`rerankers: [{type: none}]`), even when the template configures a reranker.
+Retrieval selection uses raw NDCG@10, with raw recall@10 as the recall tie-breaker.
+Compression, context, and prompts remain at baseline throughout retrieval screening.
+Reranking is available only during answering and final holdout evaluation.
+Answering starts with the highest-ranked feasible retrieval configuration combined
+with the template's complete reranker settings, or the original baseline fallback.
+The original template baseline remains unchanged for holdout comparison. Each stage then
 runs one configuration at a time: **run → persist observation → rebuild context →
 planner decision → validate → next experiment or stop**. Seed retrieval configurations
 are suggestions, rather than an automatically executed batch.
@@ -128,11 +134,12 @@ Each optimization has three linked tabs. Share a view using
 The selected tab survives polling and reloads; active dashboards refresh every
 three seconds and fetch a final update when the session finishes.
 
-- **Retrieval / tuning** shows NDCG@10 selection scores, raw versus reranked
+- **Retrieval / tuning** shows raw NDCG@10 selection scores and raw
   NDCG/recall/precision/MRR at 3, 5, and 10, latency, coverage, and chunk counts.
   Trial rows show chunking units/size/overlap, embeddings, indexes, rewriting,
-  retrieval, and reranking. New sessions keep context, compression, and prompts
-  at baseline during screening.
+  retrieval, and the disabled reranker. New sessions keep context, compression,
+  and prompts at baseline during screening. Historical sessions retain their
+  reranked selection metrics and raw-versus-reranked comparisons.
 - **Answering / tuning** shows correctness, claim/citation support, latency,
   token/context usage, and known estimated costs. Each trial identifies its source
   retrieval trial and its reranker, context, and prompt settings. Configuration
@@ -164,7 +171,11 @@ ingestion, rewriting, retrieval, and fixed filters. The baseline comparison runs
 during holdout confirmation without consuming an independent answering slot.
 Those persisted queues are deterministic, deduplicated, and reused after recovery.
 Version 4 retains the same parent and approved variants, selecting subsequent
-experiments adaptively as described above.
+experiments adaptively as described above. Version 5 selects that parent using raw
+retrieval metrics, restores the template reranker for the first answering trial,
+and explores approved rerankers only in the answering stage. These stage boundaries
+also apply to DSPy control and compilation configurations. No historical sessions
+are converted and no database migration is required for version 5.
 
 Without DSPy enabled, prompt choices are **Baseline** (the original prompt),
 **Concise v1**, and

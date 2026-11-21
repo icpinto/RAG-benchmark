@@ -181,7 +181,7 @@ def create_optimization(req: OptimizationRequest):
                     id=session_id,
                     request=req.model_dump(),
                     template=template,
-                    progress={"workflow_version": 4},
+                    progress={"workflow_version": 5},
                 )
             )
             conn.add(

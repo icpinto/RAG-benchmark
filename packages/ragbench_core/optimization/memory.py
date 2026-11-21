@@ -9,7 +9,12 @@ from ragbench_core.optimization.adaptive_contracts import Observation
 from ragbench_core.optimization.models import render_prompt
 from ragbench_core.optimization.redaction import public_configuration
 from ragbench_core.optimization.search import candidate_hash
-from ragbench_core.optimization.selection import compare_trials, finite, percentile
+from ragbench_core.optimization.selection import (
+    compare_trials,
+    finite,
+    percentile,
+    primary_metric,
+)
 from ragbench_core.optimization.stages import config_summary, configuration_diff
 
 PROMPT_VERSION = "ragbench-react-v1"
@@ -73,7 +78,7 @@ def paired_delta(current, reference, metric, ids):
     }
 
 
-def evidence_from_artifact(tools, row):
+def evidence_from_artifact(tools, row, phase=None):
     """Read only the retrieval trace of an already scoped question, within artifact storage."""
     path = row.get("artifact_paths", {}).get("retrieval_traces")
     if not path:
@@ -86,9 +91,13 @@ def evidence_from_artifact(tools, row):
         if path.stat().st_size > 2_000_000:
             return None
         payload = json.loads(path.read_text(encoding="utf-8"))
-        return json.dumps(
-            public_configuration(payload.get("reranked", [])), ensure_ascii=False
-        )[:1800]
+        key = (
+            "raw"
+            if phase == "retrieval"
+            and tools.session["progress"].get("workflow_version", 1) >= 5
+            else "reranked"
+        )
+        return json.dumps(public_configuration(payload.get(key, [])), ensure_ascii=False)[:1800]
     except (OSError, ValueError, TypeError, AttributeError):
         return None
 
@@ -111,7 +120,7 @@ def build_observation(tools, phase, trial=None, entry=None):
     )
     ids = question_ids(session, phase)
     rows = scoped_results(trial["id"], ids) if trial else []
-    metric = "reranked_ndcg@10" if phase == "retrieval" else "answer_correctness"
+    metric = primary_metric(phase, session["progress"].get("workflow_version", 1))
     ranking = tools.compare_trials(phase)
     ranked = next((r for r in ranking if trial and r["trial_id"] == trial["id"]), None)
     previous = trials[: trials.index(trial)] if trial else trials
@@ -121,6 +130,7 @@ def build_observation(tools, phase, trial=None, entry=None):
         sorted(ids),
         phase,
         session["request"]["limits"],
+        workflow_version=session["progress"].get("workflow_version", 1),
     )
     best_id = next((r["trial_id"] for r in previous_ranking if r["feasible"]), None)
     initial = trials[0] if trials else None
@@ -158,7 +168,7 @@ def build_observation(tools, phase, trial=None, entry=None):
                         {"doc_id": e["doc_id"], "quote": e["quote"][:600]}
                         for e in q["evidence"][:2]
                     ],
-                    "retrieval": evidence_from_artifact(tools, row),
+                    "retrieval": evidence_from_artifact(tools, row, phase),
                     "judge_feedback": json.dumps(
                         public_configuration(judge), ensure_ascii=False
                     )[:1200],
@@ -372,7 +382,12 @@ def build_context(
             "allowed_actions": ["stop"] if force_stop else ["run", "stop"],
             "fixed": "Answer model and generation; source data; filters; extraction and cleaning. "
             + (
-                "Compression, context and prompts."
+                "Compression, context and prompts. "
+                + (
+                    "Reranking is disabled; use only the none reranker."
+                    if session["progress"].get("workflow_version", 1) >= 5
+                    else ""
+                )
                 if phase == "retrieval"
                 else "Choose only an available candidate ID; no pipeline composition."
             ),
@@ -409,8 +424,10 @@ def build_context(
         "corrective_feedback": feedback,
     }
     if phase == "retrieval":
-        data["search_space"] = public_configuration(tools.get_search_space())
-        data["baseline_pipeline"] = public_configuration(tools.baseline()["pipeline"])
+        data["search_space"] = public_configuration(tools.get_search_space("retrieval"))
+        data["baseline_pipeline"] = public_configuration(
+            tools.retrieval_config()["pipeline"]
+        )
     data = public_configuration(data)
 
     def fits():
