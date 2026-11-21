@@ -150,13 +150,10 @@ class OptimizationTools:
                 f"{role} model call failed ({type(exc).__name__})"
             ) from None
         finally:
-            reported = [usage.get("prompt_tokens"), usage.get("completion_tokens")]
             budget.settle(
                 operation,
                 seconds=time.monotonic() - started,
-                actual_tokens=sum(reported)
-                if all(isinstance(n, int) for n in reported)
-                else None,
+                actual_tokens=budget.reported_token_total(usage),
             )
 
     def profile_corpus(self):

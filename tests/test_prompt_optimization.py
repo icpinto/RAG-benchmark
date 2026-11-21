@@ -331,6 +331,83 @@ def test_cancellation_and_token_caps_prevent_calls(database, config, examples):
     run_job(job_id, compiler=lambda *args: pytest.fail("cancelled work ran"))
 
 
+@pytest.mark.parametrize("with_parent", [False, True])
+def test_compilation_releases_reported_token_reservations(
+    database, config, examples, with_parent
+):
+    job_id = make_job(config, examples, limits={"max_tokens": 1000, "max_calls": 16})
+    if with_parent:
+        request = OptimizationRequest(limits={"max_tokens": 1000}).model_dump()
+        with db.SessionLocal.begin() as conn:
+            conn.add(store.OptimizationSession(id="parent", request=request))
+        update_job(job_id, session_id="parent")
+    update_job(job_id, lease_owner="owner")
+    account = CompilationAccount(job_id, 0, "owner")
+    # Repeated task/judge calls would exhaust the cap using their estimates.
+    for role in ["prompt_task", "prompt_judge"] * 8:
+        with account.call(role, "test", task_profile(config)) as usage:
+            usage.update(prompt_tokens=5, completion_tokens=3)
+    for owner_id in [job_id, "parent"] if with_parent else [job_id]:
+        totals = budget.totals(owner_id)
+        assert totals["tokens"] == totals["reported_actual_tokens"] == 128
+        assert totals["reservations"] == 16
+        assert totals["by_role"]["prompt_judge"]["reserved_tokens"] == 64
+    with (
+        pytest.raises(budget.BudgetExhausted, match="call/token limit"),
+        account.call("prompt_task", "test", task_profile(config)),
+    ):
+        pytest.fail("call limit was bypassed")
+
+
+@pytest.mark.parametrize(
+    "usage",
+    [
+        {},
+        {"prompt_tokens": 5},
+        {"prompt_tokens": 5, "completion_tokens": None},
+        {"prompt_tokens": -1, "completion_tokens": 3},
+        {"prompt_tokens": True, "completion_tokens": 3},
+        {"prompt_tokens": 5, "completion_tokens": "3"},
+    ],
+)
+def test_compilation_keeps_reservation_without_complete_usage(
+    database, config, examples, usage
+):
+    job_id = make_job(config, examples, limits={"max_tokens": 1000})
+    update_job(job_id, lease_owner="owner")
+    account = CompilationAccount(job_id, 0, "owner")
+    with (
+        pytest.raises(RuntimeError, match="provider failed"),
+        account.call("prompt_judge", "x" * 300, task_profile(config)) as reported,
+    ):
+        reported.update(usage)
+        raise RuntimeError("provider failed")
+    assert budget.totals(job_id)["tokens"] == 684
+    assert budget.totals(job_id)["unreported_token_operations"] == 1
+    with (
+        pytest.raises(budget.BudgetExhausted),
+        account.call("prompt_judge", "x" * 300, task_profile(config)),
+    ):
+        pytest.fail("uncertain usage was released")
+
+
+def test_compilation_keeps_capacity_for_calls_in_progress(database, config, examples):
+    job_id = make_job(config, examples, limits={"max_tokens": 1000})
+    update_job(job_id, lease_owner="owner")
+    account = CompilationAccount(job_id, 0, "owner")
+    with account.call("prompt_task", "x" * 300, task_profile(config)) as usage:
+        assert budget.totals(job_id)["tokens"] == 684
+        with (
+            pytest.raises(budget.BudgetExhausted),
+            account.call("prompt_task", "x" * 300, task_profile(config)),
+        ):
+            pytest.fail("in-flight reservation was ignored")
+        usage.update(prompt_tokens=5, completion_tokens=3)
+    with account.call("prompt_task", "x" * 300, task_profile(config)) as usage:
+        usage.update(prompt_tokens=5, completion_tokens=3)
+    assert budget.totals(job_id)["tokens"] == 16
+
+
 class NullAccount:
     def check(self):
         pass

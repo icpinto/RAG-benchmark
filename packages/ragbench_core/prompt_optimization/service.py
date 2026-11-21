@@ -258,17 +258,15 @@ class CompilationAccount:
         try:
             yield usage
         finally:
-            actual = usage.get("prompt_tokens"), usage.get("completion_tokens")
-            reported = sum(actual) if all(isinstance(x, int) for x in actual) else None
+            reported = budget.reported_token_total(usage)
             seconds = time.monotonic() - started
             budget.settle(
-                operation, actual_tokens=reported, tokens=reported, seconds=seconds
+                operation, actual_tokens=reported, seconds=seconds
             )
             if self.session_id:
                 budget.settle(
                     operation + ":session",
                     actual_tokens=reported,
-                    tokens=reported,
                     seconds=seconds,
                 )
 

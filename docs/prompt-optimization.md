@@ -119,7 +119,11 @@ Context preparation, task generation, proposals/reflection, and judging all rese
 usage before calls. Auto compilation also charges the parent session's ledger and
 keeps confirmation capacity reserved. Longer compiled prompts must fit an enlarged
 confirmation reservation before their answer trials run. Unknown pricing remains
-unknown. Reservations are conservative estimates, not provider invoices.
+unknown. Calls initially reserve conservative token estimates. Complete provider
+input/output token counts replace those estimates after the call in both the job
+and parent session ledgers, freeing unused token capacity for later trials. Missing
+or incomplete usage keeps the estimate charged. Monetary reservations remain
+conservative estimates, not provider invoices.
 
 Cancel/pause checks happen at question and model-call boundaries; active calls can
 finish within their timeout. Interrupted compilation restarts rather than resuming

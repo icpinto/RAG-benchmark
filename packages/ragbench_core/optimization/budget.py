@@ -1,4 +1,4 @@
-"""Conservative reservations survive retries and interrupted provider calls."""
+"""Reserve before calls; charge reported usage and retain uncertain reservations."""
 
 from __future__ import annotations
 
@@ -75,20 +75,25 @@ def reserve(session_id, operation, role, tokens, cost, seconds=0, credit=None):
     return True
 
 
+def reported_token_total(usage):
+    """Only complete, nonnegative provider counts can release a reservation."""
+    counts = usage.get("prompt_tokens"), usage.get("completion_tokens")
+    return sum(counts) if all(type(n) is int and n >= 0 for n in counts) else None
+
+
 def settle(operation, tokens=None, cost=None, seconds=None, actual_tokens=None):
+    """Replace token estimates with reported usage; keep estimates when unknown."""
     with store.db.SessionLocal.begin() as conn:
         row = conn.get(store.BudgetUsage, operation)
         if row:
-            if tokens is not None:
-                row.tokens = max(
-                    row.tokens, tokens
-                )  # Never release uncertain token reservations.
+            if type(actual_tokens) is int and actual_tokens >= 0:
+                row.tokens = row.actual_tokens = actual_tokens
+            elif tokens is not None:
+                row.tokens = max(row.tokens, tokens)
             if cost is not None:
                 row.cost = max(row.cost or 0, cost)
             if seconds is not None:
                 row.seconds = seconds
-            if actual_tokens is not None:
-                row.actual_tokens = actual_tokens
             row.status = "settled"
 
 

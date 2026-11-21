@@ -262,6 +262,26 @@ def test_session_lease_rejects_duplicate_delivery(session):
     assert store.acquire(session, "two")
 
 
+@pytest.mark.parametrize("actual_tokens", [0, 8, 700])
+def test_budget_settlement_charges_reported_tokens(session, actual_tokens):
+    budget.reserve(session, "reported", "planner", 500, None)
+    budget.settle("reported", actual_tokens=actual_tokens)
+    budget.settle("reported", actual_tokens=actual_tokens)
+    totals = budget.totals(session)
+    assert totals["tokens"] == actual_tokens
+    assert totals["reported_actual_tokens"] == actual_tokens
+    assert totals["reservations"] == 1
+
+
+def test_budget_settlement_keeps_unreported_reservations(session):
+    budget.reserve(session, "unreported", "planner", 500, None)
+    budget.settle("unreported", tokens=8)
+    assert budget.totals(session)["tokens"] == 500
+    assert budget.totals(session)["unreported_token_operations"] == 1
+    budget.settle("unreported", tokens=700)
+    assert budget.totals(session)["tokens"] == 700
+
+
 def test_ranking_requires_paired_coverage_and_reports_unknown_cost():
     ids = [str(i) for i in range(100)]
     trials = [{"id": "good"}, {"id": "missing"}]

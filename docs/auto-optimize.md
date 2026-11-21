@@ -146,9 +146,11 @@ source trials only when matching is unambiguous.
 
 ## Budgets and providers
 
-Token/cost reservations are conservative upper estimates, not provider invoices.
-The ledger includes planner, synthesizer, verifier, benchmark, and judge work;
-actual provider-reported model tokens are also retained when available. Interrupted
+Calls reserve conservative token/cost estimates before execution. Complete provider
+input/output token counts replace model-call token estimates at settlement, freeing
+unused capacity. Missing or incomplete usage retains the token estimate; cost
+reservations remain conservative estimates, not provider invoices. The ledger
+includes planner, synthesizer, verifier, benchmark, and judge work. Interrupted
 calls may have been billed, so retries reserve again. Unknown pricing is displayed
 as unknown, never inferred as zero. Query costs exclude offline dataset/planning
 work; semantic judge usage is recorded separately in benchmark traces.
