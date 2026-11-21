@@ -39,13 +39,12 @@ def plan_answers(tools, maximum):
         for entry, config in zip(existing["answer_plan"], existing["answer_candidates"])
     ]
     parents = [e for e in entries if e["variant"] in {"baseline", "inherited"}]
-    variant_parents = parents[1:] or parents[:1]
     compiled = []
     seen_recipes = set()
     for index, recipe in enumerate(
         session["request"]["prompt_optimization"]["configs"]
     ):
-        for parent in variant_parents:
+        for parent in parents:
             identity = stable_hash(
                 {"recipe": recipe, "parent": candidate_hash(parent["config"])}
             )
@@ -56,6 +55,7 @@ def plan_answers(tools, maximum):
                 {
                     "candidate_hash": "pending:" + identity,
                     "source_trial_id": parent["source_trial_id"],
+                    **({"reason": parent["reason"]} if "reason" in parent else {}),
                     "variant": "dspy:" + (recipe.get("preset") or recipe["optimizer"]),
                     "recipe_index": index,
                     "config": parent["config"],
@@ -76,11 +76,15 @@ def plan_answers(tools, maximum):
         for entry in existing["answer_plan"]
         if entry["variant"] not in {"baseline", "inherited"}
     ]
-    queue = parents + compiled + variants
+    queue = [
+        {**entry, "scheduled": i < maximum}
+        for i, entry in enumerate(parents + compiled + variants)
+    ]
     return {
         "retrieval_shortlist": existing["retrieval_shortlist"],
-        "prompt_answer_plan": [
-            {**entry, "scheduled": i < maximum} for i, entry in enumerate(queue)
+        "prompt_answer_plan": queue,
+        "answer_plan": [
+            {k: v for k, v in entry.items() if k != "config"} for entry in queue
         ],
     }
 
@@ -179,9 +183,10 @@ def search_answers(tools, dispatch, wait_for_trial, save_progress):
                         error="Prompt compilation could not be queued",
                     )
             job = get_job(entry["compilation_job_id"])
-            if job["status"] not in TERMINAL:
+            while job["status"] not in TERMINAL:
                 store.update(session_id, status="waiting")
                 interrupt({"reason": "prompt_compilation", "job_id": job["id"]})
+                job = get_job(entry["compilation_job_id"])
             artifacts = artifacts_for_job(job["id"])
             if not artifacts:
                 entry.update(

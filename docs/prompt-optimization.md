@@ -86,8 +86,8 @@ The frozen tuning partition is split 75/25 into prompt training and validation,
 preserving evidence groups. The existing final holdout remains separate. Too few
 independent tuning groups requires a fresh dataset/version with additional evidence.
 
-Answer slots are allocated to baseline, unchanged shortlisted retrieval parents,
-selected DSPy configurations interleaved across parents, then existing prompt,
+Answer slots are allocated to the unchanged highest-ranked feasible retrieval
+trial, selected DSPy configurations using that parent, then existing prompt,
 context, and reranker variants. Compilation runs only for scheduled slots. The
 answer-trial cap is never raised automatically. Failed compilation is recorded
 and skipped; other scheduled candidates can still run within the remaining budget.

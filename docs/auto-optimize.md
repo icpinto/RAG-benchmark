@@ -92,17 +92,19 @@ selection/exclusion reasons.
 
 ### Retrieval shortlist and answer search
 
-New sessions use workflow version 2. They shortlist up to two distinct feasible
-retrieval setups, excluding a duplicate baseline. Setup identity includes
-ingestion, rewriting, retrieval, and fixed filters; the highest-ranked
-representative is retained when only downstream settings differ.
+New answer queues in workflow versions 2 and 3 use the single highest-ranked
+feasible retrieval trial as their parent, including when it differs from the
+baseline only by reranker settings. Selection retains the existing NDCG@10
+ranking, coverage requirements, constraints, and tie-breakers.
 
-Answer evaluation runs the unchanged baseline first, then unchanged shortlisted
-pipelines. Remaining slots test prompt variants, then bounded context/compression
-presets, then approved rerankers, interleaving shortlisted parents. Without a
-qualifying shortlist, variants use the baseline as their parent. Every candidate
-preserves its parent's ingestion, rewriting, and retrieval settings. The persisted
-queue is deterministic, deduplicated, and reused after recovery.
+Answer evaluation runs that trial's unchanged pipeline first, even with an
+answer-trial cap of one. Remaining slots test prompt variants, then bounded
+context/compression presets, then approved rerankers, all derived from the same
+parent. Without a feasible ranked retrieval trial, answering falls back to the
+baseline and records the reason. Every candidate preserves its parent's
+ingestion, rewriting, retrieval, and fixed filters. The baseline comparison runs
+during holdout confirmation without consuming an independent answering slot.
+The persisted queue is deterministic, deduplicated, and reused after recovery.
 
 Without DSPy enabled, prompt choices are **Baseline** (the original prompt),
 **Concise v1**, and
@@ -119,8 +121,9 @@ pipeline, never an untested combination of individually winning settings.
 
 Confirmation evaluates that exact pipeline and the baseline on holdout, with one
 execution if they are identical. Only confirmed improvement replaces the baseline
-recommendation. Existing sessions retain their original workflow and saved queues;
-historical dashboards infer source trials only when matching is unambiguous.
+recommendation. Existing sessions retain their saved queues and compilation plans;
+version-1 sessions retain their original workflow. Historical dashboards infer
+source trials only when matching is unambiguous.
 
 - Sources, including URL response bytes, are captured once. Later edits cannot
   change a running experiment. Unreadable documents and identical extracted copies

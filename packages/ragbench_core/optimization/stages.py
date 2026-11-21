@@ -308,6 +308,17 @@ def stage_dashboard(session, *, redact=lambda value: value):
                     else "insufficient shared coverage"
                 )
             roles, reasons = [], []
+            if phase == "answer":
+                entry = next(
+                    (
+                        e
+                        for e in state.get("answer_plan", [])
+                        if e["candidate_hash"] == _hash(trial["config"])
+                    ),
+                    None,
+                )
+                if entry and entry.get("reason"):
+                    reasons.append(entry["reason"])
             if _hash(trial["config"]) == baseline_hash:
                 roles.append("baseline")
             if trial["id"] in shortlist_ids:
@@ -336,7 +347,7 @@ def stage_dashboard(session, *, redact=lambda value: value):
                 reasons.append(unavailable)
             elif not roles and phase == "retrieval" and shortlist is not None:
                 reasons.append(
-                    "Not shortlisted: lower rank, duplicate retrieval setup, or shortlist capacity"
+                    "Not selected as an answering parent: lower rank or saved handoff policy"
                     if shortlist_decided
                     else "Awaiting retrieval shortlist selection"
                 )

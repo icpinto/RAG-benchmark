@@ -401,13 +401,16 @@ def test_graph_wait_resume_does_not_dispatch_trial_twice(session):
     assert len(calls) == 1
 
 
-def test_dspy_graph_compiles_once_and_confirms_without_training_leakage(session, monkeypatch):
+def test_dspy_graph_compiles_once_and_confirms_without_training_leakage(
+    session, monkeypatch
+):
     import yaml
     from langgraph.checkpoint.memory import InMemorySaver
     from langgraph.types import Command
     from ragbench_core.engine.data_loader import load_ground_truth
     from ragbench_core.prompt_optimization.artifacts import CompiledPrompt
     from ragbench_core.prompt_optimization.service import get_job, run_job
+
     from services.worker.app import prompt_tasks
 
     request = store.get(session)["request"]
@@ -417,8 +420,22 @@ def test_dspy_graph_compiles_once_and_confirms_without_training_leakage(session,
     tools = OptimizationTools(session, fake_registry())
     prepare_dataset(tools)
     tools.reserve_confirmation()
+    winner = tools.baseline()
+    winner["pipeline"]["query"]["retrievers"] = [{"type": "bm25"}]
+    save_stage_trial(tools, "retrieval-winner", winner, "retrieval", score=0.9)
+    store.update(
+        session,
+        progress={
+            **store.get(session)["progress"],
+            "retrieval_ranking": tools.compare_trials("retrieval"),
+        },
+    )
     dispatches, jobs = [], []
-    monkeypatch.setattr(prompt_tasks.compile_prompt_job, "apply_async", lambda args, **kwargs: jobs.append(args[0]))
+    monkeypatch.setattr(
+        prompt_tasks.compile_prompt_job,
+        "apply_async",
+        lambda args, **kwargs: jobs.append(args[0]),
+    )
 
     def dispatch(run_id):
         with db.SessionLocal() as conn:
@@ -427,10 +444,26 @@ def test_dspy_graph_compiles_once_and_confirms_without_training_leakage(session,
         case = expand_cases(trial["config"])[0]
         compiled = case.query_config["prompt_builder"]["type"] == "compiled"
         score = 0.95 if compiled else 0.3
-        for question in load_ground_truth(trial["config"]["_snapshot"]["ground_truth_file"]):
-            db.insert_result(run_id + question.question_id, run_id, case.case_id, question.question,
-                {"answer_correctness": score, "query_latency_seconds": 0.1}, "Answer", {}, question_id=question.question_id)
-        db.upsert_run(run_id, "fixture", "completed", trial["config"], dataset_hash=trial["config"]["_snapshot"]["dataset_hash"])
+        for question in load_ground_truth(
+            trial["config"]["_snapshot"]["ground_truth_file"]
+        ):
+            db.insert_result(
+                run_id + question.question_id,
+                run_id,
+                case.case_id,
+                question.question,
+                {"answer_correctness": score, "query_latency_seconds": 0.1},
+                "Answer",
+                {},
+                question_id=question.question_id,
+            )
+        db.upsert_run(
+            run_id,
+            "fixture",
+            "completed",
+            trial["config"],
+            dataset_hash=trial["config"]["_snapshot"]["dataset_hash"],
+        )
         with db.SessionLocal.begin() as conn:
             conn.get(store.OptimizationTrial, run_id).status = "completed"
 
@@ -439,11 +472,34 @@ def test_dspy_graph_compiles_once_and_confirms_without_training_leakage(session,
     graph.invoke({"session_id": session, "stage": "answer"}, graph_config)
     assert graph.get_state(graph_config).interrupts and len(jobs) == 1
     job = get_job(jobs[0])
-    holdout_ids = {q["question_id"] for q in store.dataset(session)["payload"] if q["split"] == "holdout"}
-    assert not set(job["splits"]["training"] + job["splits"]["validation"]) & holdout_ids
+    assert job["config"]["pipeline"] == winner["pipeline"]
+    saved = deepcopy(store.get(session)["progress"]["prompt_answer_plan"])
+    from ragbench_core.prompt_optimization import auto
+
+    def unexpected_replan(*args):
+        pytest.fail("A saved prompt compilation plan must not be rebuilt")
+
+    monkeypatch.setattr(auto, "plan_answers", unexpected_replan)
+    graph.invoke(Command(resume=True), graph_config)
+    assert jobs == [job["id"]]
+    assert store.get(session)["progress"]["prompt_answer_plan"] == saved
+    holdout_ids = {
+        q["question_id"]
+        for q in store.dataset(session)["payload"]
+        if q["split"] == "holdout"
+    }
+    assert (
+        not set(job["splits"]["training"] + job["splits"]["validation"]) & holdout_ids
+    )
 
     def compile_recipe(recipe, prepared, splits, config, judge, account):
-        return CompiledPrompt(instructions="Use evidence.", provenance={"training_question_ids": splits["training"], "validation_question_ids": splits["validation"]}).model_dump(), {"validation_score": 0.95}
+        return CompiledPrompt(
+            instructions="Use evidence.",
+            provenance={
+                "training_question_ids": splits["training"],
+                "validation_question_ids": splits["validation"],
+            },
+        ).model_dump(), {"validation_score": 0.95}
 
     run_job(job["id"], compiler=compile_recipe, prepare=lambda *args: [])
     graph.invoke(Command(resume=True), graph_config)
@@ -452,11 +508,32 @@ def test_dspy_graph_compiles_once_and_confirms_without_training_leakage(session,
     assert len(jobs) == 1
     answers = [t for t in dispatches if t["phase"] == "answer"]
     assert len(answers) == 2
-    assert all(set(t["config"]["_snapshot"]["question_ids"]) == set(job["splits"]["validation"]) for t in answers)
-    assert all(set(t["config"]["_snapshot"]["question_ids"]) == holdout_ids for t in dispatches if t["phase"] == "confirm")
+    assert answers[0]["config"]["pipeline"] == winner["pipeline"]
+    assert all(
+        t["config"]["pipeline"]["query"]["retrievers"] == [{"type": "bm25"}]
+        for t in answers
+    )
+    assert all(
+        e["source_trial_id"] == "retrieval-winner"
+        for e in store.get(session)["progress"]["answer_plan"]
+    )
+    assert all(
+        set(t["config"]["_snapshot"]["question_ids"])
+        == set(job["splits"]["validation"])
+        for t in answers
+    )
+    assert all(
+        set(t["config"]["_snapshot"]["question_ids"]) == holdout_ids
+        for t in dispatches
+        if t["phase"] == "confirm"
+    )
     from ragbench_core.engine.snapshots import snapshot_inputs
+
     exported = yaml.safe_load((tools.root / "recommended.yaml").read_text())
-    assert set(snapshot_inputs("replay", exported)["_snapshot"]["question_ids"]) == holdout_ids
+    assert (
+        set(snapshot_inputs("replay", exported)["_snapshot"]["question_ids"])
+        == holdout_ids
+    )
 
 
 def test_unapproved_compiled_prompt_cannot_enter_auto_search(session):
@@ -1599,7 +1676,7 @@ def test_stage_api_is_scoped_redacted_and_uses_batched_reads(session):
 
 
 @pytest.mark.parametrize("maximum", [1, 2, 5, 20])
-def test_answer_plan_shortlists_distinct_retrieval_and_respects_caps(session, maximum):
+def test_answer_plan_uses_only_retrieval_winner_and_respects_caps(session, maximum):
     from ragbench_core.optimization.candidates import answer_plan, retrieval_identity
     from ragbench_core.optimization.search import candidate_hash
 
@@ -1610,6 +1687,9 @@ def test_answer_plan_shortlists_distinct_retrieval_and_respects_caps(session, ma
     base = tools.baseline()
     first = deepcopy(base)
     first["pipeline"]["query"]["retrievers"] = [{"type": "bm25"}]
+    first["pipeline"]["query"]["rerankers"] = [
+        {"type": "diversity_mmr", "lambda_mult": 0.7}
+    ]
     duplicate = deepcopy(first)
     duplicate["pipeline"]["query"]["rerankers"] = [{"type": "diversity_mmr"}]
     second = deepcopy(first)
@@ -1623,33 +1703,142 @@ def test_answer_plan_shortlists_distinct_retrieval_and_respects_caps(session, ma
             ("second", second),
         )
     ]
+    before = deepcopy(trials)
     ranking = [{"trial_id": t["id"], "feasible": True} for t in trials[1:] + trials[:1]]
     plan = answer_plan(tools, trials, ranking, maximum)
-    assert [x["trial_id"] for x in plan["retrieval_shortlist"]] == ["best", "second"][
-        : maximum - 1
-    ]
-    assert candidate_hash(plan["answer_candidates"][0]) == candidate_hash(base)
+    assert [x["trial_id"] for x in plan["retrieval_shortlist"]] == ["best"]
+    assert candidate_hash(plan["answer_candidates"][0]) == candidate_hash(first)
+    assert plan["answer_candidates"][0] == first
     assert len(plan["answer_candidates"]) <= maximum
     assert len({candidate_hash(c) for c in plan["answer_candidates"]}) == len(
         plan["answer_candidates"]
     )
     assert plan == answer_plan(tools, trials, ranking, maximum)
+    assert trials == before
+    assert all(e["source_trial_id"] == "best" for e in plan["answer_plan"])
     for candidate, entry in zip(plan["answer_candidates"], plan["answer_plan"]):
         parent = next(
             t["config"] for t in trials if t["id"] == entry["source_trial_id"]
         )
         assert retrieval_identity(candidate) == retrieval_identity(parent)
+        assert candidate["llm"] == first["llm"]
+        if not entry["variant"].startswith("reranker:"):
+            assert (
+                candidate["pipeline"]["query"]["rerankers"]
+                == first["pipeline"]["query"]["rerankers"]
+            )
     if maximum == 5:
-        assert all(
-            c["pipeline"]["query"]["prompt_builders"][0]["preset_id"] == "concise_v1"
-            for c in plan["answer_candidates"][3:]
-        )
+        assert [e["variant"] for e in plan["answer_plan"][:3]] == [
+            "inherited",
+            "concise_v1",
+            "evidence_first_v1",
+        ]
         assert any(not entry["scheduled"] for entry in plan["answer_plan"])
     if maximum == 20:
         assert any(
             entry["variant"].startswith("reranker:") and entry["scheduled"]
             for entry in plan["answer_plan"]
         )
+
+
+@pytest.mark.parametrize(
+    "winner_kind", ["reranker_only", "baseline", "none", "infeasible"]
+)
+def test_answer_plan_selects_ranked_winner_or_records_baseline_fallback(
+    session, winner_kind
+):
+    from ragbench_core.optimization.candidates import answer_plan, retrieval_identity
+
+    store.update(session, progress={"workflow_version": 2})
+    registry = fake_registry()
+    registry.rerankers["diversity_mmr"] = object()
+    tools = OptimizationTools(session, registry)
+    baseline = tools.baseline()
+    changed = deepcopy(baseline)
+    changed["pipeline"]["query"]["rerankers"] = [
+        {"type": "diversity_mmr", "lambda_mult": 0.7}
+    ]
+    assert retrieval_identity(baseline) == retrieval_identity(changed)
+    trials = [
+        {"id": "baseline", "phase": "retrieval", "config": baseline},
+        {"id": "changed", "phase": "retrieval", "config": changed},
+        {"id": "answer", "phase": "answer", "config": changed},
+    ]
+    ranking = (
+        []
+        if winner_kind == "none"
+        else [
+            {"trial_id": "answer", "feasible": True},
+            {"trial_id": "missing", "feasible": True},
+            {"trial_id": "changed", "feasible": winner_kind == "reranker_only"},
+            {"trial_id": "baseline", "feasible": winner_kind == "baseline"},
+        ]
+    )
+    plan = answer_plan(tools, trials, ranking, 1)
+    expected = changed if winner_kind == "reranker_only" else baseline
+    source = "changed" if winner_kind == "reranker_only" else "baseline"
+    assert plan["answer_candidates"] == [expected]
+    assert all(e["source_trial_id"] == source for e in plan["answer_plan"])
+    if winner_kind in {"none", "infeasible"}:
+        assert plan["retrieval_shortlist"] == []
+        assert "Baseline fallback" in plan["answer_plan"][0]["reason"]
+    else:
+        assert [e["trial_id"] for e in plan["retrieval_shortlist"]] == [source]
+
+
+@pytest.mark.parametrize("maximum", [1, 2, 5, 20])
+def test_dspy_answer_plan_compiles_from_retrieval_winner(session, maximum):
+    from ragbench_core.optimization.candidates import retrieval_identity
+    from ragbench_core.prompt_optimization.auto import plan_answers
+
+    request = store.get(session)["request"]
+    request["prompt_optimization"] = {"configs": [{"preset": "mipro_zero_shot_v1"}]}
+    store.update(
+        session,
+        request=request,
+        progress={
+            "workflow_version": 3,
+            "retrieval_ranking": [{"trial_id": "best", "feasible": True}],
+        },
+    )
+    registry = fake_registry()
+    registry.rerankers["diversity_mmr"] = object()
+    tools = OptimizationTools(session, registry)
+    winner = tools.baseline()
+    winner["pipeline"]["query"]["retrievers"] = [{"type": "bm25"}]
+    winner["pipeline"]["query"]["rerankers"] = [
+        {"type": "diversity_mmr", "lambda_mult": 0.7}
+    ]
+    with db.SessionLocal.begin() as conn:
+        conn.add(
+            store.OptimizationTrial(
+                id="best",
+                session_id=session,
+                operation_key="best",
+                phase="retrieval",
+                split="tuning",
+                status="completed",
+                config=winner,
+            )
+        )
+    plan = plan_answers(tools, maximum)
+    queue = plan["prompt_answer_plan"]
+    assert [e["trial_id"] for e in plan["retrieval_shortlist"]] == ["best"]
+    assert queue[0]["variant"] == "inherited"
+    assert queue[0]["config"] == winner
+    assert queue[0]["scheduled"]
+    assert queue[1]["variant"] == "dspy:mipro_zero_shot_v1"
+    assert queue[1]["config"] == winner
+    assert queue[1]["scheduled"] == (maximum > 1)
+    assert all(e["source_trial_id"] == "best" for e in queue)
+    assert plan["answer_plan"] == [
+        {k: v for k, v in entry.items() if k != "config"} for entry in queue
+    ]
+    assert sum(e["scheduled"] for e in queue) <= maximum
+    for entry in queue:
+        if "config" in entry:
+            assert retrieval_identity(entry["config"]) == retrieval_identity(winner)
+    assert plan_answers(tools, maximum) == plan
 
 
 def test_prompt_presets_are_distinct_versioned_and_phase_restricted(session):
@@ -1800,13 +1989,40 @@ def test_historical_lineage_is_only_inferred_when_unambiguous(session):
     assert data["stages"]["answer"]["trials"][0]["source_trial_id"] is None
 
 
-def test_version_two_answer_queue_survives_interrupt_without_redispatch(session):
+@pytest.mark.parametrize("saved_queue", [False, True])
+def test_version_two_answer_queue_survives_interrupt_without_redispatch(
+    session, monkeypatch, saved_queue
+):
     from langgraph.checkpoint.memory import InMemorySaver
     from langgraph.types import Command
 
     store.update(session, progress={"workflow_version": 2})
     tools = OptimizationTools(session, fake_registry())
     prepare_dataset(tools)
+    baseline = tools.baseline()
+    winner = deepcopy(baseline)
+    winner["pipeline"]["query"]["retrievers"] = [{"type": "bm25"}]
+    save_stage_trial(tools, "retrieval-winner", winner, "retrieval")
+    state = {
+        "workflow_version": 2,
+        "retrieval_ranking": tools.compare_trials("retrieval"),
+    }
+    if saved_queue:
+        from ragbench_core.optimization.search import candidate_hash
+
+        state.update(
+            answer_candidates=[baseline],
+            answer_plan=[
+                {
+                    "candidate_hash": candidate_hash(baseline),
+                    "source_trial_id": None,
+                    "variant": "baseline",
+                    "scheduled": True,
+                }
+            ],
+            retrieval_shortlist=[],
+        )
+    store.update(session, progress=state)
     calls = []
     graph = build_graph(InMemorySaver(), calls.append, lambda _: tools)
     config = {"configurable": {"thread_id": session}}
@@ -1815,6 +2031,16 @@ def test_version_two_answer_queue_survives_interrupt_without_redispatch(session)
     assert graph.get_state(config).interrupts
     assert len(calls) == 1
     assert saved["answer_plan"]
+    expected = baseline if saved_queue else winner
+    assert saved["answer_candidates"][0] == expected
+    if saved_queue:
+        assert saved == state
+    from ragbench_core.optimization import workflow
+
+    def unexpected_replan(*args):
+        pytest.fail("A saved answering queue must not be rebuilt")
+
+    monkeypatch.setattr(workflow, "answer_plan", unexpected_replan)
     graph.invoke(Command(resume=True), config)
     assert len(calls) == 1
     assert (
@@ -1822,6 +2048,47 @@ def test_version_two_answer_queue_survives_interrupt_without_redispatch(session)
         == saved["answer_candidates"]
     )
     assert store.get(session)["progress"]["answer_plan"] == saved["answer_plan"]
+
+
+@pytest.mark.parametrize("has_winner", [False, True])
+def test_dashboard_explains_answer_parent_and_baseline_fallback(session, has_winner):
+    from ragbench_core.optimization.candidates import answer_plan
+    from ragbench_core.optimization.stages import stage_dashboard
+
+    store.update(session, progress={"workflow_version": 2})
+    tools = OptimizationTools(session, fake_registry())
+    prepare_dataset(tools)
+    baseline = tools.baseline()
+    parent = deepcopy(baseline)
+    parent["pipeline"]["query"]["retrievers"] = [{"type": "bm25"}]
+    save_stage_trial(
+        tools, "origin", parent, "retrieval", missing=0 if has_winner else 4
+    )
+    plan = answer_plan(
+        tools,
+        store.rows(store.OptimizationTrial, session),
+        tools.compare_trials("retrieval"),
+        1,
+    )
+    save_stage_trial(tools, "answer", plan["answer_candidates"][0], "answer")
+    store.update(
+        session,
+        stage="answer",
+        progress={
+            "workflow_version": 2,
+            "baseline_config": baseline,
+            **plan,
+        },
+    )
+    data = stage_dashboard(store.get(session))
+    answer = data["stages"]["answer"]["trials"][0]
+    assert answer["source_trial_id"] == ("origin" if has_winner else None)
+    assert plan["answer_plan"][0]["reason"] in answer["selection_reasons"]
+    assert (
+        data["stages"]["answer"]["plan"][0]["reason"]
+        == plan["answer_plan"][0]["reason"]
+    )
+    assert bool(data["stages"]["retrieval"]["shortlist"]) == has_winner
 
 
 @pytest.mark.parametrize(

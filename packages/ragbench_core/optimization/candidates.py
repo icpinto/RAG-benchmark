@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from copy import deepcopy
-from itertools import zip_longest
 
 from ragbench_core.components.context import PROMPT_PRESETS, preset_config
 from ragbench_core.engine.config_expander import expand_cases
@@ -36,39 +35,31 @@ def answer_plan(tools, trials, ranking, maximum):
     trials = [t for t in trials if t["phase"] == "retrieval"]
     baseline = tools.baseline()
     by_id = {t["id"]: t for t in trials}
-    identities = {retrieval_identity(baseline)}
-    shortlist = []
-    for row in ranking:
-        trial = by_id.get(row["trial_id"])
-        if not row["feasible"] or not trial:
-            continue
-        identity = retrieval_identity(trial["config"])
-        if identity in identities:
-            continue
-        identities.add(identity)
-        shortlist.append(
-            {
-                "trial_id": trial["id"],
-                "reason": "Highest-ranked feasible representative of a distinct retrieval setup",
-            }
-        )
-        if len(shortlist) == min(2, max(0, maximum - 1)):
-            break
-    if maximum == 1:
+    winner = next(
+        (
+            by_id[row["trial_id"]]
+            for row in ranking
+            if row["feasible"] and row["trial_id"] in by_id
+        ),
+        None,
+    )
+    if winner is not None:
+        parent = tools.validate_candidate(winner["config"])
+        source = winner["id"]
+        reason = "Highest-ranked feasible retrieval trial; sole parent for answer search"
+        shortlist = [{"trial_id": source, "reason": reason}]
+        parent_variant = "inherited"
+    else:
+        parent = baseline
+        baseline_sources = [
+            t["id"]
+            for t in trials
+            if candidate_hash(t["config"]) == candidate_hash(baseline)
+        ]
+        source = baseline_sources[0] if len(baseline_sources) == 1 else None
+        reason = "Baseline fallback: no feasible ranked retrieval trial was available"
         shortlist = []
-
-    baseline_sources = [
-        t["id"]
-        for t in trials
-        if candidate_hash(t["config"]) == candidate_hash(baseline)
-    ]
-    baseline_source = baseline_sources[0] if len(baseline_sources) == 1 else None
-    parents = [(baseline, baseline_source)] + [
-        (tools.validate_candidate(by_id[item["trial_id"]]["config"]), item["trial_id"])
-        for item in shortlist
-    ]
-    # Prefer improving shortlisted setups. If none qualified, search around baseline.
-    variant_parents = parents[1:] or parents[:1]
+        parent_variant = "baseline"
     all_entries, seen = [], set()
 
     def add(config, source, variant):
@@ -85,45 +76,33 @@ def answer_plan(tools, trials, ranking, maximum):
                 "candidate_hash": identity,
                 "source_trial_id": source,
                 "variant": variant,
+                "reason": reason,
                 "config": config,
             }
         )
 
-    for config, source in parents:
-        add(config, source, "baseline" if not all_entries else "inherited")
+    add(parent, source, parent_variant)
 
     space = tools.get_search_space()
-    # Each dimension changes independently; round-robin parents avoid starving a setup.
+    # Each dimension changes independently from the unchanged retrieval winner.
     for dimension in ("prompt", "context", "reranker"):
-        queues = []
-        for parent, source in variant_parents:
-            options = []
-            if dimension == "prompt":
-                for name in PROMPT_PRESETS:
-                    config = deepcopy(parent)
-                    config["pipeline"]["query"]["prompt_builders"] = [
-                        preset_config(name)
-                    ]
-                    options.append((config, source, name))
-            elif dimension == "context":
-                for limit, chunks in zip(
-                    space["max_context_chars"], space["max_chunks"]
-                ):
-                    config = deepcopy(parent)
-                    query = config["pipeline"]["query"]
-                    query["compressors"] = [{"type": "top_n", "max_chunks": chunks}]
-                    query["context_assemblers"][0]["max_context_chars"] = limit
-                    options.append((config, source, f"context:{limit}/{chunks}"))
-            else:
-                for kind in space["rerankers"]:
-                    config = deepcopy(parent)
-                    config["pipeline"]["query"]["rerankers"] = [{"type": kind}]
-                    options.append((config, source, f"reranker:{kind}"))
-            queues.append(options)
-        for group in zip_longest(*queues):
-            for option in group:
-                if option is not None:
-                    add(*option)
+        if dimension == "prompt":
+            for name in PROMPT_PRESETS:
+                config = deepcopy(parent)
+                config["pipeline"]["query"]["prompt_builders"] = [preset_config(name)]
+                add(config, source, name)
+        elif dimension == "context":
+            for limit, chunks in zip(space["max_context_chars"], space["max_chunks"]):
+                config = deepcopy(parent)
+                query = config["pipeline"]["query"]
+                query["compressors"] = [{"type": "top_n", "max_chunks": chunks}]
+                query["context_assemblers"][0]["max_context_chars"] = limit
+                add(config, source, f"context:{limit}/{chunks}")
+        else:
+            for kind in space["rerankers"]:
+                config = deepcopy(parent)
+                config["pipeline"]["query"]["rerankers"] = [{"type": kind}]
+                add(config, source, f"reranker:{kind}")
 
     return {
         "retrieval_shortlist": shortlist,

@@ -234,6 +234,19 @@ beforeEach(() => {
 });
 
 describe("Optimization stage dashboards", () => {
+  it.each([
+    "Highest-ranked feasible retrieval trial; sole parent for answer search",
+    "Baseline fallback: no feasible ranked retrieval trial was available",
+  ])("shows the saved answer handoff reason: %s", async (reason) => {
+    fetchMock.mockImplementation(() => {
+      const data = dashboard();
+      data.stages.answer.plan![0].reason = reason;
+      return response(data);
+    });
+    mount("/auto-optimize/session?stage=answer");
+    expect(await screen.findByText(reason)).toBeInTheDocument();
+  });
+
   it("keeps retrieval and answer scores independent, preserves zero, and explains missing scores", async () => {
     const { router } = mount();
     const retrieval = within(

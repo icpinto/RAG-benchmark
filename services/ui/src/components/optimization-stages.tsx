@@ -64,6 +64,7 @@ interface Planned {
   candidate_hash: string;
   source_trial_id: string | null;
   variant: string;
+  reason?: string;
   scheduled: boolean;
   trial_id: string | null;
   status: string;
@@ -751,6 +752,9 @@ export function OptimizationStages({
           {names[phase]} / {phase === "confirm" ? "holdout" : "tuning"}
         </h3>
         <p>{descriptions[phase]}</p>
+        {phase === "answer" && stage?.plan?.[0]?.reason && (
+          <p>{stage.plan[0].reason}</p>
+        )}
         <p className="stage-setting-labels">
           {query.data?.workflow_version === 1
             ? "Historical workflow: these are the original saved trial settings. Expanded stage search applies to new sessions. Source-trial links are inferred only when matching is unambiguous."
