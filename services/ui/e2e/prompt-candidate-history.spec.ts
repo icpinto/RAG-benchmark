@@ -129,7 +129,9 @@ for (const width of [1280, 375]) {
     expect(candidateRequests).toBe(0);
     await page.getByText(/View prompt suggestions/).click();
     const table = page.getByRole("table", { name: "DSPy prompt suggestions" });
-    await expect(table.getByText("Not evaluated")).toBeVisible();
+    await expect(
+      table.getByText("Not evaluated on full validation"),
+    ).toBeVisible();
     await expect(table.getByText("0.000")).toBeVisible();
     expect(detailRequests).toBe(0);
     await page

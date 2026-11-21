@@ -108,7 +108,9 @@ describe("DSPy prompt suggestion inspector", () => {
     const table = await screen.findByRole("table", {
       name: "DSPy prompt suggestions",
     });
-    expect(within(table).getByText("Not evaluated")).toBeInTheDocument();
+    expect(
+      within(table).getByText("Not evaluated on full validation"),
+    ).toBeInTheDocument();
     expect(within(table).getByText(/0\.000/)).toBeInTheDocument();
     expect(
       within(table).getByText(/training \/ minibatch/),
@@ -137,6 +139,71 @@ describe("DSPy prompt suggestion inspector", () => {
         /Answer-trial and holdout selection are separate/,
       ),
     ).toBeInTheDocument();
+  });
+
+  it("shows full validation ties separately from later training minibatch scores", async () => {
+    const chosen = {
+      ...selected,
+      proposal_order: 1,
+      evaluations: [
+        {
+          score: 1,
+          sample_count: 6,
+          partition: "validation",
+          scope: "full",
+          stage: "optimizer",
+        },
+        {
+          score: 0.9,
+          sample_count: 3,
+          partition: "training",
+          scope: "minibatch",
+          stage: "optimizer",
+        },
+        {
+          score: 1,
+          sample_count: 6,
+          partition: "validation",
+          scope: "full",
+          stage: "final_validation",
+        },
+      ],
+    };
+    const rival = {
+      ...chosen,
+      id: "rival",
+      proposal_order: 2,
+      selected: false,
+      evaluations: [
+        chosen.evaluations[0],
+        { ...chosen.evaluations[1], score: 0.9667 },
+      ],
+    };
+    fetchMock.mockResolvedValue(response({ ...page, items: [chosen, rival] }));
+    mount();
+    open();
+    const table = await screen.findByRole("table", {
+      name: "DSPy prompt suggestions",
+    });
+    expect(
+      within(table).getByText("Full validation score"),
+    ).toBeInTheDocument();
+    const rows = within(table).getAllByRole("row").slice(1);
+    expect(within(rows[0]).getAllByRole("cell")[5]).toHaveTextContent(
+      "1.000Optimizer · 6 questions",
+    );
+    expect(within(rows[1]).getAllByRole("cell")[5]).toHaveTextContent(
+      "1.000Optimizer · 6 questions",
+    );
+    expect(within(rows[0]).getAllByRole("cell")[6]).toHaveTextContent(
+      "0.900training / minibatch · 3 questions",
+    );
+    expect(within(rows[1]).getAllByRole("cell")[6]).toHaveTextContent(
+      "0.967training / minibatch · 3 questions",
+    );
+    expect(within(rows[0]).getAllByRole("cell")[7]).toHaveTextContent(
+      "Selected by DSPy",
+    );
   });
 
   it("supports server search, configuration filtering and pagination", async () => {

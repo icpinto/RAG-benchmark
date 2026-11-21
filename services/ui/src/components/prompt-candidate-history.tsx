@@ -207,8 +207,9 @@ export function PromptCandidateHistory({
         <div className="prompt-candidate-history">
           <p>
             Suggestions appear after each optimizer configuration completes.
-            Scores use a 0–1 scale; training and minibatch results have
-            different evaluation coverage.
+            Scores use a 0–1 scale. Full validation scores cover the same
+            questions within a configuration; other optimizer results may cover
+            different questions. Selected by DSPy marks the compiled output.
           </p>
           {summary?.pending && (
             <Notice>
@@ -276,16 +277,40 @@ export function PromptCandidateHistory({
                         <th>Suggestion</th>
                         <th>Instructions</th>
                         <th>Examples</th>
-                        <th>Optimizer score</th>
+                        <th>Full validation score</th>
+                        <th>Other optimizer result</th>
                         <th>Selection</th>
                       </tr>
                     </thead>
                     <tbody>
                       {query.data.items.map((candidate) => {
-                        const evaluations = candidate.evaluations.filter(
-                          (item) => item.stage === "optimizer",
-                        );
-                        const evaluation = evaluations.at(-1);
+                        const optimizerEvaluations =
+                          candidate.evaluations.filter(
+                            (item) => item.stage === "optimizer",
+                          );
+                        const fullOptimizer = optimizerEvaluations
+                          .filter(
+                            (item) =>
+                              item.partition === "validation" &&
+                              item.scope === "full",
+                          )
+                          .at(-1);
+                        const finalValidation = candidate.evaluations
+                          .filter(
+                            (item) =>
+                              item.stage === "final_validation" &&
+                              item.partition === "validation" &&
+                              item.scope === "full",
+                          )
+                          .at(-1);
+                        const fullValidation = fullOptimizer ?? finalValidation;
+                        const otherEvaluation = optimizerEvaluations
+                          .filter(
+                            (item) =>
+                              item.partition !== "validation" ||
+                              item.scope !== "full",
+                          )
+                          .at(-1);
                         return (
                           <tr key={candidate.id}>
                             <td>
@@ -316,19 +341,38 @@ export function PromptCandidateHistory({
                                 "Chosen separately"}
                             </td>
                             <td>
-                              {evaluation ? (
+                              {fullValidation ? (
                                 <>
-                                  {score(evaluation.score)}
+                                  {score(fullValidation.score)}
                                   <br />
-                                  {evaluation.partition} /{" "}
-                                  {evaluation.scope === "full"
+                                  {fullValidation.stage === "final_validation"
+                                    ? "Final artifact check"
+                                    : "Optimizer"}
+                                  {" · "}
+                                  {fullValidation.sample_count ??
+                                    "Unknown number of"}{" "}
+                                  questions
+                                </>
+                              ) : (
+                                "Not evaluated on full validation"
+                              )}
+                            </td>
+                            <td>
+                              {otherEvaluation ? (
+                                <>
+                                  {score(otherEvaluation.score)}
+                                  <br />
+                                  {otherEvaluation.partition} /{" "}
+                                  {otherEvaluation.scope === "full"
                                     ? "full set"
                                     : "minibatch"}
+                                  {" · "}
+                                  {otherEvaluation.sample_count ??
+                                    "Unknown number of"}{" "}
+                                  questions
                                 </>
-                              ) : candidate.evaluations.length ? (
-                                "See final validation"
                               ) : (
-                                "Not evaluated"
+                                "No other result"
                               )}
                             </td>
                             <td>
