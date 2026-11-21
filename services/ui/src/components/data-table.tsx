@@ -7,7 +7,6 @@ import {
   getSortedRowModel,
   useReactTable,
   type ColumnDef,
-  type Cell,
   type SortingState,
 } from "@tanstack/react-table";
 import {
@@ -39,16 +38,12 @@ export function DataTable({
   cell,
   onRowClick,
   wrapColumns = noWrapColumns,
-  visibleColumns,
-  initialPageSize = 10,
 }: {
   rows: Record<string, unknown>[];
   name?: string;
   cell?: (key: string, row: Record<string, unknown>) => ReactNode | undefined;
   onRowClick?: (row: Record<string, unknown>) => void;
   wrapColumns?: string[];
-  visibleColumns?: string[];
-  initialPageSize?: number;
 }) {
   const [sorting, setSorting] = useState<SortingState>([]);
   const [search, setSearch] = useState("");
@@ -63,40 +58,29 @@ export function DataTable({
         accessorFn: (row) =>
           typeof row[key] === "number" ? row[key] : display(row[key]),
         header: key.replaceAll("_", " "),
+        cell: (info) =>
+          cell?.(key, info.row.original) ?? (
+            <span
+              className={`table-value ${wrapColumns.includes(key) ? "table-value-wrap" : ""}`}
+              title={display(info.row.original[key])}
+            >
+              {display(info.row.original[key])}
+            </span>
+          ),
       })),
-    [keys],
+    [keys, cell, wrapColumns],
   );
-  // Render directly so refreshed row data does not remount expanded cell content.
-  const renderCell = (entry: Cell<Record<string, unknown>, unknown>) =>
-    cell?.(entry.column.id, entry.row.original) ?? (
-      <span
-        className={`table-value ${wrapColumns.includes(entry.column.id) ? "table-value-wrap" : ""}`}
-        title={display(entry.row.original[entry.column.id])}
-      >
-        {display(entry.row.original[entry.column.id])}
-      </span>
-    );
   const table = useReactTable({
     data: rows,
     columns,
-    state: {
-      sorting,
-      globalFilter: search,
-      columnVisibility: Object.fromEntries(
-        keys.map((key) => [
-          key,
-          !visibleColumns || visibleColumns.includes(key),
-        ]),
-      ),
-      columnOrder: visibleColumns ?? keys,
-    },
+    state: { sorting, globalFilter: search },
     onSortingChange: setSorting,
     onGlobalFilterChange: setSearch,
     getCoreRowModel: getCoreRowModel(),
     getFilteredRowModel: getFilteredRowModel(),
     getSortedRowModel: getSortedRowModel(),
     getPaginationRowModel: getPaginationRowModel(),
-    initialState: { pagination: { pageSize: initialPageSize } },
+    initialState: { pagination: { pageSize: 10 } },
   });
   return (
     <div className="data-table">
@@ -184,10 +168,16 @@ export function DataTable({
                         className="text-link"
                         onClick={() => onRowClick(row.original)}
                       >
-                        {renderCell(entry)}
+                        {flexRender(
+                          entry.column.columnDef.cell,
+                          entry.getContext(),
+                        )}
                       </button>
                     ) : (
-                      renderCell(entry)
+                      flexRender(
+                        entry.column.columnDef.cell,
+                        entry.getContext(),
+                      )
                     )}
                   </td>
                 ))}
@@ -195,10 +185,7 @@ export function DataTable({
             ))}
             {!table.getRowModel().rows.length && (
               <tr>
-                <td
-                  colSpan={table.getVisibleLeafColumns().length || 1}
-                  className="text-center"
-                >
+                <td colSpan={keys.length || 1} className="text-center">
                   No matching rows.
                 </td>
               </tr>
@@ -218,13 +205,11 @@ export function DataTable({
             value={table.getState().pagination.pageSize}
             onChange={(event) => table.setPageSize(Number(event.target.value))}
           >
-            {Array.from(new Set([initialPageSize, 10, 25, 50, 100]))
-              .sort((a, b) => a - b)
-              .map((count) => (
-                <option key={count} value={count}>
-                  {count} / page
-                </option>
-              ))}
+            {[10, 25, 50, 100].map((count) => (
+              <option key={count} value={count}>
+                {count} / page
+              </option>
+            ))}
           </select>
           <Button
             variant="outline"

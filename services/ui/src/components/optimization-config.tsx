@@ -70,78 +70,75 @@ export function RunConfigurationCard({ sessionId }: { sessionId: string }) {
     >
       {query.isPending && <p role="status">Loading run configuration...</p>}
       <ErrorNotice error={query.error} retry={() => void query.refetch()} />
-      <details>
-        <summary>View run configuration</summary>
-        {query.isSuccess &&
-          (!query.data?.request || !query.data?.template ? (
-            <p>Run configuration is unavailable.</p>
-          ) : (
-            <>
-              <Fields
-                entries={[
-                  ["Benchmark template", request.config_path],
-                  ["DSPy prompt configurations", request.prompt_optimization],
-                  [
-                    "Source documents",
-                    request.source_paths ??
-                      "All documents in the template corpus",
+      {query.isSuccess &&
+        (!query.data?.request || !query.data?.template ? (
+          <p>Run configuration is unavailable.</p>
+        ) : (
+          <>
+            <Fields
+              entries={[
+                ["Benchmark template", request.config_path],
+                ["DSPy prompt configurations", request.prompt_optimization],
+                [
+                  "Source documents",
+                  request.source_paths ??
+                    "All documents in the template corpus",
+                ],
+                [
+                  "Source URLs",
+                  Array.isArray(request.urls) && request.urls.length
+                    ? request.urls
+                    : "Template URLs",
+                ],
+                ["Fixed answer model", template.llm],
+                ...["planner", "synthesizer", "verifier", "judge"].map(
+                  (role): [string, unknown] => [
+                    `${role[0].toUpperCase() + role.slice(1)} model`,
+                    request[role],
                   ],
-                  [
-                    "Source URLs",
-                    Array.isArray(request.urls) && request.urls.length
-                      ? request.urls
-                      : "Template URLs",
-                  ],
-                  ["Fixed answer model", template.llm],
-                  ...["planner", "synthesizer", "verifier", "judge"].map(
-                    (role): [string, unknown] => [
-                      `${role[0].toUpperCase() + role.slice(1)} model`,
-                      request[role],
-                    ],
-                  ),
-                  ["Target questions", limits.target_questions],
-                  [
-                    "Evaluation questions",
-                    request.evaluation_dataset_mode === "generate_new"
-                      ? "Generate fresh questions"
-                      : "Reuse matching questions when available",
-                  ],
-                  ["Retrieval trial limit", limits.retrieval_trials],
-                  ["Answer trial limit", limits.answer_trials],
-                  [
-                    "Active runtime (minutes)",
-                    typeof limits.active_seconds === "number"
-                      ? limits.active_seconds / 60
-                      : undefined,
-                  ],
-                  ["Token cap", limits.max_tokens],
-                  ["Monetary cap", limits.max_cost ?? "No cap"],
-                  [
-                    "Query p95 limit (seconds)",
-                    limits.max_query_p95_seconds ?? "No limit",
-                  ],
-                  ["Query cost limit", limits.max_query_cost ?? "No limit"],
-                  [
-                    "Pause for dataset review",
-                    request.review_before_freeze ? "Yes" : "No",
-                  ],
-                  [
-                    "Hosted providers allowed",
-                    request.allow_hosted ? "Yes" : "No",
-                  ],
-                  [
-                    "Component restrictions",
-                    Object.keys(object(request.allowed_components)).length
-                      ? request.allowed_components
-                      : "Default search space",
-                  ],
-                ]}
-              />
-              <YamlDetails label="Saved request YAML" value={request} />
-              <YamlDetails label="Saved template YAML" value={template} />
-            </>
-          ))}
-      </details>
+                ),
+                ["Target questions", limits.target_questions],
+                [
+                  "Evaluation questions",
+                  request.evaluation_dataset_mode === "generate_new"
+                    ? "Generate fresh questions"
+                    : "Reuse matching questions when available",
+                ],
+                ["Retrieval trial limit", limits.retrieval_trials],
+                ["Answer trial limit", limits.answer_trials],
+                [
+                  "Active runtime (minutes)",
+                  typeof limits.active_seconds === "number"
+                    ? limits.active_seconds / 60
+                    : undefined,
+                ],
+                ["Token cap", limits.max_tokens],
+                ["Monetary cap", limits.max_cost ?? "No cap"],
+                [
+                  "Query p95 limit (seconds)",
+                  limits.max_query_p95_seconds ?? "No limit",
+                ],
+                ["Query cost limit", limits.max_query_cost ?? "No limit"],
+                [
+                  "Pause for dataset review",
+                  request.review_before_freeze ? "Yes" : "No",
+                ],
+                [
+                  "Hosted providers allowed",
+                  request.allow_hosted ? "Yes" : "No",
+                ],
+                [
+                  "Component restrictions",
+                  Object.keys(object(request.allowed_components)).length
+                    ? request.allowed_components
+                    : "Default search space",
+                ],
+              ]}
+            />
+            <YamlDetails label="Saved request YAML" value={request} />
+            <YamlDetails label="Saved template YAML" value={template} />
+          </>
+        ))}
     </Card>
   );
 }

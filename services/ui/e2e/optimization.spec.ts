@@ -58,10 +58,7 @@ for (const width of [1280, 375]) {
       await expect(
         page.getByRole("heading", { name: `Optimization · ${run.status}` }),
       ).toBeVisible();
-      await expect(page.getByText(run.id, { exact: true })).toBeHidden();
-      await page.getByText("Run details", { exact: true }).click();
       await expect(page.getByText(run.id, { exact: true })).toBeVisible();
-      await page.getByText("View run configuration", { exact: true }).click();
       await expect(
         page.getByText("historical-template.yaml", { exact: true }),
       ).toBeVisible();
@@ -72,10 +69,6 @@ for (const width of [1280, 375]) {
       await expect(
         page.getByRole("heading", { name: `Optimization · ${run.status}` }),
       ).toBeVisible();
-      await expect(
-        page.getByText("historical-template.yaml", { exact: true }),
-      ).toBeHidden();
-      await page.getByText("View run configuration", { exact: true }).click();
       await expect(
         page.getByText("historical-template.yaml", { exact: true }),
       ).toBeVisible();
@@ -237,7 +230,6 @@ test("select corpus, review synthetic references, inspect recommendation and exp
   await page.getByRole("button", { name: "Start optimization" }).click();
   await expect(page.getByText("Optimization · paused")).toBeVisible();
   expect(submitted.source_paths).toEqual(["policy.txt"]);
-  await page.getByText("View run configuration", { exact: true }).click();
   await expect(
     page.getByText("captured-template.yaml", { exact: true }),
   ).toBeVisible();
@@ -247,12 +239,11 @@ test("select corpus, review synthetic references, inspect recommendation and exp
   );
   await expect(page.getByText("No trial is currently running.")).toBeVisible();
   await page.getByRole("tab", { name: /Answering/ }).click();
-  await page.getByText("View details", { exact: true }).click();
+  await page.getByText("View config", { exact: true }).click();
   await expect(
     page
       .locator("dd")
-      .filter({ hasText: /^type: recursive, chunk_size: 512, overlap: 0\.1$/ })
-      .first(),
+      .filter({ hasText: /^type: recursive, chunk_size: 512, overlap: 0\.1$/ }),
   ).toBeVisible();
   await page
     .getByText("Full trial configuration YAML", { exact: true })
@@ -261,7 +252,6 @@ test("select corpus, review synthetic references, inspect recommendation and exp
     "answer_correctness",
   );
   await page.reload();
-  await page.getByText("View run configuration", { exact: true }).click();
   await expect(
     page.getByText("captured-template.yaml", { exact: true }),
   ).toBeVisible();
@@ -346,11 +336,6 @@ test("inspect running configs on a narrow screen and follow trial completion", a
   const running = page.getByRole("article", {
     name: "Running trial live-trial",
   });
-  await expect(running.getByText("View config", { exact: true })).toBeVisible();
-  await expect(
-    running.getByText("type: fixed, chunk_size: 256", { exact: true }),
-  ).toBeHidden();
-  await running.getByText("View config", { exact: true }).click();
   await expect(
     running.getByText("type: fixed, chunk_size: 256", { exact: true }),
   ).toBeVisible();
@@ -380,6 +365,6 @@ test("inspect running configs on a narrow screen and follow trial completion", a
   await expect(page.getByText("Optimization · completed")).toBeVisible();
   await expect(page.getByText("No trial is currently running.")).toBeVisible();
   await page.getByRole("tab", { name: /Retrieval/ }).click();
-  await page.getByText("View details", { exact: true }).click();
+  await page.getByText("View config", { exact: true }).click();
   await expect(page.getByText("retrieval_only", { exact: true })).toBeVisible();
 });
