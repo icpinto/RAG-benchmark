@@ -234,6 +234,48 @@ beforeEach(() => {
 });
 
 describe("Optimization stage dashboards", () => {
+  it("starts compact and expands all trial information without eagerly fetching configs", async () => {
+    mount();
+    const table = await screen.findByRole("table", {
+      name: "retrieval-trials table",
+    });
+    expect(
+      within(table)
+        .getAllByRole("columnheader")
+        .map((header) => header.textContent),
+    ).toEqual(["trial", "status", "selection score", "p95 seconds", "details"]);
+    expect(
+      table
+        .closest(".data-table")!
+        .querySelector(":scope > .table-footer select"),
+    ).toHaveValue("5");
+    expect(
+      screen.getByText("Raw retrieval versus reranked evidence"),
+    ).not.toBeVisible();
+    expect(screen.getByText(/Varied here:/)).not.toBeVisible();
+    expect(
+      fetchMock.mock.calls.filter(([path]) => path.endsWith("/config")),
+    ).toHaveLength(0);
+    const row = within(table).getAllByRole("row")[1];
+    const summary = within(row).getByText("View details");
+    fireEvent.click(summary);
+    await within(row).findByText("Chunker · Varied here");
+    expect(within(row).getByText("24 / 0 / 0")).toBeVisible();
+    expect(within(row).getByText("baseline", { selector: "dd" })).toBeVisible();
+    expect(within(row).getByText("embedding")).toBeVisible();
+    fireEvent.click(summary);
+    await waitFor(() =>
+      expect(
+        within(row).queryByText("Chunker · Varied here"),
+      ).not.toBeInTheDocument(),
+    );
+    fireEvent.click(summary);
+    await within(row).findByText("Chunker · Varied here");
+    expect(
+      fetchMock.mock.calls.filter(([path]) => path.endsWith("/config")),
+    ).toHaveLength(1);
+  });
+
   it.each([
     "Highest-ranked feasible retrieval trial; sole parent for answer search",
     "Baseline fallback: no feasible ranked retrieval trial was available",
@@ -264,7 +306,10 @@ describe("Optimization stage dashboards", () => {
     expect(
       answers.getAllByText("insufficient coverage").length,
     ).toBeGreaterThan(0);
-    expect(answers.getAllByText("unknown pricing")).toHaveLength(2);
+    expect(answers.queryByText("unknown pricing")).not.toBeInTheDocument();
+    fireEvent.click(answers.getAllByText("View details")[0]);
+    await answers.findByText("estimated cost");
+    expect(answers.getAllByText("unknown pricing").length).toBeGreaterThan(0);
     fireEvent.click(screen.getByText(/Search coverage:/));
     expect(screen.getByText("reranker:cross_encoder")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("tab", { name: /Retrieval/ }));
@@ -280,7 +325,7 @@ describe("Optimization stage dashboards", () => {
     const row = (await screen.findByRole("link", { name: "answer-b" })).closest(
       "tr",
     )!;
-    fireEvent.click(within(row).getByText("View config"));
+    fireEvent.click(within(row).getByText("View details"));
     await within(row).findByText("Chunker · Inherited");
     expect(
       within(row).getByText("Prompt settings · Varied here"),
@@ -306,6 +351,7 @@ describe("Optimization stage dashboards", () => {
   it("shows holdout comparison and an accessible confidence interval without using tuning scores", async () => {
     mount("/auto-optimize/session?stage=confirm");
     await screen.findByText("confirmed improvement");
+    fireEvent.click(screen.getByText("View holdout chart and comparison"));
     expect(
       screen.getByRole("img", {
         name: "95% confidence interval 0.300 to 0.600",
@@ -331,7 +377,9 @@ describe("Optimization stage dashboards", () => {
 
   it("preserves the chosen stage across polling and refreshes metrics", async () => {
     let updated = false;
-    fetchMock.mockImplementation(() => {
+    const fallback = fetchMock.getMockImplementation()!;
+    fetchMock.mockImplementation((path: string) => {
+      if (!path.endsWith("/stages")) return fallback(path);
       const data = dashboard();
       if (updated)
         data.stages.answer.trials[0].display_status = "Completed with errors";
@@ -342,6 +390,10 @@ describe("Optimization stage dashboards", () => {
       "running",
     );
     await screen.findByRole("table", { name: "answer-trials table" });
+    const summary = screen.getAllByText("View details")[0];
+    fireEvent.click(summary);
+    await screen.findByText("Chunker · Inherited");
+    fireEvent.click(screen.getByText("View score charts and comparisons"));
     updated = true;
     await act(() =>
       client.invalidateQueries({ queryKey: ["optimization-stages"] }),
@@ -350,6 +402,11 @@ describe("Optimization stage dashboards", () => {
     await waitFor(() =>
       expect(screen.getAllByText("Completed with errors")).toHaveLength(2),
     );
+    expect(summary.closest("details")).toHaveAttribute("open");
+    expect(
+      screen.getByText("View score charts and comparisons").closest("details"),
+    ).toHaveAttribute("open");
+    expect(screen.getByText("Chunker · Inherited")).toBeVisible();
   });
 
   it("keeps stage fetch errors local and supports retry", async () => {
@@ -394,7 +451,7 @@ describe("Optimization stage dashboards", () => {
     const row = screen
       .getAllByRole("link", { name: "retrieva" })[0]
       .closest("tr")!;
-    fireEvent.click(within(row).getByText("View config"));
+    fireEvent.click(within(row).getByText("View details"));
     await within(row).findByText("Chunker");
     expect(
       within(row).queryByText("Chunker · Varied here"),

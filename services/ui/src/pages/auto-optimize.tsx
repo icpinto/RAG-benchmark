@@ -18,7 +18,7 @@ import {
 import { DataTable } from "../components/data-table";
 import {
   RunConfigurationCard,
-  TrialConfiguration,
+  TrialConfigDetails,
 } from "../components/optimization-config";
 import { OptimizationStages } from "../components/optimization-stages";
 import {
@@ -759,24 +759,27 @@ function OptimizationEditor({ sessionId }: { sessionId?: string }) {
             title={`Optimization · ${session.data.status}`}
             description={`Current stage: ${session.data.stage}`}
           >
-            <dl className="optimization-config-fields">
-              <div>
-                <dt>Run ID</dt>
-                <dd>{session.data.id}</dd>
-              </div>
-              <div>
-                <dt>Created</dt>
-                <dd>
-                  <RunDate seconds={session.data.created_at} />
-                </dd>
-              </div>
-              <div>
-                <dt>Updated</dt>
-                <dd>
-                  <RunDate seconds={session.data.updated_at} />
-                </dd>
-              </div>
-            </dl>
+            <details>
+              <summary>Run details</summary>
+              <dl className="optimization-config-fields">
+                <div>
+                  <dt>Run ID</dt>
+                  <dd>{session.data.id}</dd>
+                </div>
+                <div>
+                  <dt>Created</dt>
+                  <dd>
+                    <RunDate seconds={session.data.created_at} />
+                  </dd>
+                </div>
+                <div>
+                  <dt>Updated</dt>
+                  <dd>
+                    <RunDate seconds={session.data.updated_at} />
+                  </dd>
+                </div>
+              </dl>
+            </details>
             <div className="optimizer-grid">
               <p>
                 Reserved tokens:{" "}
@@ -846,6 +849,68 @@ function OptimizationEditor({ sessionId }: { sessionId?: string }) {
               </Button>
             </div>
           </Card>
+          {recommendation.data && (
+            <Card
+              title="Recommendation"
+              description={
+                recommendation.data.confirmed_improvement
+                  ? "Candidate improvement confirmed on the held-out questions."
+                  : "Baseline retained; candidate improvement has not been confirmed."
+              }
+            >
+              {recommendation.data.limitations.map((text) => (
+                <p key={text}>{text}</p>
+              ))}
+              {recommendation.data.comparison?.metrics
+                .filter((m) => m.metric === "answer_correctness")
+                .map((m) => (
+                  <p key={m.metric}>
+                    Holdout correctness delta:{" "}
+                    {m.mean_delta?.toFixed(3) ?? "unavailable"}; 95% interval:{" "}
+                    {m.ci95?.map((v) => v.toFixed(3)).join(" to ") ??
+                      "unavailable"}
+                    ; paired questions: {m.paired_count}.
+                  </p>
+                ))}
+              <div className="actions">
+                <Button
+                  onClick={() => {
+                    const text = recommendation.data!.yaml;
+                    setDraft({
+                      text,
+                      saved: "",
+                      loaded: true,
+                      path: `optimized-${sessionId}.yaml`,
+                    });
+                    navigate("/benchmark-setup");
+                  }}
+                >
+                  Open in Benchmark Setup
+                </Button>
+                <Button
+                  variant="outline"
+                  onClick={() =>
+                    download(
+                      "recommended.yaml",
+                      recommendation.data!.yaml,
+                      "application/yaml",
+                    )
+                  }
+                >
+                  Download YAML
+                </Button>
+                <a href={`/api/optimizations/${sessionId}/export/qa`} download>
+                  Download QA JSON
+                </a>
+                <a
+                  href={`/api/optimizations/${sessionId}/export/report`}
+                  download
+                >
+                  Download report
+                </a>
+              </div>
+            </Card>
+          )}
           <RunConfigurationCard key={sessionId} sessionId={sessionId} />
           <Card title="Currently running configs">
             {trials.isPending && <p role="status">Loading running trials...</p>}
@@ -869,7 +934,7 @@ function OptimizationEditor({ sessionId }: { sessionId?: string }) {
                   <p>
                     {trial.phase} / {trial.split} · {trial.status}
                   </p>
-                  <TrialConfiguration
+                  <TrialConfigDetails
                     sessionId={sessionId}
                     trialId={trial.id}
                   />
@@ -960,68 +1025,6 @@ function OptimizationEditor({ sessionId }: { sessionId?: string }) {
             status={session.data.status}
             currentStage={session.data.stage}
           />
-          {recommendation.data && (
-            <Card
-              title="Recommendation"
-              description={
-                recommendation.data.confirmed_improvement
-                  ? "Candidate improvement confirmed on the held-out questions."
-                  : "Baseline retained; candidate improvement has not been confirmed."
-              }
-            >
-              {recommendation.data.limitations.map((text) => (
-                <p key={text}>{text}</p>
-              ))}
-              {recommendation.data.comparison?.metrics
-                .filter((m) => m.metric === "answer_correctness")
-                .map((m) => (
-                  <p key={m.metric}>
-                    Holdout correctness delta:{" "}
-                    {m.mean_delta?.toFixed(3) ?? "unavailable"}; 95% interval:{" "}
-                    {m.ci95?.map((v) => v.toFixed(3)).join(" to ") ??
-                      "unavailable"}
-                    ; paired questions: {m.paired_count}.
-                  </p>
-                ))}
-              <div className="actions">
-                <Button
-                  onClick={() => {
-                    const text = recommendation.data!.yaml;
-                    setDraft({
-                      text,
-                      saved: "",
-                      loaded: true,
-                      path: `optimized-${sessionId}.yaml`,
-                    });
-                    navigate("/benchmark-setup");
-                  }}
-                >
-                  Open in Benchmark Setup
-                </Button>
-                <Button
-                  variant="outline"
-                  onClick={() =>
-                    download(
-                      "recommended.yaml",
-                      recommendation.data!.yaml,
-                      "application/yaml",
-                    )
-                  }
-                >
-                  Download YAML
-                </Button>
-                <a href={`/api/optimizations/${sessionId}/export/qa`} download>
-                  Download QA JSON
-                </a>
-                <a
-                  href={`/api/optimizations/${sessionId}/export/report`}
-                  download
-                >
-                  Download report
-                </a>
-              </div>
-            </Card>
-          )}
           <Card title="Activity">
             <details>
               <summary>Inspect tool and stage events</summary>

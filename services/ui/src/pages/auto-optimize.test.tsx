@@ -222,6 +222,66 @@ beforeEach(() => {
   });
 });
 describe("Auto Optimize", () => {
+  it("keeps the recommendation and warnings visible while run metadata is collapsed", async () => {
+    overrideFetch((path) => {
+      if (path === "/api/optimizations/session")
+        return response({
+          ...session,
+          error: "One trial needs attention",
+          progress: { stop_reason: "Budget reached" },
+        });
+      if (path.endsWith("/recommendation"))
+        return response({
+          yaml: "experiment: optimized",
+          confirmed_improvement: false,
+          baseline_retained: true,
+          limitations: ["Review synthetic references"],
+          comparison: {
+            metrics: [
+              {
+                metric: "answer_correctness",
+                mean_delta: 0,
+                ci95: [0, 0],
+                paired_count: 30,
+              },
+            ],
+          },
+        });
+    });
+    const { client } = mount("/auto-optimize/session");
+    const heading = await screen.findByRole("heading", {
+      name: "Optimization · paused",
+    });
+    const summary = within(heading.closest("section")!);
+    expect(summary.getByText("Run ID")).not.toBeVisible();
+    expect(summary.getByText("One trial needs attention")).toBeVisible();
+    expect(summary.getByText("Budget reached")).toBeVisible();
+    expect(
+      summary.getByRole("button", { name: "Approve draft and resume" }),
+    ).toBeVisible();
+    await screen.findByRole("heading", { name: "Recommendation" });
+    expect(
+      screen
+        .getAllByRole("heading", { level: 2 })
+        .slice(0, 3)
+        .map((h) => h.textContent),
+    ).toEqual(["Optimization · paused", "Recommendation", "Run configuration"]);
+    expect(screen.getByText("Review synthetic references")).toBeVisible();
+    expect(screen.getByText(/Holdout correctness delta: 0.000/)).toBeVisible();
+    expect(screen.getByRole("button", { name: "Download YAML" })).toBeVisible();
+    expect(
+      screen.getByRole("button", { name: "Open in Benchmark Setup" }),
+    ).toBeVisible();
+    fireEvent.click(summary.getByText("Run details"));
+    expect(summary.getByText("Run ID")).toBeVisible();
+    await act(() =>
+      client.invalidateQueries({ queryKey: ["optimization", "session"] }),
+    );
+    expect(summary.getByText("Run details").closest("details")).toHaveAttribute(
+      "open",
+    );
+  });
+
   it("sends selected DSPy recipes to Auto Optimize", async () => {
     mount("/auto-optimize/new");
     fireEvent.click(await screen.findByLabelText("Enable DSPy compilation"));
@@ -588,6 +648,9 @@ describe("Auto Optimize", () => {
     mount("/auto-optimize/session");
     await screen.findByText("saved-template.yaml");
     const run = card("Run configuration");
+    expect(run.getByText("saved-template.yaml")).not.toBeVisible();
+    fireEvent.click(run.getByText("View run configuration"));
+    expect(run.getByText("saved-template.yaml")).toBeVisible();
     expect(run.getByText("captured-policy.txt")).toBeInTheDocument();
     expect(run.getByText("https://example.test/policy")).toBeInTheDocument();
     for (const model of [
@@ -639,10 +702,15 @@ describe("Auto Optimize", () => {
     const runningA = within(
       await screen.findByRole("article", { name: "Running trial running-a" }),
     );
+    expect(
+      fetchMock.mock.calls.filter(([path]) => path.endsWith("/config")),
+    ).toHaveLength(0);
+    fireEvent.click(runningA.getByText("View config"));
     await runningA.findByText("type: recursive, chunk_size: 512, overlap: 0.1");
     const runningB = within(
       screen.getByRole("article", { name: "Running trial running-b" }),
     );
+    fireEvent.click(runningB.getByText("View config"));
     await runningB.findByText(
       "provider: sentence_transformers, model: saved-embedding",
     );
@@ -660,14 +728,21 @@ describe("Auto Optimize", () => {
     const runningRow = within(
       screen.getAllByRole("link", { name: "running-" })[0].closest("tr")!,
     );
-    fireEvent.click(runningRow.getByText("View config"));
+    fireEvent.click(runningRow.getByText("View details"));
     await runningRow.findByText("retrieval_only");
     expect(configCalls()).toHaveLength(2);
+    fireEvent.change(
+      screen
+        .getByRole("table", { name: "retrieval-trials table" })
+        .closest(".data-table")!
+        .querySelector(":scope > .table-footer select")!,
+      { target: { value: "10" } },
+    );
     for (const id of ["queued-c", "finished-d", "paused-e", "failed-f"]) {
       const row = within(
         screen.getByRole("link", { name: id.slice(0, 8) }).closest("tr")!,
       );
-      fireEvent.click(row.getByText("View config"));
+      fireEvent.click(row.getByText("View details"));
       await row.findByText("retrieval_only");
       fireEvent.click(
         row.getByText("Full trial configuration YAML", { selector: "summary" }),
@@ -693,6 +768,11 @@ describe("Auto Optimize", () => {
       "article",
       { name: "Running trial polled-trial" },
       { timeout: 4500 },
+    );
+    fireEvent.click(
+      within(
+        await screen.findByRole("article", { name: /Running trial/ }),
+      ).getByText("View config"),
     );
     await screen.findByText("retrieval_only");
     status = "completed";
@@ -731,14 +811,16 @@ describe("Auto Optimize", () => {
     expect(
       screen.getByRole("heading", { name: "Optimization · paused" }),
     ).toBeInTheDocument();
+    const running = within(
+      screen.getByRole("article", { name: "Running trial retry-trial" }),
+    );
+    fireEvent.click(running.getByText("View config"));
+    await running.findByText("Configuration service unavailable");
     failed = false;
     fireEvent.click(
       card("Run configuration").getByRole("button", { name: "Try again" }),
     );
     await screen.findByText("saved-template.yaml");
-    const running = within(
-      screen.getByRole("article", { name: "Running trial retry-trial" }),
-    );
     fireEvent.click(await running.findByRole("button", { name: "Try again" }));
     await running.findByText("retrieval_only");
   });
@@ -752,6 +834,11 @@ describe("Auto Optimize", () => {
     );
     const { client } = mount("/auto-optimize/session");
     await screen.findByRole("article", { name: "Running trial final-trial" });
+    fireEvent.click(
+      within(
+        await screen.findByRole("article", { name: /Running trial/ }),
+      ).getByText("View config"),
+    );
     await screen.findByText("retrieval_only");
     await waitFor(() =>
       expect(
@@ -800,6 +887,13 @@ describe("Auto Optimize", () => {
     });
     mount("/auto-optimize/session");
     await screen.findByText("Loading run configuration...");
+    fireEvent.click(
+      within(
+        await screen.findByRole("article", {
+          name: "Running trial empty-trial",
+        }),
+      ).getByText("View config"),
+    );
     await screen.findByText("Loading trial configuration...");
     await act(async () => {
       resolveRun(await response({ request: null, template: null }));
@@ -828,9 +922,26 @@ describe("Auto Optimize", () => {
     });
     const { router } = mount("/auto-optimize/session");
     await screen.findByText("saved-template.yaml");
+    fireEvent.click(
+      within(
+        await screen.findByRole("article", { name: /Running trial/ }),
+      ).getByText("View config"),
+    );
     await screen.findByText("retrieval_only");
     await act(() => router.navigate("/auto-optimize/other"));
     await screen.findByText("other-template.yaml");
+    expect(
+      within(
+        await screen.findByRole("article", { name: "Running trial shared-id" }),
+      )
+        .getByText("View config")
+        .closest("details"),
+    ).not.toHaveAttribute("open");
+    fireEvent.click(
+      within(
+        screen.getByRole("article", { name: "Running trial shared-id" }),
+      ).getByText("View config"),
+    );
     await screen.findByText("end_to_end");
     expect(screen.queryByText("saved-template.yaml")).not.toBeInTheDocument();
     expect(screen.queryByText("retrieval_only")).not.toBeInTheDocument();

@@ -66,6 +66,11 @@ button,
 summary {
   cursor: pointer;
 }
+summary:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 3px;
+  border-radius: 3px;
+}
 button:disabled,
 input:disabled,
 textarea:disabled,
@@ -1457,6 +1462,14 @@ input[type="checkbox"] {
   padding: 12px 0;
   border-bottom: 1px solid var(--border);
 }
+.optimization-running-config h3 {
+  margin: 0;
+  font-size: 1rem;
+  overflow-wrap: anywhere;
+}
+.optimization-running-config p {
+  margin: 4px 0;
+}
 .stage-tabs {
   display: flex;
   gap: 8px;
@@ -1496,6 +1509,9 @@ input[type="checkbox"] {
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: 8px;
+}
+.stage-summary {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 160px), 1fr));
 }
 .stage-summary span {
   display: block;
@@ -1553,29 +1569,12 @@ input[type="checkbox"] {
   width: min(780px, 76vw);
   white-space: normal;
   padding: 16px 0;
-}
-.stage-row-settings {
-  min-width: 240px;
-  max-width: 340px;
-  white-space: normal;
   overflow-wrap: anywhere;
-}
-.stage-row-settings p {
-  margin: 0 0 6px;
 }
 .stage-setting-labels {
   padding: 12px;
   background: var(--primary-soft);
   border-radius: 6px;
-}
-.stage-role {
-  display: inline-block;
-  margin: 2px 4px 2px 0;
-  padding: 2px 6px;
-  border-radius: 4px;
-  background: var(--primary-soft);
-  color: var(--primary);
-  font-size: 0.85rem;
 }
 .stage-tabs button:focus-visible {
   outline: 2px solid var(--primary);

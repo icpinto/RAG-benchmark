@@ -82,6 +82,13 @@ for (const width of [1280, 375]) {
       retrieval.getByRole("link", { name: "retrieva" }),
     ).toBeVisible();
     await expect(retrieval.getByText("0.800").first()).toBeVisible();
+    await expect(
+      page.getByRole("combobox", { name: "Retrieval comparison metric" }),
+    ).toBeHidden();
+    await page
+      .getByText("View score charts and comparisons", { exact: true })
+      .focus();
+    await page.keyboard.press("Enter");
     await page
       .getByRole("combobox", { name: "Retrieval comparison metric" })
       .selectOption("recall");
@@ -92,7 +99,7 @@ for (const width of [1280, 375]) {
     await expect(page).toHaveURL(/\?stage=answer$/);
     const answer = page.getByRole("table", { name: "answer-trials table" });
     await expect(answer.getByText("0.900").first()).toBeVisible();
-    await answer.getByText("View config", { exact: true }).click();
+    await answer.getByText("View details", { exact: true }).click();
     await expect(answer.getByText("Chunker · Inherited")).toBeVisible();
     await expect(
       answer.getByText("Prompt settings · Varied here"),
@@ -119,6 +126,12 @@ for (const width of [1280, 375]) {
     await expect(
       page.getByText("confirmed improvement", { exact: true }),
     ).toBeVisible();
+    await expect(
+      page.getByRole("img", { name: "95% confidence interval 0.200 to 0.600" }),
+    ).toBeHidden();
+    await page
+      .getByText("View holdout chart and comparison", { exact: true })
+      .click();
     await expect(
       page.getByRole("img", { name: "95% confidence interval 0.200 to 0.600" }),
     ).toBeVisible();

@@ -150,10 +150,12 @@ function Inspector({
   sessionId,
   trial,
   annotateSettings,
+  values,
 }: {
   sessionId: string;
   trial: StageTrial;
   annotateSettings: boolean;
+  values: Record<string, unknown>;
 }) {
   const [open, setOpen] = useState(false);
   const metrics = Object.entries(trial.metrics).map(([metric, value]) => ({
@@ -165,11 +167,33 @@ function Inspector({
   }));
   return (
     <details onToggle={(event) => setOpen(event.currentTarget.open)}>
-      <summary>View config</summary>
+      <summary>View details</summary>
       {open && (
         <div className="stage-inspector">
           <h3>Trial {trial.id}</h3>
           <p>{trial.selection_reasons.join(". ") || "Selection pending."}</p>
+          <dl className="optimization-config-fields">
+            {Object.entries(values)
+              .filter(
+                ([key]) =>
+                  !["trial", "status", "details", "source_retrieval"].includes(
+                    key,
+                  ),
+              )
+              .map(([key, value]) => (
+                <div key={key}>
+                  <dt>{key.replaceAll("_", " ")}</dt>
+                  <dd>
+                    {typeof value === "number"
+                      ? fmt(value, "Not measured", key.includes("cost") ? 6 : 3)
+                      : describe(value)}
+                  </dd>
+                </div>
+              ))}
+          </dl>
+          {!!trial.ranking?.violations.length && (
+            <p>Constraint violations: {trial.ranking.violations.join(". ")}</p>
+          )}
           {trial.phase !== "retrieval" && (
             <p>
               Source retrieval trial:{" "}
@@ -411,71 +435,75 @@ function Confirmation({
         </p>
       )}
       {stage.comparison?.reason && <p>{stage.comparison.reason}</p>}
-      <figure
-        className="stage-figure"
-        aria-label="Holdout correctness improvement and confidence interval"
-      >
-        <figcaption>
-          Holdout correctness delta: {fmt(correctness?.mean_delta, "Pending")}
-        </figcaption>
-        {interval && (
-          <svg
-            className="stage-scatter"
-            viewBox="0 0 540 95"
-            role="img"
-            aria-label={`95% confidence interval ${interval[0].toFixed(3)} to ${interval[1].toFixed(3)}`}
-          >
-            <line
-              x1="270"
-              y1="10"
-              x2="270"
-              y2="65"
-              stroke="currentColor"
-              strokeDasharray="4 4"
-            />
-            <line
-              x1={x(interval[0])}
-              y1="38"
-              x2={x(interval[1])}
-              y2="38"
-              stroke="var(--primary)"
-              strokeWidth="5"
-            />
-            <circle
-              cx={x(correctness?.mean_delta ?? 0)}
-              cy="38"
-              r="7"
-              fill="var(--primary)"
-            />
-            <text x="35" y="86">
-              Negative favors baseline
-            </text>
-            <text x="290" y="86">
-              Positive favors candidate
-            </text>
-          </svg>
+      <p>
+        Holdout correctness delta: {fmt(correctness?.mean_delta, "Pending")}
+      </p>
+      <details>
+        <summary>View holdout chart and comparison</summary>
+        <figure
+          className="stage-figure"
+          aria-label="Holdout correctness improvement and confidence interval"
+        >
+          <figcaption>Holdout correctness improvement</figcaption>
+          {interval && (
+            <svg
+              className="stage-scatter"
+              viewBox="0 0 540 95"
+              role="img"
+              aria-label={`95% confidence interval ${interval[0].toFixed(3)} to ${interval[1].toFixed(3)}`}
+            >
+              <line
+                x1="270"
+                y1="10"
+                x2="270"
+                y2="65"
+                stroke="currentColor"
+                strokeDasharray="4 4"
+              />
+              <line
+                x1={x(interval[0])}
+                y1="38"
+                x2={x(interval[1])}
+                y2="38"
+                stroke="var(--primary)"
+                strokeWidth="5"
+              />
+              <circle
+                cx={x(correctness?.mean_delta ?? 0)}
+                cy="38"
+                r="7"
+                fill="var(--primary)"
+              />
+              <text x="35" y="86">
+                Negative favors baseline
+              </text>
+              <text x="290" y="86">
+                Positive favors candidate
+              </text>
+            </svg>
+          )}
+          <p>
+            95% interval:{" "}
+            {interval?.map((v) => v.toFixed(3)).join(" to ") ?? "Unavailable"}.
+            Matched questions: {correctness?.paired_count ?? 0}; missing:{" "}
+            {correctness?.missing_count ?? stage.question_count}.
+          </p>
+        </figure>
+        {!!stage.comparison?.metrics.length && (
+          <DataTable
+            name="holdout-comparison"
+            rows={stage.comparison.metrics.map((m) => ({
+              metric: m.metric,
+              baseline: m.baseline_mean ?? m.reason ?? "Not measured",
+              candidate: m.candidate_mean ?? m.reason ?? "Not measured",
+              delta: m.mean_delta ?? m.reason ?? "Insufficient evidence",
+              ci95: m.ci95?.join(" to ") ?? m.reason ?? "Insufficient evidence",
+              paired: m.paired_count,
+              missing: m.missing_count,
+            }))}
+          />
         )}
-        <p>
-          95% interval:{" "}
-          {interval?.map((v) => v.toFixed(3)).join(" to ") ?? "Unavailable"}.
-          Matched questions: {correctness?.paired_count ?? 0}; missing:{" "}
-          {correctness?.missing_count ?? stage.question_count}.
-        </p>
-      </figure>
-      {!!stage.comparison?.metrics.length && (
-        <DataTable
-          name="holdout-comparison"
-          rows={stage.comparison.metrics.map((m) => ({
-            metric: m.metric,
-            baseline: m.baseline_mean ?? m.reason ?? "Not measured",
-            candidate: m.candidate_mean ?? m.reason ?? "Not measured",
-            delta: m.mean_delta ?? m.reason ?? "Insufficient evidence",
-            ci95: m.ci95?.join(" to ") ?? m.reason ?? "Insufficient evidence",
-            paired: m.paired_count,
-            missing: m.missing_count,
-          }))}
-        />
-      )}
+      </details>
       {!!stage.configuration_differences?.length && (
         <details>
           <summary>Baseline and candidate configuration differences</summary>
@@ -512,6 +540,7 @@ function TrialTable({
     return {
       trial: trial.id,
       status: trial.display_status,
+      details: "View details",
       configuration: describe(cfg),
       selection: trial.roles.join(", ") || "Not selected",
       selection_score: trial.ranking?.score ?? trial.score_reason ?? "Pending",
@@ -568,6 +597,14 @@ function TrialTable({
       key={`${phase}:${hash}`}
       name={`${phase}-trials`}
       rows={rows}
+      visibleColumns={[
+        "trial",
+        "status",
+        "selection_score",
+        "p95_seconds",
+        "details",
+      ]}
+      initialPageSize={5}
       cell={(key, row) => {
         const trial = stage.trials.find((t) => t.id === row.trial)!;
         if (key === "trial")
@@ -576,86 +613,15 @@ function TrialTable({
               {trial.id.slice(0, 8)}
             </Link>
           );
-        if (key === "configuration") {
-          const cfg = trial.configuration;
-          const chunker = cfg?.chunker as Config | undefined;
-          const retriever = cfg?.retriever as Config | undefined;
-          const prompt = cfg?.prompt as Config | undefined;
+        if (key === "details")
           return (
-            <>
-              <div className="stage-row-settings">
-                {cfg ? (
-                  <>
-                    <p>
-                      <strong>
-                        {phase === "retrieval"
-                          ? "Chunking"
-                          : "Inherited chunking"}
-                        :
-                      </strong>{" "}
-                      {String(chunker?.type ?? "Unknown")} ·{" "}
-                      {String(chunker?.chunk_size ?? "Unknown")}{" "}
-                      {String(cfg.chunk_units ?? "")} · overlap{" "}
-                      {String(chunker?.overlap ?? 0)}
-                    </p>
-                    <p>
-                      <strong>
-                        {phase === "retrieval"
-                          ? "Retriever"
-                          : "Inherited retriever"}
-                        :
-                      </strong>{" "}
-                      {String(retriever?.type ?? "Unknown")}
-                    </p>
-                    <p>
-                      <strong>Reranker:</strong> {describe(cfg.reranker)}
-                    </p>
-                    {phase !== "retrieval" && (
-                      <>
-                        <p>
-                          <strong>Context:</strong> {describe(cfg.compressor)};{" "}
-                          {describe(cfg.context)}
-                        </p>
-                        <p>
-                          <strong>Prompt:</strong>{" "}
-                          {String(
-                            prompt?.preset_id ?? prompt?.type ?? "Unknown",
-                          )}
-                        </p>
-                      </>
-                    )}
-                  </>
-                ) : (
-                  <p>Configuration unavailable</p>
-                )}
-              </div>
-              <Inspector
-                sessionId={sessionId}
-                trial={trial}
-                annotateSettings={annotateSettings}
-              />
-            </>
-          );
-        }
-        if (key === "source_retrieval" && trial.source_trial_id)
-          return (
-            <TrialLink
+            <Inspector
+              key={trial.id}
               sessionId={sessionId}
-              trialId={trial.source_trial_id}
-              phase="retrieval"
+              trial={trial}
+              values={row}
+              annotateSettings={annotateSettings}
             />
-          );
-        if (key === "selection")
-          return (
-            <span title={trial.selection_reasons.join(". ")}>
-              {trial.roles.length
-                ? trial.roles.map((role) => (
-                    <span className="stage-role" key={role}>
-                      {role}
-                    </span>
-                  ))
-                : String(row.selection)}
-            </span>
           );
         if (typeof row[key] === "number")
           return fmt(
@@ -697,6 +663,7 @@ export function OptimizationStages({
     queryKey: ["optimization-stages", sessionId, status],
     queryFn: () => api<StageDashboard>(`/optimizations/${sessionId}/stages`),
     refetchInterval: active ? 3000 : false,
+    placeholderData: (previous) => previous,
   });
   const stage = query.data?.stages?.[phase];
   const select = (next: Phase) => {
@@ -751,19 +718,22 @@ export function OptimizationStages({
         <h3>
           {names[phase]} / {phase === "confirm" ? "holdout" : "tuning"}
         </h3>
-        <p>{descriptions[phase]}</p>
-        {phase === "answer" && stage?.plan?.[0]?.reason && (
-          <p>{stage.plan[0].reason}</p>
-        )}
-        <p className="stage-setting-labels">
-          {query.data?.workflow_version === 1
-            ? "Historical workflow: these are the original saved trial settings. Expanded stage search applies to new sessions. Source-trial links are inferred only when matching is unambiguous."
-            : phase === "retrieval"
-              ? "Varied here: chunking, embeddings/index, rewriting, retrieval and reranking. Fixed: compression, context, prompts and answer model."
-              : phase === "answer"
-                ? "Inherited: chunking, embeddings/index, rewriting and retrieval. Varied here: reranker, context/compression and answer prompt. Fixed: answer model and generation settings."
-                : "Fixed: the selected complete pipeline and baseline. No settings are tuned using holdout results."}
-        </p>
+        <details key={`methodology:${phase}`}>
+          <summary>How this stage is evaluated</summary>
+          <p>{descriptions[phase]}</p>
+          {phase === "answer" && stage?.plan?.[0]?.reason && (
+            <p>{stage.plan[0].reason}</p>
+          )}
+          <p className="stage-setting-labels">
+            {query.data?.workflow_version === 1
+              ? "Historical workflow: these are the original saved trial settings. Expanded stage search applies to new sessions. Source-trial links are inferred only when matching is unambiguous."
+              : phase === "retrieval"
+                ? "Varied here: chunking, embeddings/index, rewriting, retrieval and reranking. Fixed: compression, context, prompts and answer model."
+                : phase === "answer"
+                  ? "Inherited: chunking, embeddings/index, rewriting and retrieval. Varied here: reranker, context/compression and answer prompt. Fixed: answer model and generation settings."
+                  : "Fixed: the selected complete pipeline and baseline. No settings are tuned using holdout results."}
+          </p>
+        </details>
         {query.isPending && <Loading label="Loading stage results..." />}
         <ErrorNotice error={query.error} retry={() => void query.refetch()} />
         {stage && (
@@ -799,30 +769,10 @@ export function OptimizationStages({
               </Empty>
             ) : (
               <>
-                {phase !== "confirm" && (
-                  <div className="stage-charts">
-                    <ScoreBars
-                      trials={stage.trials}
-                      label={
-                        phase === "retrieval"
-                          ? "Selection score: reranked NDCG@10"
-                          : "Selection score: answer correctness"
-                      }
-                    />
-                    {phase === "answer" && (
-                      <AnswerScatter trials={stage.trials} />
-                    )}
-                  </div>
-                )}
-                {phase === "retrieval" && (
-                  <RetrievalComparison trials={stage.trials} />
-                )}
                 <h3>{names[phase]} trials</h3>
                 <p>
-                  Selection scores use shared questions; descriptive means use
-                  each trial’s available scores. Valid / missing / failed counts
-                  refer to the primary metric. Expand View config for exact
-                  settings, all metrics, and selection reasons.
+                  Expand View details for settings, all metrics, and selection
+                  reasons.
                 </p>
                 <TrialTable
                   stage={stage}
@@ -830,6 +780,27 @@ export function OptimizationStages({
                   sessionId={sessionId}
                   annotateSettings={query.data?.workflow_version !== 1}
                 />
+                {phase !== "confirm" && (
+                  <details key={`charts:${phase}`}>
+                    <summary>View score charts and comparisons</summary>
+                    <div className="stage-charts">
+                      <ScoreBars
+                        trials={stage.trials}
+                        label={
+                          phase === "retrieval"
+                            ? "Selection score: reranked NDCG@10"
+                            : "Selection score: answer correctness"
+                        }
+                      />
+                      {phase === "answer" && (
+                        <AnswerScatter trials={stage.trials} />
+                      )}
+                    </div>
+                    {phase === "retrieval" && (
+                      <RetrievalComparison trials={stage.trials} />
+                    )}
+                  </details>
+                )}
               </>
             )}
             {phase === "answer" && stage.plan && stage.plan.length > 0 && (
@@ -859,8 +830,8 @@ export function OptimizationStages({
               </details>
             )}
             {phase === "answer" && !!stage.compilations?.length && (
-              <>
-                <h3>DSPy prompt compilation</h3>
+              <details>
+                <summary>DSPy prompt compilation</summary>
                 <p>
                   Compilation usage is offline optimization work, separate from
                   benchmark answer trials. Ranking uses the shared
@@ -875,7 +846,7 @@ export function OptimizationStages({
                     cost: job.usage.cost ?? "Unknown pricing",
                   }))}
                 />
-              </>
+              </details>
             )}
           </>
         )}
