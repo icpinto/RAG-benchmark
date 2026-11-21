@@ -4,6 +4,62 @@ Auto Optimize discovers the best **observed** configuration within an approved
 component/model search space and budget. Manual Benchmark Setup continues to use
 the same benchmark engine.
 
+## Adaptive experiment loop
+
+New sessions and forks use workflow version 4. Existing sessions retain versions
+1–3, including their saved queues. Startup creates the additive
+`optimization_iterations` table; rebuild the API, worker, optimizer, scheduler,
+and UI to activate the new workflow. No existing runs are converted.
+
+Retrieval starts with the baseline. Answering starts with the unchanged highest-ranked
+feasible retrieval configuration, or the existing baseline fallback. Each stage then
+runs one configuration at a time: **run → persist observation → rebuild context →
+planner decision → validate → next experiment or stop**. Seed retrieval configurations
+are suggestions, rather than an automatically executed batch.
+
+The answer planner chooses from the complete approved catalog of prompt presets,
+context/compression variants, rerankers, and configured DSPy recipes. The trial cap
+limits execution, not the catalog. Recipes can be skipped, and the planner can stop
+either stage early. It cannot compose arbitrary answer pipelines. DSPy retains its
+own internal optimization; successful compilation is evaluated before the next outer
+decision. Failed compilation becomes feedback and is not retried automatically.
+
+Each observation contains measured quality, coverage, feasibility, latency, known
+cost, configuration changes, and matched-question deltas against the stage control
+and best previous feasible run. Up to three bounded tuning examples include answers,
+reference evidence, retrieval traces when available, and judge feedback. With DSPy,
+outer answer observations use only prompt-validation questions. Holdout data never
+enters planner context.
+
+The model has no implicit conversation memory. Each request reconstructs the current
+observation, compact attempted-run history, previous hypotheses, evidence-referenced
+lessons, remaining budget, and allowed next actions. Serialized prompts, including
+instructions, are limited to 64 KiB. Optional examples, lessons, and older detail are
+removed first. Mandatory context that cannot fit pauses the session. Complete saved
+observations and prompt/response snapshots remain available for inspection.
+
+The planner gets one accounted repair/retry after an invalid decision or transport
+failure. Two failures pause the session; **Resume** starts a new attempt cycle for
+the same observation. No uninformed fallback configuration is dispatched. Each
+experiment reserves a bounded planner call and repair attempt in addition to its
+benchmark budget, preserving confirmation capacity; unused capacity is released.
+At a trial cap, the final planner call can only reflect and stop. Cancellation or
+exhausted budgets can prevent a call, but completed observations are retained.
+
+Stage dashboards show **Experiment history** with observations, hypotheses, lessons,
+decisions, failures, and stop reasons. **View planner context** exposes saved inputs
+and responses. Search coverage distinguishes selected, executed, failed, and untested
+answer candidates. Reports include iterations, planner prompt versions and usage,
+stage stop reasons, and the complete answer catalog.
+
+- `GET /optimizations/{id}/iterations?phase=retrieval&offset=0&limit=20`
+  returns paginated summaries (`phase` is optional, `limit` is 1–100).
+- `GET /optimizations/{id}/iterations/{iteration_id}` returns the full saved
+  observation, decision, and attempt snapshots within that session.
+
+Measured results remain authoritative. Existing ranking, coverage requirements,
+fixed stages, trial caps, and exact-pipeline holdout confirmation still apply.
+
 ## Run it
 
 Rebuild the API, worker, optimizer, scheduler, and UI with `docker compose up --build`.
@@ -92,7 +148,7 @@ selection/exclusion reasons.
 
 ### Retrieval shortlist and answer search
 
-New answer queues in workflow versions 2 and 3 use the single highest-ranked
+Historical answer queues in workflow versions 2 and 3 use the single highest-ranked
 feasible retrieval trial as their parent, including when it differs from the
 baseline only by reranker settings. Selection retains the existing NDCG@10
 ranking, coverage requirements, constraints, and tie-breakers.
@@ -104,7 +160,9 @@ parent. Without a feasible ranked retrieval trial, answering falls back to the
 baseline and records the reason. Every candidate preserves its parent's
 ingestion, rewriting, retrieval, and fixed filters. The baseline comparison runs
 during holdout confirmation without consuming an independent answering slot.
-The persisted queue is deterministic, deduplicated, and reused after recovery.
+Those persisted queues are deterministic, deduplicated, and reused after recovery.
+Version 4 retains the same parent and approved variants, selecting subsequent
+experiments adaptively as described above.
 
 Without DSPy enabled, prompt choices are **Baseline** (the original prompt),
 **Concise v1**, and

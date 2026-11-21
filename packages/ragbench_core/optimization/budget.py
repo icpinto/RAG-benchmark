@@ -81,6 +81,16 @@ def reported_token_total(usage):
     return sum(counts) if all(type(n) is int and n >= 0 for n in counts) else None
 
 
+def release_reservation(session_id, operation):
+    """Release only unused capacity; executed model calls have separate ledger rows."""
+    with store.locked_budget_owner(session_id) as (conn, _):
+        row = conn.get(store.BudgetUsage, operation)
+        if row and row.status == "reserved":
+            row.tokens, row.seconds = 0, 0
+            row.cost, row.actual_tokens = 0, 0
+            row.status = "settled"
+
+
 def settle(operation, tokens=None, cost=None, seconds=None, actual_tokens=None):
     """Replace token estimates with reported usage; keep estimates when unknown."""
     with store.db.SessionLocal.begin() as conn:
@@ -129,7 +139,7 @@ def totals(session_id):
         "reservations": len(rows),
         "reported_actual_tokens": sum(r["actual_tokens"] or 0 for r in rows),
         "unreported_token_operations": sum(
-            r["actual_tokens"] is None and r["role"] != "reserved_confirmation"
+            r["actual_tokens"] is None and r["role"] not in {"reserved_confirmation", "reserved_planner"}
             for r in rows
         ),
         "by_role": {

@@ -212,6 +212,17 @@ def run_optimization_trial(run_id):
             row = conn.get(store.OptimizationTrial, run_id)
             if row.lease_owner == owner:
                 row.lease_owner, row.lease_until = None, 0
+        if tools.session["status"] == "cancelled" and tools.session["progress"].get("workflow_version", 1) >= 4:
+            from ragbench_core.optimization.adaptive import (
+                capture_pending_terminal,
+                stop_planning,
+            )
+            phase = config.get("_optimization", {}).get("split")
+            if phase == "tuning":
+                with store.db.SessionLocal() as conn:
+                    trial_phase = conn.get(store.OptimizationTrial, run_id).phase
+                capture_pending_terminal(tools, trial_phase)
+            stop_planning(tools, "cancelled", "Session cancelled")
         advance_optimization.apply_async(args=[session_id], queue="optimization")
 
 

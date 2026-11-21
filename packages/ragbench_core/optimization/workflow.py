@@ -58,6 +58,13 @@ def build_graph(checkpointer, dispatch, tools_factory=OptimizationTools):
             tools = tools_factory(session_id)
             session = tools.session
             if session["status"] == "cancelled":
+                if session["progress"].get("workflow_version", 1) >= 4 and stage in {"retrieval", "answer"}:
+                    from ragbench_core.optimization.adaptive import (
+                        capture_pending_terminal,
+                        stop_planning,
+                    )
+                    capture_pending_terminal(tools, stage)
+                    stop_planning(tools, "cancelled", "Session cancelled")
                 return {"stage": "done"}
             while session["status"] in {"paused", "needs_input"}:
                 interrupt({"reason": session["status"], "stage": stage})
@@ -65,15 +72,19 @@ def build_graph(checkpointer, dispatch, tools_factory=OptimizationTools):
             store.update(session_id, status="running", stage=stage)
             store.event(session_id, "stage", stage=stage)
             try:
-                if stage != "export":
+                adaptive_tuning = session["progress"].get("workflow_version", 1) >= 4 and stage in {"retrieval", "answer"}
+                if stage != "export" and not adaptive_tuning:
                     budget.check_control(session_id)
-                if session["progress"].get("stop_reason") and stage not in {
+                if not adaptive_tuning and session["progress"].get("stop_reason") and stage not in {
                     "export",
                     "confirm",
                 }:
                     return {"stage": "export"}
                 next_stage = step(stage, tools, dispatch)
             except budget.BudgetExhausted as exc:
+                if session["progress"].get("workflow_version", 1) >= 4:
+                    from ragbench_core.optimization.adaptive import stop_planning
+                    stop_planning(tools, "budget_exhausted", str(exc))
                 progress(session_id, stop_reason=str(exc))
                 # Never evaluate an unselected candidate on holdout after exhaustion.
                 next_stage = (
@@ -220,6 +231,9 @@ def step(stage, tools, dispatch):
 
 
 def search_retrieval(tools, dispatch):
+    if tools.session["progress"].get("workflow_version", 1) >= 4:
+        from ragbench_core.optimization.adaptive import search
+        return search(tools, "retrieval", dispatch, wait_for_trial)
     session_id = tools.session_id
     baseline, space = tools.baseline(), tools.get_search_space()
     maximum = tools.session["request"]["limits"]["retrieval_trials"]
@@ -290,8 +304,13 @@ def search_retrieval(tools, dispatch):
 
 
 def search_answers(tools, dispatch):
+    if tools.session["progress"].get("workflow_version", 1) >= 4:
+        from ragbench_core.optimization.adaptive import search
+        return search(tools, "answer", dispatch, wait_for_trial)
     if tools.session["progress"].get("workflow_version", 1) >= 3:
-        from ragbench_core.prompt_optimization.auto import search_answers as search_prompt_answers
+        from ragbench_core.prompt_optimization.auto import (
+            search_answers as search_prompt_answers,
+        )
         return search_prompt_answers(tools, dispatch, wait_for_trial, progress)
     session_id = tools.session_id
     state = tools.session["progress"]

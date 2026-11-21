@@ -81,16 +81,24 @@ Select recipes in the new optimization form, in execution order. API clients can
 send `prompt_optimization` on `POST /optimizations`; omitting it inherits the
 template settings, while an explicit empty list disables the feature.
 
-DSPy-enabled sessions use workflow version 3. Retrieval screening is unchanged.
+New sessions use workflow version 4, with an adaptive outer experiment loop described
+in [Auto Optimize](auto-optimize.md#adaptive-experiment-loop). Existing DSPy sessions
+retain workflow version 3 and their saved queues. Retrieval screening metrics are unchanged.
 The frozen tuning partition is split 75/25 into prompt training and validation,
 preserving evidence groups. The existing final holdout remains separate. Too few
 independent tuning groups requires a fresh dataset/version with additional evidence.
 
-Answer slots are allocated to the unchanged highest-ranked feasible retrieval
+In historical version-3 sessions, answer slots are allocated to the unchanged highest-ranked feasible retrieval
 trial, selected DSPy configurations using that parent, then existing prompt,
 context, and reranker variants. Compilation runs only for scheduled slots. The
 answer-trial cap is never raised automatically. Failed compilation is recorded
 and skipped; other scheduled candidates can still run within the remaining budget.
+
+Version 4 evaluates the unchanged parent first, then lets the planner choose from
+all approved candidates, including configured recipes. It may leave recipes untested
+or stop early. Compilation is queued only when that recipe is selected. A successful
+compilation receives an answer evaluation before another planner decision; a failed
+compilation is saved as an observation. DSPy's internal optimization is unchanged.
 
 All answer candidates are ranked on the same prompt-validation questions. Final
 confirmation evaluates the exact selected pipeline against baseline on holdout.

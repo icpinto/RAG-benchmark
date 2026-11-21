@@ -122,108 +122,8 @@ def search_answers(tools, dispatch, wait_for_trial, save_progress):
     for entry in queue:
         if not entry["scheduled"]:
             continue
-        if "recipe_index" in entry and entry.get("compilation_status") not in {
-            "completed",
-            "failed",
-        }:
-            if not entry.get("compilation_job_id"):
-                recipe = deepcopy(
-                    tools.session["request"]["prompt_optimization"]["configs"][
-                        entry["recipe_index"]
-                    ]
-                )
-                recipe["proposal_model"] = (
-                    recipe.get("proposal_model") or tools.session["request"]["planner"]
-                )
-                splits = tools.session["progress"]["prompt_splits"]
-                examples = [
-                    QueryExample(**legacy_question(q))
-                    for q in store.dataset(session_id)["payload"]
-                    if q["split"] == "tuning"
-                ]
-                config = deepcopy(entry["config"])
-                config["_snapshot"] = attach_evaluation(
-                    tools.read("corpus.json"),
-                    examples,
-                    tools.root
-                    / "prompt_inputs"
-                    / str(entry["recipe_index"])
-                    / candidate_hash(config),
-                )
-                job_id = create_job(
-                    config,
-                    {"configs": [recipe]},
-                    splits,
-                    tools.session["request"]["judge"],
-                    allow_hosted=tools.session["request"]["allow_hosted"],
-                    session_id=session_id,
-                    operation_key=session_id
-                    + ":prompt:"
-                    + str(entry["recipe_index"])
-                    + ":"
-                    + candidate_hash(config),
-                )
-                entry["compilation_job_id"] = job_id
-                entry["compilation_status"] = "queued"
-                save_queue()
-                from services.worker.app.prompt_tasks import compile_prompt_job
-
-                try:
-                    compile_prompt_job.apply_async(args=[job_id], queue="optimization")
-                    store.event(
-                        session_id,
-                        "prompt_compilation_queued",
-                        job_id=job_id,
-                        variant=entry["variant"],
-                    )
-                except Exception:  # noqa: BLE001 -- isolate queue failure to this candidate.
-                    update_job(
-                        job_id,
-                        status="failed",
-                        error="Prompt compilation could not be queued",
-                    )
-            job = get_job(entry["compilation_job_id"])
-            while job["status"] not in TERMINAL:
-                store.update(session_id, status="waiting")
-                interrupt({"reason": "prompt_compilation", "job_id": job["id"]})
-                job = get_job(entry["compilation_job_id"])
-            artifacts = artifacts_for_job(job["id"])
-            if not artifacts:
-                entry.update(
-                    compilation_status="failed",
-                    compilation_error=job.get("error")
-                    or job["progress"].get("results", []),
-                )
-                save_queue()
-                continue
-            artifact = artifacts[0]
-            entry["config"] = deepcopy(entry["config"])
-            entry["config"]["pipeline"]["query"]["prompt_builders"] = [
-                builder_config(artifact["payload"])
-            ]
-            entry.update(
-                compilation_status="completed",
-                artifact_id=artifact["id"],
-                candidate_hash=candidate_hash(entry["config"]),
-            )
-            store.event(
-                session_id,
-                "prompt_compilation_completed",
-                job_id=job["id"],
-                artifact_id=artifact["id"],
-            )
-            save_queue()
-        if entry.get("compilation_status") == "failed":
+        if not prepare_answer_entry(tools, entry, save_queue):
             continue
-        if "recipe_index" in entry and not entry.get("confirmation_reserved"):
-            try:
-                tools.reserve_prompt_confirmation(entry["config"])
-            except budget.BudgetExhausted as exc:
-                entry.update(compilation_status="failed", compilation_error=str(exc))
-                save_queue()
-                continue
-            entry["confirmation_reserved"] = True
-            save_queue()
         trial = wait_for_trial(tools, entry["config"], "answer", dispatch)
         entry["trial_id"] = trial["id"]
         save_queue()
@@ -245,3 +145,111 @@ def search_answers(tools, dispatch, wait_for_trial, save_progress):
         answer_ranking=ranking,
     )
     return "confirm"
+
+
+def prepare_answer_entry(tools, entry, save_entry):
+    """Compile one approved recipe, yielding while queued; never schedules siblings."""
+    session_id = tools.session_id
+    if "recipe_index" in entry and entry.get("compilation_status") not in {
+        "completed",
+        "failed",
+    }:
+        if not entry.get("compilation_job_id"):
+            recipe = deepcopy(
+                tools.session["request"]["prompt_optimization"]["configs"][
+                    entry["recipe_index"]
+                ]
+            )
+            recipe["proposal_model"] = (
+                recipe.get("proposal_model") or tools.session["request"]["planner"]
+            )
+            splits = tools.session["progress"]["prompt_splits"]
+            examples = [
+                QueryExample(**legacy_question(q))
+                for q in store.dataset(session_id)["payload"]
+                if q["split"] == "tuning"
+            ]
+            config = deepcopy(entry["config"])
+            config["_snapshot"] = attach_evaluation(
+                tools.read("corpus.json"),
+                examples,
+                tools.root
+                / "prompt_inputs"
+                / str(entry["recipe_index"])
+                / candidate_hash(config),
+            )
+            job_id = create_job(
+                config,
+                {"configs": [recipe]},
+                splits,
+                tools.session["request"]["judge"],
+                allow_hosted=tools.session["request"]["allow_hosted"],
+                session_id=session_id,
+                operation_key=session_id
+                + ":prompt:"
+                + str(entry["recipe_index"])
+                + ":"
+                + candidate_hash(config),
+            )
+            entry["compilation_job_id"] = job_id
+            entry["compilation_status"] = "queued"
+            save_entry()
+            from services.worker.app.prompt_tasks import compile_prompt_job
+
+            try:
+                compile_prompt_job.apply_async(args=[job_id], queue="optimization")
+                store.event(
+                    session_id,
+                    "prompt_compilation_queued",
+                    job_id=job_id,
+                    variant=entry["variant"],
+                )
+            except Exception:  # noqa: BLE001 -- isolate queue failure to this candidate.
+                update_job(
+                    job_id,
+                    status="failed",
+                    error="Prompt compilation could not be queued",
+                )
+        job = get_job(entry["compilation_job_id"])
+        while job["status"] not in TERMINAL:
+            store.update(session_id, status="waiting")
+            interrupt({"reason": "prompt_compilation", "job_id": job["id"]})
+            job = get_job(entry["compilation_job_id"])
+        artifacts = artifacts_for_job(job["id"])
+        if not artifacts:
+            entry.update(
+                compilation_status="failed",
+                compilation_error=job.get("error")
+                or job["progress"].get("results", []),
+            )
+            save_entry()
+            return False
+        artifact = artifacts[0]
+        entry["config"] = deepcopy(entry["config"])
+        entry["config"]["pipeline"]["query"]["prompt_builders"] = [
+            builder_config(artifact["payload"])
+        ]
+        entry.update(
+            compilation_status="completed",
+            artifact_id=artifact["id"],
+            candidate_hash=candidate_hash(entry["config"]),
+        )
+        store.event(
+            session_id,
+            "prompt_compilation_completed",
+            job_id=job["id"],
+            artifact_id=artifact["id"],
+        )
+        save_entry()
+    if entry.get("compilation_status") == "failed":
+        return False
+    if "recipe_index" in entry and not entry.get("confirmation_reserved"):
+        try:
+            tools.reserve_prompt_confirmation(entry["config"])
+        except budget.BudgetExhausted as exc:
+            entry.update(compilation_status="failed", compilation_error=str(exc))
+            save_entry()
+            return False
+        entry["confirmation_reserved"] = True
+        save_entry()
+    return True

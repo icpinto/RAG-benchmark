@@ -1491,6 +1491,18 @@ input[type="checkbox"] {
   gap: 16px;
   margin: 20px 0;
 }
+.optimization-history article {
+  margin: 16px 0;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow-wrap: anywhere;
+}
+.optimization-history pre {
+  max-height: 32rem;
+  overflow: auto;
+  white-space: pre-wrap;
+}
 .stage-summary > div {
   padding: 16px;
   background: var(--surface);

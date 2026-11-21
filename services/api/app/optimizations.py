@@ -3,19 +3,20 @@
 from __future__ import annotations
 
 import os
-import re
 import time
 import uuid
 from pathlib import Path
-from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
+from typing import Literal
+from urllib.parse import urlparse
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import Response
 from ragbench_core.engine.data_loader import list_sources
 from ragbench_core.engine.snapshots import capture_corpus
 from ragbench_core.optimization import budget, store
 from ragbench_core.optimization.contracts import DatasetEdit, OptimizationRequest
 from ragbench_core.optimization.datasets import validate_questions
+from ragbench_core.optimization.redaction import public_configuration
 from ragbench_core.optimization.tools import OptimizationTools
 from ragbench_core.utils.config import load_yaml
 
@@ -68,65 +69,6 @@ def public_session(session):
     }
 
 
-def public_configuration(value):
-    """Copy saved settings without credentials or execution-only metadata."""
-    secret_keys = {
-        "apikey",
-        "authorization",
-        "password",
-        "secret",
-        "token",
-        "accesstoken",
-        "refreshtoken",
-        "clientsecret",
-        "accesskey",
-        "secretaccesskey",
-        "awsaccesskeyid",
-        "awssecretaccesskey",
-        "secretkey",
-    }
-
-    def secret(key):
-        normalized = re.sub(r"[^a-z0-9]", "", str(key).lower())
-        return normalized in secret_keys or normalized.endswith(
-            ("apikey", "authorization", "password", "secret", "privatekey")
-        )
-
-    def redact(child):
-        if isinstance(child, str) and re.fullmatch(
-            r"\$\{[A-Za-z_][A-Za-z0-9_]*\}", child
-        ):
-            return child
-        return "[REDACTED]" if child else child
-
-    if isinstance(value, dict):
-        return {
-            key: redact(child) if secret(key) else public_configuration(child)
-            for key, child in value.items()
-            if key not in {"_snapshot", "_optimization"}
-        }
-    if isinstance(value, list):
-        return [public_configuration(child) for child in value]
-    if isinstance(value, str) and "://" in value:
-        try:
-            parsed = urlparse(value)
-            query = parse_qsl(parsed.query, keep_blank_values=True)
-            if parsed.username is not None or any(secret(key) for key, _ in query):
-                return urlunparse(
-                    parsed._replace(
-                        netloc=parsed.netloc.rsplit("@", 1)[-1],
-                        query=urlencode(
-                            [
-                                (key, redact(child) if secret(key) else child)
-                                for key, child in query
-                            ]
-                        ),
-                    )
-                )
-        except ValueError:
-            return "[REDACTED]"
-    return value
-
 
 def reject_secrets(value):
     if isinstance(value, dict):
@@ -160,7 +102,9 @@ def create_optimization(req: OptimizationRequest):
         config_path = confined(req.config_path, CONFIG_ROOT)
         template = load_yaml(str(config_path))
         if "prompt_optimization" not in req.model_fields_set:
-            from ragbench_core.prompt_optimization.contracts import PromptOptimizationSettings
+            from ragbench_core.prompt_optimization.contracts import (
+                PromptOptimizationSettings,
+            )
             req.prompt_optimization = PromptOptimizationSettings.model_validate(template.get("prompt_optimization", {}))
             req.policy()
         template["prompt_optimization"] = req.prompt_optimization.model_dump()
@@ -237,7 +181,7 @@ def create_optimization(req: OptimizationRequest):
                     id=session_id,
                     request=req.model_dump(),
                     template=template,
-                    progress={"workflow_version": 3 if req.prompt_optimization.configs else 2},
+                    progress={"workflow_version": 4},
                 )
             )
             conn.add(
@@ -371,6 +315,34 @@ def get_events(session_id: str):
     )[-500:]
 
 
+@router.get("/{session_id}/iterations")
+def get_iterations(
+    session_id: str,
+    offset: int = Query(default=0, ge=0),
+    limit: int = Query(default=20, ge=1, le=100),
+    phase: Literal["retrieval", "answer"] | None = None,
+):
+    session_or_404(session_id)
+    from ragbench_core.optimization.memory import iteration_summary, iterations
+
+    items = iterations(session_id, phase)
+    tools = OptimizationTools(session_id)
+    return {"items": [iteration_summary(tools, item) for item in items[offset:offset + limit]],
+            "total": len(items), "offset": offset, "limit": limit}
+
+
+@router.get("/{session_id}/iterations/{iteration_id}")
+def get_iteration(session_id: str, iteration_id: str):
+    session_or_404(session_id)
+    from ragbench_core.optimization.memory import iteration_detail
+
+    with store.db.SessionLocal() as conn:
+        item = conn.get(store.OptimizationIteration, iteration_id)
+        if item is None or item.session_id != session_id:
+            raise HTTPException(404, "Iteration not found")
+        return iteration_detail(OptimizationTools(session_id), store.payload(item))
+
+
 @router.post("/{session_id}/pause")
 def pause(session_id: str):
     session = session_or_404(session_id)
@@ -411,13 +383,22 @@ def resume(session_id: str):
 
 @router.post("/{session_id}/cancel")
 def cancel(session_id: str):
-    session_or_404(session_id)
+    session = session_or_404(session_id)
     store.update(session_id, status="cancelled")
     from ragbench_core.prompt_optimization.service import TERMINAL as PROMPT_TERMINAL
     with store.db.SessionLocal.begin() as conn:
         for job in conn.execute(store.select(store.PromptCompilationJob).where(store.PromptCompilationJob.session_id == session_id)).scalars():
             if job.status not in PROMPT_TERMINAL:
                 job.status = "cancelled"
+    if session["progress"].get("workflow_version", 1) >= 4:
+        from ragbench_core.optimization.adaptive import (
+            capture_pending_terminal,
+            stop_planning,
+        )
+        tools = OptimizationTools(session_id)
+        for phase in ("retrieval", "answer"):
+            capture_pending_terminal(tools, phase)
+        stop_planning(tools, "cancelled", "Session cancelled")
     return {"status": "cancelled"}
 
 

@@ -6,6 +6,10 @@ import { Card, Empty, ErrorNotice, Loading, Notice } from "./common";
 import { DataTable } from "./data-table";
 import { TrialConfiguration } from "./optimization-config";
 import {
+  OptimizationHistory,
+  type PlannerStatus,
+} from "./optimization-history";
+import {
   PromptCandidateHistory,
   type CompilationHistorySummary,
 } from "./prompt-candidate-history";
@@ -74,6 +78,7 @@ interface Planned {
   status: string;
 }
 interface Stage {
+  planner?: PlannerStatus;
   status: string;
   split: string;
   question_count: number;
@@ -773,6 +778,15 @@ export function OptimizationStages({
         <ErrorNotice error={query.error} retry={() => void query.refetch()} />
         {stage && (
           <>
+            {phase !== "confirm" && stage.planner && (
+              <OptimizationHistory
+                key={`${sessionId}-${phase}`}
+                sessionId={sessionId}
+                phase={phase}
+                active={active}
+                planner={stage.planner}
+              />
+            )}
             <div className="stage-summary">
               <div>
                 <span>Trials</span>
@@ -841,10 +855,13 @@ export function OptimizationStages({
               <details>
                 <summary>
                   Search coverage:{" "}
-                  {stage.plan.filter((p) => p.scheduled).length} planned,{" "}
+                  {stage.plan.filter((p) => p.scheduled).length}{" "}
+                  {query.data?.workflow_version === 4 ? "selected" : "planned"},{" "}
                   {stage.plan.filter((p) => p.trial_id).length} dispatched,{" "}
-                  {stage.plan.filter((p) => !p.scheduled).length} outside trial
-                  cap
+                  {stage.plan.filter((p) => !p.scheduled).length}{" "}
+                  {query.data?.workflow_version === 4
+                    ? "untested"
+                    : "outside trial cap"}
                 </summary>
                 <p>
                   The winner is the best observed configuration. The explicit

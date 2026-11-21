@@ -453,12 +453,35 @@ def stage_dashboard(session, *, redact=lambda value: value):
         }
 
     plan = deepcopy(state.get("answer_plan", []))
+    adaptive_entries = []
+    if state.get("workflow_version", 1) >= 4:
+        from ragbench_core.optimization.adaptive import catalog
+        from ragbench_core.optimization.tools import OptimizationTools
+        adaptive_entries = catalog(OptimizationTools(session_id))
+        plan = [{k: v for k, v in e.items() if k != "config"} for e in adaptive_entries]
+        iteration_rows = store.rows(store.OptimizationIteration, session_id)
+        for phase in ("retrieval", "answer"):
+            current = state.get("adaptive", {}).get(phase, {})
+            sections[phase]["planner"] = {
+                "status": current.get("planner_status", "waiting for observation"),
+                "iteration_count": sum(r["phase"] == phase for r in iteration_rows),
+                "stop_reason": current.get("stop_reason"),
+                "error": current.get("planner_error"),
+            }
+        # Preserve source lineage without duplicating the candidate catalog in progress.
+        for trial in sections["answer"]["trials"]:
+            entry = next((e for e in adaptive_entries if e.get("trial_id") == trial["id"]), None)
+            if entry:
+                trial["source_trial_id"] = entry.get("source_trial_id")
+                if entry.get("hypothesis"):
+                    trial["selection_reasons"].append(entry["hypothesis"])
     answers_by_hash = {_hash(t["config"]): t for t in trials if t["phase"] == "answer"}
     plan = [
         {
             **entry,
-            "trial_id": answers_by_hash.get(entry["candidate_hash"], {}).get("id"),
-            "status": answers_by_hash.get(entry["candidate_hash"], {}).get("status")
+            "trial_id": entry.get("trial_id") or answers_by_hash.get(entry["candidate_hash"], {}).get("id"),
+            "status": (entry.get("status") if state.get("workflow_version", 1) >= 4 else None)
+            or answers_by_hash.get(entry["candidate_hash"], {}).get("status")
             or (entry.get("compilation_status") if entry.get("compilation_status") != "completed" else None)
             or ("planned" if entry["scheduled"] else "outside trial cap"),
         }
@@ -469,7 +492,7 @@ def stage_dashboard(session, *, redact=lambda value: value):
         from ragbench_core.optimization.budget import totals
         from ragbench_core.prompt_optimization.history_store import history_status
         from ragbench_core.prompt_optimization.service import get_job
-        job_ids = {e["compilation_job_id"] for e in state.get("prompt_answer_plan", []) if e.get("compilation_job_id")}
+        job_ids = {e["compilation_job_id"] for e in (adaptive_entries if state.get("workflow_version", 1) >= 4 else state.get("prompt_answer_plan", [])) if e.get("compilation_job_id")}
         sections["answer"]["compilations"] = []
         for jid in sorted(job_ids):
             job = get_job(jid)

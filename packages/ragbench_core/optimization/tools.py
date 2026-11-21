@@ -34,7 +34,8 @@ from ragbench_core.optimization.datasets import (
     passages,
     validate_questions,
 )
-from ragbench_core.optimization.models import structured_call
+from ragbench_core.optimization.models import StructuredOutputError, structured_call
+from ragbench_core.optimization.redaction import public_configuration
 from ragbench_core.optimization.search import (
     candidate_hash,
     concrete_config,
@@ -91,7 +92,7 @@ class OptimizationTools:
             session_id=self.session_id, artifact_id=artifact_id, summary=summary
         )
 
-    def call(self, role, instruction, data):
+    def call(self, role, instruction, data, *, attempt_id=None, credit=None, prompt_version=None):
         budget.check_control(self.session_id)
         with store.locked(self.session_id) as (_, row):
             if row.lease_owner:
@@ -103,11 +104,15 @@ class OptimizationTools:
                 "model": profile.model_dump(),
                 "instruction": instruction,
                 "data": data,
+                **({"attempt_id": attempt_id} if attempt_id else {}),
             }
         )
         name = "model_" + cache_key + ".json"
         if (self.root / name).exists():
-            return self.read(name)["result"]
+            cached = self.read(name)
+            if cached.get("invalid_output"):
+                raise StructuredOutputError(cached["output"], cached["usage"])
+            return cached["result"]
         # UTF-8 byte count deliberately overestimates tokenizer input lengths.
         prompt_tokens = (
             len((instruction + json.dumps(data, ensure_ascii=False)).encode("utf-8"))
@@ -124,8 +129,10 @@ class OptimizationTools:
             )
             / 1e6
         )
+        # Interrupted calls may have reached the provider, so each transport execution
+        # gets its own charge. Completed responses are reused by stable attempt ID.
         operation = self.session_id + ":model:" + cache_key + ":" + str(uuid.uuid4())
-        budget.reserve(self.session_id, operation, role, tokens, cost, profile.timeout)
+        budget.reserve(self.session_id, operation, role, tokens, cost, profile.timeout, credit=credit)
         started = time.monotonic()
         usage = {}
         try:
@@ -136,11 +143,18 @@ class OptimizationTools:
                     "result": result,
                     "usage": usage,
                     "model": profile.model,
-                    "prompt_version": PROMPT_VERSION,
+                    "prompt_version": prompt_version or PROMPT_VERSION,
                 },
             )
             store.event(self.session_id, "model_call", role=role, artifact_id=name)
             return result
+        except StructuredOutputError as exc:
+            usage = exc.usage
+            if attempt_id:
+                self.write(name, {"invalid_output": True, "output": public_configuration(exc.output),
+                                  "usage": usage, "prompt_version": prompt_version or PROMPT_VERSION})
+            store.event(self.session_id, "model_error", role=role, error_type="StructuredOutputError")
+            raise
         except Exception as exc:  # noqa: BLE001 -- isolate provider/plugin/queue failures at the service boundary.
             # Do not persist provider exception strings that may contain credentials.
             store.event(
@@ -629,7 +643,12 @@ class OptimizationTools:
         approved = {}
         if self.session["progress"].get("workflow_version", 1) >= 3:
             from ragbench_core.prompt_optimization.service import artifacts_for_job
-            for entry in self.session["progress"].get("prompt_answer_plan", []):
+            if self.session["progress"].get("workflow_version", 1) >= 4:
+                from ragbench_core.optimization.adaptive import catalog
+                entries = catalog(self)
+            else:
+                entries = self.session["progress"].get("prompt_answer_plan", [])
+            for entry in entries:
                 if entry.get("compilation_job_id"):
                     for artifact in artifacts_for_job(entry["compilation_job_id"]):
                         approved[artifact["id"]] = artifact["payload"]
@@ -824,11 +843,15 @@ class OptimizationTools:
 
     def export_recommendation(self, report):
         config = self.validate_candidate(report["config"])
+        session = self.session
+        version = session["progress"].get("workflow_version", 1)
+        prompts_enabled = bool(session["request"].get("prompt_optimization", {}).get("configs"))
+        holdout_only = version == 3 or (version >= 4 and prompts_enabled)
         # Export references the immutable captured source manifest, including remote bytes.
         all_questions = [
             QueryExample(**legacy_question(q))
             for q in store.dataset(self.session_id)["payload"]
-            if self.session["progress"].get("workflow_version", 1) < 3 or q["split"] == "holdout"
+            if not holdout_only or q["split"] == "holdout"
         ]
         config["_snapshot"] = attach_evaluation(
             self.read("corpus.json"), all_questions, self.root / "export_snapshot"
@@ -873,16 +896,35 @@ class OptimizationTools:
             "human_reviewed_questions": sum(q["human_reviewed"] for q in questions),
         }
         compilations = []
-        if self.session["progress"].get("workflow_version", 1) >= 3:
+        if version == 3 or (version >= 4 and prompts_enabled):
             from ragbench_core.prompt_optimization.service import get_job
-            job_ids = {entry["compilation_job_id"] for entry in self.session["progress"].get("prompt_answer_plan", []) if entry.get("compilation_job_id")}
+            job_ids = (
+                {job["id"] for job in store.rows(store.PromptCompilationJob, self.session_id)}
+                if version >= 4 else
+                {entry["compilation_job_id"] for entry in session["progress"].get("prompt_answer_plan", []) if entry.get("compilation_job_id")}
+            )
             for job_id in sorted(job_ids):
                 job = get_job(job_id)
                 compilations.append({"id": job_id, "status": job["status"], "results": job["progress"].get("results", []), "usage": budget.totals(job_id), "attempts": job["attempts"]})
+        adaptive_report = {}
+        if self.session["progress"].get("workflow_version", 1) >= 4:
+            from ragbench_core.optimization.adaptive import catalog
+            from ragbench_core.optimization.memory import (
+                PROMPT_VERSION as PLANNER_VERSION,
+            )
+            from ragbench_core.optimization.memory import iteration_detail, iterations
+            adaptive_report = {
+                "iterations": [iteration_detail(self, item) for item in iterations(self.session_id)],
+                "planner_prompt_version": PLANNER_VERSION,
+                "planner_memory": self.session["progress"].get("planner_memory", {"lessons": []}),
+                "stage_stops": {phase: value.get("stop_reason") for phase, value in self.session["progress"].get("adaptive", {}).items()},
+                "answer_plan": [{k: v for k, v in e.items() if k != "config"} for e in catalog(self)],
+            }
         self.write(
             "report.json",
             {
                 **report,
+                **adaptive_report,
                 "prompt_compilations": compilations,
                 "evaluation_dataset": store.dataset_provenance(self.session_id),
                 "evaluation_coverage": coverage,

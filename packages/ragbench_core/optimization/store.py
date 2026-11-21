@@ -75,6 +75,30 @@ class OptimizationEvent(db.Base):
     payload = Column(JSON)
 
 
+class OptimizationIteration(db.Base):
+    __tablename__ = "optimization_iterations"
+    id = Column(String, primary_key=True)
+    session_id = Column(String, index=True, nullable=False)
+    phase = Column(String, nullable=False)
+    sequence = Column(Integer, nullable=False)
+    observation_key = Column(String, nullable=False)
+    observation_artifact = Column(String, nullable=False)
+    source_action_artifact = Column(String, nullable=False)
+    reservation = Column(String, nullable=False)
+    cycle = Column(Integer, default=0, nullable=False)
+    status = Column(String, default="pending", nullable=False)
+    attempts = Column(JSON, default=list)
+    decision = Column(JSON, nullable=True)
+    action_artifact = Column(String, nullable=True)
+    created_at = Column(Float, default=time.time)
+    updated_at = Column(Float, default=time.time)
+    __table_args__ = (
+        UniqueConstraint("session_id", "observation_key"),
+        UniqueConstraint("session_id", "source_action_artifact"),
+        UniqueConstraint("session_id", "phase", "sequence"),
+    )
+
+
 class BudgetUsage(db.Base):
     __tablename__ = "optimization_usage"
     id = Column(String, primary_key=True)
