@@ -43,7 +43,7 @@ class DecisionBase(Contract):
 class RetrievalDecision(DecisionBase):
     action: Literal["run", "stop"]
     hypothesis: str = Field(default="", max_length=1000)
-    pipeline: dict | None = None
+    candidate_id: str | None = None
     reason: str = Field(default="", max_length=1000)
 
 

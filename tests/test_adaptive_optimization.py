@@ -41,15 +41,13 @@ def stop(data, reason="Enough evidence"):
     }
 
 
-def choose(data, pipeline=None, candidate_id=None):
+def choose(data, candidate_id=None):
     result = {
         "reflection": "Current evidence suggests another experiment",
         "action": "run",
         "hypothesis": "The selected change will improve the measured score",
         "memory": {"lessons": []},
     }
-    if pipeline is not None:
-        result["pipeline"] = pipeline
     if candidate_id is not None:
         result["candidate_id"] = candidate_id
     return result
@@ -130,9 +128,9 @@ def test_adaptive_run_observe_plan_order_and_exact_confirmation(tools):
             proposal = next(
                 c
                 for c in data["candidates"]
-                if c["pipeline"]["query"]["retrievers"] == [{"type": "bm25"}]
+                if c["configuration"]["retriever"] == {"type": "bm25"}
             )
-            result = choose(data, pipeline=proposal["pipeline"])
+            result = choose(data, candidate_id=proposal["candidate_id"])
         else:
             proposal = next(
                 c for c in data["candidates"] if c["variant"] == "concise_v1"
@@ -226,7 +224,7 @@ def test_failed_run_becomes_feedback_before_next_experiment(tools):
             assert data["current_observation"]["status"] == "failed"
             assert data["current_observation"]["score"] is None
             assert data["current_observation"]["errors"]
-            return choose(data, pipeline=data["candidates"][0]["pipeline"])
+            return choose(data, candidate_id=data["candidates"][0]["candidate_id"])
         return stop(data)
 
     tools.model_call = transport(decide, calls)
@@ -251,9 +249,7 @@ def test_failed_run_becomes_feedback_before_next_experiment(tools):
 
 def test_invalid_decision_pauses_then_resume_uses_new_attempt(tools):
     calls, dispatches = [], []
-    tools.model_call = transport(
-        lambda data: choose(data, pipeline=tools.baseline()["pipeline"]), calls
-    )
+    tools.model_call = transport(lambda data: stop(data, reason=""), calls)
 
     def dispatch(run_id):
         dispatches.append(run_id)
@@ -263,7 +259,7 @@ def test_invalid_decision_pauses_then_resume_uses_new_attempt(tools):
     graph.invoke({"session_id": tools.session_id, "stage": "retrieval"}, config)
     assert store.get(tools.session_id)["status"] == "paused"
     assert len(calls) == 2 and len(dispatches) == 1
-    assert calls[1]["corrective_feedback"] == "Configuration has already been attempted"
+    assert calls[1]["corrective_feedback"] == "Stopping requires a reason"
     paused = memory.iterations(tools.session_id)[0]
     assert len(paused["attempts"]) == 2
     store.update(tools.session_id, status="queued", error=None)
@@ -285,6 +281,54 @@ def test_invalid_decision_pauses_then_resume_uses_new_attempt(tools):
             ]
         )
         == 1
+    )
+
+
+def test_duplicate_candidate_ids_use_untried_fallback(tools):
+    calls, dispatched = [], []
+
+    def decide(data):
+        if data["objective"]["phase"] == "retrieval" and data["rules"][
+            "allowed_actions"
+        ] != ["stop"]:
+            # Repeatedly select the completed baseline, as the last real planner did.
+            return choose(data, candidate_id=data["current_observation"]["candidate_id"])
+        return stop(data)
+
+    tools.model_call = transport(decide, calls)
+
+    def dispatch(run_id):
+        dispatched.append(run_id)
+        complete(tools, run_id)
+
+    graph, config = graph_for(tools, dispatch)
+    graph.invoke({"session_id": tools.session_id, "stage": "retrieval"}, config)
+
+    trials = [
+        t for t in store.rows(store.OptimizationTrial, tools.session_id)
+        if t["phase"] == "retrieval"
+    ]
+    assert len(trials) == 2
+    assert len({adaptive.candidate_hash(t["config"]) for t in trials}) == 2
+    assert all(t["status"] == "completed" for t in trials)
+    assert store.get(tools.session_id)["status"] == "completed"
+    first = memory.iterations(tools.session_id)[0]
+    assert [a["status"] for a in first["attempts"]] == ["failed", "failed"]
+    assert first["decision"]["candidate_id"] != calls[0]["current_observation"]["candidate_id"]
+    assert calls[1]["corrective_feedback"] == "Choose an untested retrieval candidate ID"
+
+
+def test_retrieval_catalog_exposes_unique_valid_choices(tools):
+    choices = adaptive.available_candidates(tools, "retrieval")
+    configs = adaptive.retrieval_candidates(tools)
+    assert choices and len(choices) == len(configs) <= adaptive.MAX_RETRIEVAL_CANDIDATES
+    assert {choice["candidate_id"] for choice in choices} == set(configs)
+    assert all("pipeline" not in choice for choice in choices)
+    assert any(choice["configuration"]["retriever"]["type"] == "bm25" for choice in choices)
+    assert any(choice["configuration"]["chunker"]["chunk_size"] == 256 for choice in choices)
+    assert all(
+        adaptive.candidate_hash(config) == key
+        for key, config in configs.items()
     )
 
 
@@ -518,7 +562,7 @@ def test_changed_observation_changes_next_experiment(
             data["objective"]["phase"] == "retrieval"
             and data["current_observation"]["score"] < 0.8
         ):
-            return choose(data, pipeline=data["candidates"][0]["pipeline"])
+            return choose(data, candidate_id=data["candidates"][0]["candidate_id"])
         return stop(data)
 
     tools.model_call = transport(decide, calls)
@@ -585,17 +629,18 @@ def test_out_of_space_and_unapproved_compiled_prompts_rejected(tools):
         builder_config,
     )
 
-    config = tools.baseline()
-    config["pipeline"]["query"]["retrievers"] = [{"type": "invented"}]
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="untested retrieval candidate ID"):
         adaptive.validate_decision(
-            tools, "retrieval", choose({}, pipeline=config["pipeline"]), False
+            tools, "retrieval", choose({}, candidate_id="invented"), False
         )
     config = tools.baseline()
     config["pipeline"]["query"]["context_assemblers"][0]["max_context_chars"] = 6000
-    with pytest.raises(ValueError, match="preserve baseline"):
+    with pytest.raises(ValueError, match="extra_forbidden"):
         adaptive.validate_decision(
-            tools, "retrieval", choose({}, pipeline=config["pipeline"]), False
+            tools,
+            "retrieval",
+            {**choose({}, candidate_id="invented"), "pipeline": config["pipeline"]},
+            False,
         )
     config = tools.baseline()
     config["pipeline"]["query"]["prompt_builders"] = [

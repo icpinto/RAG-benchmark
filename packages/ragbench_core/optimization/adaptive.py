@@ -29,6 +29,8 @@ from ragbench_core.optimization.profiles import ModelProfile
 from ragbench_core.optimization.redaction import public_configuration
 from ragbench_core.optimization.search import candidate_hash, seed_candidates
 
+MAX_RETRIEVAL_CANDIDATES = 32
+
 
 def phase_state(tools, phase):
     return tools.session["progress"].get("adaptive", {}).get(phase, {})
@@ -340,6 +342,96 @@ def run_pending(tools, phase, dispatch, wait_for_trial):
         raise
 
 
+def retrieval_candidates(tools):
+    """Resolve candidate IDs to validated, untried configurations on the server."""
+    baseline = tools.retrieval_config()
+    space = tools.get_search_space("retrieval")
+    tried = {
+        candidate_hash(t["config"])
+        for t in store.rows(store.OptimizationTrial, tools.session_id)
+        if t["phase"] == "retrieval"
+    }
+    candidates = {}
+
+    def proposals():
+        yield from seed_candidates(baseline, space)
+        trials = {
+            t["id"]: t
+            for t in store.rows(store.OptimizationTrial, tools.session_id)
+            if t["phase"] == "retrieval" and t["status"] == "completed"
+        }
+        ranked = tools.compare_trials("retrieval") if trials else []
+        parents = [
+            trials[row["trial_id"]]["config"]
+            for row in ranked
+            if row["feasible"] and row["trial_id"] in trials
+        ][:1]
+        parents.append(baseline)
+        for parent in parents:
+            for kind in space["retrievers"]:
+                proposal = deepcopy(parent)
+                proposal["pipeline"]["query"]["retrievers"] = [{"type": kind}]
+                if kind == "parent_document":
+                    proposal["pipeline"]["ingestion"]["chunkers"] = [
+                        {"type": "llamaindex_hierarchical", "chunk_size": 512,
+                         "parent_chunk_size": 2048, "overlap": 0}
+                    ]
+                yield proposal
+            for size in space["chunk_sizes"]:
+                proposal = deepcopy(parent)
+                proposal["pipeline"]["ingestion"]["chunkers"][0]["chunk_size"] = size
+                yield proposal
+            for kind in space["chunkers"]:
+                proposal = deepcopy(parent)
+                chunker = {"type": kind, "chunk_size": 512, "overlap": 0}
+                if kind == "llamaindex_hierarchical":
+                    chunker["parent_chunk_size"] = 2048
+                proposal["pipeline"]["ingestion"]["chunkers"] = [chunker]
+                yield proposal
+            for kind in space["rewriters"]:
+                proposal = deepcopy(parent)
+                proposal["pipeline"]["query"]["rewriters"] = [{"type": kind}]
+                yield proposal
+            for embedding in space["embeddings"]:
+                proposal = deepcopy(parent)
+                proposal["pipeline"]["ingestion"]["embeddings"] = [deepcopy(embedding)]
+                yield proposal
+            for index, strategies in (
+                ("dense", space["dense_strategies"]),
+                ("sparse", space["sparse_strategies"]),
+            ):
+                for strategy in strategies:
+                    proposal = deepcopy(parent)
+                    indexer = proposal["pipeline"]["ingestion"]["indexers"].get(index)
+                    if indexer:
+                        indexer["strategy"] = strategy
+                        yield proposal
+
+    for seed in proposals():
+        try:
+            config = tools.validate_candidate(
+                tools.retrieval_config(seed), phase="retrieval"
+            )
+        except (ValueError, KeyError, TypeError):
+            continue
+        key = candidate_hash(config)
+        if key not in tried:
+            candidates[key] = config
+        if len(candidates) >= MAX_RETRIEVAL_CANDIDATES:
+            break
+    return candidates
+
+
+def retrieval_summary(config):
+    summary = configuration(config)
+    return {
+        field: summary[field]
+        for field in (
+            "chunker", "embedding", "indexers", "rewriter", "retriever", "reranker"
+        )
+    }
+
+
 def available_candidates(tools, phase):
     if phase == "answer":
         return [
@@ -352,27 +444,10 @@ def available_candidates(tools, phase):
             for e in catalog(tools)
             if e["status"] == "untested"
         ]
-    tried = {
-        candidate_hash(t["config"])
-        for t in store.rows(store.OptimizationTrial, tools.session_id)
-        if t["phase"] == phase
-    }
-    seeds = []
-    for seed in seed_candidates(
-        tools.retrieval_config(), tools.get_search_space("retrieval")
-    ):
-        try:
-            seed = tools.validate_candidate(tools.retrieval_config(seed), phase="retrieval")
-        except (ValueError, KeyError, TypeError):
-            continue
-        if candidate_hash(seed) not in tried:
-            seeds.append(
-                {
-                    "candidate_id": candidate_hash(seed),
-                    "pipeline": public_configuration(seed["pipeline"]),
-                }
-            )
-    return seeds
+    return [
+        {"candidate_id": key, "configuration": retrieval_summary(config)}
+        for key, config in retrieval_candidates(tools).items()
+    ]
 
 
 def validate_decision(tools, phase, response, force_stop):
@@ -396,28 +471,9 @@ def validate_decision(tools, phase, response, force_stop):
     if not decision["hypothesis"].strip():
         raise ValueError("Running requires a testable hypothesis")
     if phase == "retrieval":
-        if not isinstance(decision["pipeline"], dict):
-            raise ValueError("A retrieval run requires a pipeline object")
-        config = tools.validate_candidate(
-            {"pipeline": decision["pipeline"]}, phase="retrieval"
-        )
-        if candidate_hash(config) != candidate_hash(
-            tools.retrieval_config(config)
-        ):
-            raise ValueError(
-                "Retrieval must preserve baseline compression, context and prompt"
-                + (
-                    " and disable reranking"
-                    if tools.session["progress"].get("workflow_version", 1) >= 5
-                    else ""
-                )
-            )
-        if any(
-            candidate_hash(t["config"]) == candidate_hash(config)
-            for t in store.rows(store.OptimizationTrial, tools.session_id)
-            if t["phase"] == phase
-        ):
-            raise ValueError("Configuration has already been attempted")
+        config = retrieval_candidates(tools).get(decision["candidate_id"])
+        if config is None:
+            raise ValueError("Choose an untested retrieval candidate ID")
         action = {"config": config, "hypothesis": decision["hypothesis"]}
     else:
         entry = next(
@@ -454,6 +510,38 @@ def pause_planner(tools, phase, iteration, reason):
     )
 
 
+def commit_decision(tools, phase, iteration, attempts, decision, action):
+    action_path = (
+        tools.write("planner_action_" + iteration["id"] + ".json", action)
+        if action
+        else None
+    )
+    with store.locked(tools.session_id) as (conn, session):
+        row = conn.get(store.OptimizationIteration, iteration["id"])
+        row.status, row.decision, row.action_artifact = (
+            "committed",
+            decision,
+            action_path,
+        )
+        row.attempts, row.updated_at = attempts, time.time()
+        adaptive = deepcopy(session.progress["adaptive"])
+        adaptive[phase].update(
+            pending=action_path,
+            active_iteration=None,
+            planner_status="ready",
+            finished=action is None,
+            stop_reason=decision["reason"] if action is None else None,
+        )
+        if action is None:
+            adaptive[phase]["planner_status"] = "stopped"
+        session.progress = {
+            **session.progress,
+            "adaptive": adaptive,
+            "planner_memory": decision["memory"],
+        }
+    budget.release_reservation(tools.session_id, iteration["reservation"])
+
+
 def plan_next(tools, phase, iteration):
     if iteration["status"] == "committed":
         return
@@ -483,7 +571,7 @@ def plan_next(tools, phase, iteration):
         for t in store.rows(store.OptimizationTrial, tools.session_id)
     )
     candidates = available_candidates(tools, phase)
-    force_stop = count >= maximum or (phase == "answer" and not candidates)
+    force_stop = count >= maximum or not candidates
     schema = (
         RetrievalDecision if phase == "retrieval" else AnswerDecision
     ).model_json_schema()
@@ -564,35 +652,27 @@ def plan_next(tools, phase, iteration):
             iteration["attempts"] = attempts
             continue
         attempt["status"] = "accepted"
-        action_path = (
-            tools.write("planner_action_" + iteration["id"] + ".json", action)
-            if action
-            else None
+        commit_decision(tools, phase, iteration, attempts, decision, action)
+        return
+    if (
+        phase == "retrieval"
+        and candidates
+        and all(
+            attempt.get("error") == "Choose an untested retrieval candidate ID"
+            for attempt in iteration["attempts"]
+            if attempt["cycle"] == iteration["cycle"]
         )
-        with store.locked(tools.session_id) as (conn, session):
-            row = conn.get(store.OptimizationIteration, iteration["id"])
-            row.status, row.decision, row.action_artifact = (
-                "committed",
-                decision,
-                action_path,
-            )
-            row.attempts, row.updated_at = attempts, time.time()
-            adaptive = deepcopy(session.progress["adaptive"])
-            adaptive[phase].update(
-                pending=action_path,
-                active_iteration=None,
-                planner_status="ready",
-                finished=action is None,
-                stop_reason=decision["reason"] if action is None else None,
-            )
-            if action is None:
-                adaptive[phase]["planner_status"] = "stopped"
-            session.progress = {
-                **session.progress,
-                "adaptive": adaptive,
-                "planner_memory": decision["memory"],
-            }
-        budget.release_reservation(tools.session_id, iteration["reservation"])
+    ):
+        # An unavailable ID must not strand an otherwise runnable experiment.
+        fallback = {
+            "reflection": "The planner selected unavailable retrieval candidates twice.",
+            "memory": {"lessons": []},
+            "action": "run",
+            "hypothesis": "Measure the next untried retrieval candidate.",
+            "candidate_id": candidates[0]["candidate_id"],
+        }
+        decision, action = validate_decision(tools, phase, fallback, force_stop)
+        commit_decision(tools, phase, iteration, iteration["attempts"], decision, action)
         return
     pause_planner(
         tools, phase, iteration, "Planner failed twice; resume to retry this decision"
