@@ -20,7 +20,10 @@ import {
   RunConfigurationCard,
   TrialConfiguration,
 } from "../components/optimization-config";
-import { OptimizationStages } from "../components/optimization-stages";
+import {
+  OptimizationStages,
+  useOptimizationDashboard,
+} from "../components/optimization-stages";
 import {
   PromptOptimizerSettings,
   type PromptSettings,
@@ -60,7 +63,7 @@ interface Ranked {
 }
 interface Trial {
   id: string;
-  phase: string;
+  phase: "retrieval" | "answer" | "confirm";
   split: string;
   status: string;
 }
@@ -285,6 +288,10 @@ function OptimizationEditor({ sessionId }: { sessionId?: string }) {
       terminal(query.state.data?.status) ? false : 3000,
   });
   const active = !!sessionId && !terminal(session.data?.status);
+  const stageDashboard = useOptimizationDashboard(
+    sessionId,
+    session.data?.status,
+  );
   const dataset = useQuery({
     queryKey: ["optimization-dataset", sessionId],
     queryFn: () => api<Dataset | null>(`/optimizations/${sessionId}/dataset`),
@@ -391,11 +398,6 @@ function OptimizationEditor({ sessionId }: { sessionId?: string }) {
 
   return (
     <>
-      <Notice>
-        Generated references are synthetic evaluation data. Automated validation
-        and human review are recorded separately. The answer model stays fixed
-        during optimization.
-      </Notice>
       <ErrorNotice
         error={
           start.error ||
@@ -428,206 +430,214 @@ function OptimizationEditor({ sessionId }: { sessionId?: string }) {
             }}
             className="optimizer-form"
           >
-            <PromptOptimizerSettings
-              value={promptSettings}
-              onChange={setPromptSettings}
-              onValidityChange={setPromptSettingsValid}
-            />
-            {!promptSettingsValid && (
-              <Notice tone="error">
-                Fix the prompt optimizer JSON before starting.
-              </Notice>
-            )}
-            <label>
-              Benchmark template
-              <select
-                value={configPath}
-                onChange={(e) => setConfigPath(e.target.value)}
-              >
-                {(configs.data?.files || ["default.yaml"]).map((path) => (
-                  <option key={path}>{path}</option>
-                ))}
-              </select>
-            </label>
-            <label>
-              Source documents
-              <select
-                value={sourceMode}
-                onChange={(e) => setSourceMode(e.target.value)}
-              >
-                <option value="all">
-                  All documents in the template corpus
-                </option>
-                <option value="selected">Selected library files</option>
-              </select>
-            </label>
-            {sourceMode === "selected" && (
-              <fieldset>
-                <legend>Select documents</legend>
-                {files.data?.files.map((file) => (
-                  <label key={file.path} className="check-row">
-                    <input
-                      type="checkbox"
-                      checked={selectedFiles.includes(file.path)}
-                      onChange={(e) =>
-                        setSelectedFiles(
-                          e.target.checked
-                            ? [...selectedFiles, file.path]
-                            : selectedFiles.filter((p) => p !== file.path),
-                        )
-                      }
-                    />
-                    {file.name}
-                  </label>
-                ))}
-              </fieldset>
-            )}
-            <label>
-              Source URLs (one per line; blank uses template URLs)
-              <textarea
-                value={urls}
-                onChange={(e) => setUrls(e.target.value)}
-                rows={2}
-              />
-            </label>
-            <label>
-              Evaluation questions
-              <select
-                value={datasetMode}
-                onChange={(e) =>
-                  setDatasetMode(e.target.value as typeof datasetMode)
-                }
-              >
-                <option value="reuse_if_compatible">
-                  Reuse matching questions when available
-                </option>
-                <option value="generate_new">Generate fresh questions</option>
-              </select>
-            </label>
-            <p>
-              Reuse requires matching source contents, audience, task guidance,
-              example questions, and target question count. Saved questions and
-              tuning / holdout splits stay fixed.
-            </p>
-            <label>
-              Audience (optional)
-              <input
-                value={audience}
-                onChange={(e) => setAudience(e.target.value)}
-                placeholder="For example, customer support specialists"
-              />
-            </label>
-            <label>
-              Task guidance (optional)
-              <textarea
-                value={task}
-                onChange={(e) => setTask(e.target.value)}
-                placeholder="Describe the questions this RAG pipeline should answer"
-                rows={2}
-              />
-            </label>
-            <label>
-              Example questions (optional, one per line)
-              <textarea
-                value={examples}
-                onChange={(e) => setExamples(e.target.value)}
-                rows={2}
-              />
-            </label>
-            <div className="optimizer-grid">
+            <fieldset className="optimizer-form-section">
+              <legend>Sources</legend>
+              <p className="field-help">
+                Choose the template and documents to optimize.
+              </p>
+              <div className="optimizer-grid">
+                <label>
+                  Benchmark template
+                  <select
+                    value={configPath}
+                    onChange={(e) => setConfigPath(e.target.value)}
+                  >
+                    {(configs.data?.files || ["default.yaml"]).map((path) => (
+                      <option key={path}>{path}</option>
+                    ))}
+                  </select>
+                </label>
+                <label>
+                  Source documents
+                  <select
+                    value={sourceMode}
+                    onChange={(e) => setSourceMode(e.target.value)}
+                  >
+                    <option value="all">
+                      All documents in the template corpus
+                    </option>
+                    <option value="selected">Selected library files</option>
+                  </select>
+                </label>
+              </div>
+              {sourceMode === "selected" && (
+                <fieldset>
+                  <legend>Select documents</legend>
+                  {files.data?.files.map((file) => (
+                    <label key={file.path} className="check-row">
+                      <input
+                        type="checkbox"
+                        checked={selectedFiles.includes(file.path)}
+                        onChange={(e) =>
+                          setSelectedFiles(
+                            e.target.checked
+                              ? [...selectedFiles, file.path]
+                              : selectedFiles.filter((p) => p !== file.path),
+                          )
+                        }
+                      />
+                      {file.name}
+                    </label>
+                  ))}
+                </fieldset>
+              )}
               <label>
-                Target validated questions
+                Source URLs (one per line; blank uses template URLs)
+                <textarea
+                  value={urls}
+                  onChange={(e) => setUrls(e.target.value)}
+                  rows={2}
+                />
+              </label>
+            </fieldset>
+            <fieldset className="optimizer-form-section">
+              <legend>Evaluation guidance</legend>
+              <p className="field-help">
+                Questions and references are synthetic evaluation data. The
+                template’s answer model stays fixed throughout optimization.
+              </p>
+              <label>
+                Evaluation questions
+                <select
+                  value={datasetMode}
+                  onChange={(e) =>
+                    setDatasetMode(e.target.value as typeof datasetMode)
+                  }
+                >
+                  <option value="reuse_if_compatible">
+                    Reuse matching questions when available
+                  </option>
+                  <option value="generate_new">Generate fresh questions</option>
+                </select>
+              </label>
+              <p>
+                Reuse requires matching source contents, audience, task
+                guidance, example questions, and target question count. Saved
+                questions and tuning / holdout splits stay fixed.
+              </p>
+              <label>
+                Audience (optional)
                 <input
-                  type="number"
-                  min={30}
-                  max={1000}
-                  value={questions}
-                  onChange={(e) => setQuestions(Number(e.target.value))}
-                  required
+                  value={audience}
+                  onChange={(e) => setAudience(e.target.value)}
+                  placeholder="For example, customer support specialists"
                 />
               </label>
               <label>
-                Retrieval trial limit
-                <input
-                  type="number"
-                  min={1}
-                  max={100}
-                  value={retrievalTrials}
-                  onChange={(e) => setRetrievalTrials(Number(e.target.value))}
-                  required
+                Task guidance (optional)
+                <textarea
+                  value={task}
+                  onChange={(e) => setTask(e.target.value)}
+                  placeholder="Describe the questions this RAG pipeline should answer"
+                  rows={2}
                 />
               </label>
               <label>
-                Answer trial limit
-                <input
-                  type="number"
-                  min={1}
-                  max={20}
-                  value={answerTrials}
-                  onChange={(e) => setAnswerTrials(Number(e.target.value))}
-                  required
+                Example questions (optional, one per line)
+                <textarea
+                  value={examples}
+                  onChange={(e) => setExamples(e.target.value)}
+                  rows={2}
                 />
               </label>
-              <label>
-                Active runtime (minutes)
+              <label className="check-row">
                 <input
-                  type="number"
-                  min={1}
-                  max={1440}
-                  value={minutes}
-                  onChange={(e) => setMinutes(Number(e.target.value))}
-                  required
+                  type="checkbox"
+                  checked={review}
+                  onChange={(e) => setReview(e.target.checked)}
                 />
+                Pause for dataset review before experiments
               </label>
-              <label>
-                Token cap
-                <input
-                  type="number"
-                  min={1000}
-                  value={maxTokens}
-                  onChange={(e) => setMaxTokens(Number(e.target.value))}
-                  required
-                />
-              </label>
-              <label>
-                Monetary cap (optional)
-                <input
-                  type="number"
-                  min={0.001}
-                  step="any"
-                  value={maxCost}
-                  onChange={(e) => setMaxCost(e.target.value)}
-                />
-              </label>
-              <label>
-                Query p95 limit (seconds, optional)
-                <input
-                  type="number"
-                  min={0.001}
-                  step="any"
-                  value={maxLatency}
-                  onChange={(e) => setMaxLatency(e.target.value)}
-                />
-              </label>
-              <label>
-                Query cost limit (optional)
-                <input
-                  type="number"
-                  min={0.000001}
-                  step="any"
-                  value={maxQueryCost}
-                  onChange={(e) => setMaxQueryCost(e.target.value)}
-                />
-              </label>
-            </div>
-            <label className="check-row">
-              <input
-                type="checkbox"
-                checked={review}
-                onChange={(e) => setReview(e.target.checked)}
-              />
-              Pause for dataset review before experiments
-            </label>
+            </fieldset>
+            <fieldset className="optimizer-form-section">
+              <legend>Experiment limits</legend>
+              <div className="optimizer-grid">
+                <label>
+                  Target validated questions
+                  <input
+                    type="number"
+                    min={30}
+                    max={1000}
+                    value={questions}
+                    onChange={(e) => setQuestions(Number(e.target.value))}
+                    required
+                  />
+                </label>
+                <label>
+                  Retrieval trial limit
+                  <input
+                    type="number"
+                    min={1}
+                    max={100}
+                    value={retrievalTrials}
+                    onChange={(e) => setRetrievalTrials(Number(e.target.value))}
+                    required
+                  />
+                </label>
+                <label>
+                  Answer trial limit
+                  <input
+                    type="number"
+                    min={1}
+                    max={20}
+                    value={answerTrials}
+                    onChange={(e) => setAnswerTrials(Number(e.target.value))}
+                    required
+                  />
+                </label>
+                <label>
+                  Active runtime (minutes)
+                  <input
+                    type="number"
+                    min={1}
+                    max={1440}
+                    value={minutes}
+                    onChange={(e) => setMinutes(Number(e.target.value))}
+                    required
+                  />
+                </label>
+                <label>
+                  Token cap
+                  <input
+                    type="number"
+                    min={1000}
+                    value={maxTokens}
+                    onChange={(e) => setMaxTokens(Number(e.target.value))}
+                    required
+                  />
+                </label>
+                <label>
+                  Monetary cap (optional)
+                  <input
+                    type="number"
+                    min={0.001}
+                    step="any"
+                    value={maxCost}
+                    onChange={(e) => setMaxCost(e.target.value)}
+                  />
+                </label>
+                <label>
+                  Query p95 limit (seconds, optional)
+                  <input
+                    type="number"
+                    min={0.001}
+                    step="any"
+                    value={maxLatency}
+                    onChange={(e) => setMaxLatency(e.target.value)}
+                  />
+                </label>
+                <label>
+                  Query cost limit (optional)
+                  <input
+                    type="number"
+                    min={0.000001}
+                    step="any"
+                    value={maxQueryCost}
+                    onChange={(e) => setMaxQueryCost(e.target.value)}
+                  />
+                </label>
+              </div>
+            </fieldset>
             <label className="check-row">
               <input
                 type="checkbox"
@@ -639,6 +649,12 @@ function OptimizationEditor({ sessionId }: { sessionId?: string }) {
             </label>
             <details>
               <summary>Model roles and advanced search settings</summary>
+              <PromptOptimizerSettings
+                value={promptSettings}
+                onChange={setPromptSettings}
+                onValidityChange={setPromptSettingsValid}
+              />
+
               <p>
                 Endpoints must be reachable from the worker containers.
                 Credentials are read from server environment variables. Set
@@ -744,6 +760,11 @@ function OptimizationEditor({ sessionId }: { sessionId?: string }) {
                 />
               </label>
             </details>
+            {!promptSettingsValid && (
+              <Notice tone="error">
+                Fix the prompt optimizer JSON before starting.
+              </Notice>
+            )}
             <Button
               type="submit"
               disabled={start.isPending || !promptSettingsValid}
@@ -777,7 +798,7 @@ function OptimizationEditor({ sessionId }: { sessionId?: string }) {
                 </dd>
               </div>
             </dl>
-            <div className="optimizer-grid">
+            <div className="optimizer-grid run-budget">
               <p>
                 Reserved tokens:{" "}
                 <strong>{session.data.budget.tokens.toLocaleString()}</strong>
@@ -785,7 +806,7 @@ function OptimizationEditor({ sessionId }: { sessionId?: string }) {
               <p>
                 Active time:{" "}
                 <strong>
-                  {Math.round(session.data.budget.active_seconds / 60)} minutes
+                  {Math.round(session.data.budget.active_seconds / 60)} min
                 </strong>
               </p>
               <p>
@@ -846,120 +867,6 @@ function OptimizationEditor({ sessionId }: { sessionId?: string }) {
               </Button>
             </div>
           </Card>
-          <RunConfigurationCard key={sessionId} sessionId={sessionId} />
-          <Card title="Currently running configs">
-            {trials.isPending && <p role="status">Loading running trials...</p>}
-            <ErrorNotice
-              error={trials.error}
-              retry={() => void trials.refetch()}
-            />
-            {trials.isSuccess &&
-              !trials.data.some((trial) => trial.status === "running") && (
-                <p>No trial is currently running.</p>
-              )}
-            {trials.data
-              ?.filter((trial) => trial.status === "running")
-              .map((trial) => (
-                <article
-                  key={`${sessionId}:${trial.id}`}
-                  className="optimization-running-config"
-                  aria-label={`Running trial ${trial.id}`}
-                >
-                  <h3>Trial {trial.id}</h3>
-                  <p>
-                    {trial.phase} / {trial.split} · {trial.status}
-                  </p>
-                  <TrialConfiguration
-                    sessionId={sessionId}
-                    trialId={trial.id}
-                  />
-                </article>
-              ))}
-          </Card>
-          {dataset.data && (
-            <Card
-              title={`Synthetic evaluation dataset · version ${dataset.data.version}`}
-              description={`${dataset.data.payload.length} questions · ${dataset.data.frozen ? "Frozen tuning / holdout splits" : "Draft"}`}
-            >
-              {dataset.data.evaluation_dataset && (
-                <p>
-                  {dataset.data.evaluation_dataset.status === "reused"
-                    ? "Reused evaluation questions"
-                    : "Generated evaluation questions"}
-                  {dataset.data.evaluation_dataset.status === "reused" &&
-                    dataset.data.evaluation_dataset.source_session_id && (
-                      <>
-                        {" from "}
-                        <Link
-                          to={`/auto-optimize/${dataset.data.evaluation_dataset.source_session_id}`}
-                        >
-                          originating experiment
-                        </Link>
-                        . Questions and tuning / holdout splits are preserved.
-                        Generate fresh questions to create an editable set.
-                      </>
-                    )}
-                </p>
-              )}
-              <details>
-                <summary>Inspect questions and source evidence</summary>
-                <div className="optimizer-questions">
-                  {dataset.data.payload.map((q, index) => (
-                    <article key={q.question_id || index}>
-                      <h3>
-                        {index + 1}. {q.question}
-                      </h3>
-                      <p>{q.expected_answer}</p>
-                      <small>
-                        {q.category} · {q.split} · Automated:{" "}
-                        {q.automated_validated ? "validated" : "pending"} ·
-                        Human: {q.human_reviewed ? "reviewed" : "unreviewed"}
-                      </small>
-                      {q.evidence.map((e, i) => (
-                        <blockquote key={i}>
-                          <strong>{e.doc_id}</strong> ({e.start_char}–
-                          {e.end_char})<p>{e.quote}</p>
-                        </blockquote>
-                      ))}
-                    </article>
-                  ))}
-                </div>
-              </details>
-              {canReview && (
-                <details>
-                  <summary>Edit draft questions</summary>
-                  <p>
-                    Save edits before resuming. Evidence must match the captured
-                    sources exactly; edited answers are verified again.
-                  </p>
-                  <textarea
-                    aria-label="Draft evaluation questions JSON"
-                    className="optimizer-json"
-                    value={
-                      datasetDraft ||
-                      JSON.stringify(dataset.data.payload, null, 2)
-                    }
-                    onChange={(e) => setDatasetDraft(e.target.value)}
-                    rows={16}
-                    spellCheck={false}
-                  />
-                  <ErrorNotice error={saveDataset.error} />
-                  <Button
-                    disabled={!datasetDraft || saveDataset.isPending}
-                    onClick={() => saveDataset.mutate()}
-                  >
-                    Save dataset edits
-                  </Button>
-                </details>
-              )}
-            </Card>
-          )}
-          <OptimizationStages
-            key={`stages:${sessionId}`}
-            sessionId={sessionId}
-            status={session.data.status}
-            currentStage={session.data.stage}
-          />
           {recommendation.data && (
             <Card
               title="Recommendation"
@@ -1022,6 +929,150 @@ function OptimizationEditor({ sessionId }: { sessionId?: string }) {
               </div>
             </Card>
           )}
+          <RunConfigurationCard
+            key={sessionId}
+            sessionId={sessionId}
+            reviewRequired={canReview && !!dataset.data}
+            datasetSummary={
+              dataset.data
+                ? `${dataset.data.payload.length} questions · ${dataset.data.frozen ? "Frozen" : "Draft"}`
+                : undefined
+            }
+            datasetContent={
+              dataset.data && (
+                <>
+                  <p className="field-help">
+                    Generated references are synthetic evaluation data.
+                    Automated validation and human review are recorded
+                    separately.
+                  </p>
+                  <p className="muted">
+                    Version {dataset.data.version} ·{" "}
+                    {dataset.data.payload.length} questions ·{" "}
+                    {dataset.data.frozen
+                      ? "Frozen tuning / holdout splits"
+                      : "Draft"}
+                  </p>
+                  {dataset.data.evaluation_dataset && (
+                    <p>
+                      {dataset.data.evaluation_dataset.status === "reused"
+                        ? "Reused evaluation questions"
+                        : "Generated evaluation questions"}
+                      {dataset.data.evaluation_dataset.status === "reused" &&
+                        dataset.data.evaluation_dataset.source_session_id && (
+                          <>
+                            {" from "}
+                            <Link
+                              to={`/auto-optimize/${dataset.data.evaluation_dataset.source_session_id}`}
+                            >
+                              originating experiment
+                            </Link>
+                            . Questions and tuning / holdout splits are
+                            preserved. Generate fresh questions to create an
+                            editable set.
+                          </>
+                        )}
+                    </p>
+                  )}
+                  <details>
+                    <summary>Inspect questions and source evidence</summary>
+                    <div className="optimizer-questions">
+                      {dataset.data.payload.map((q, index) => (
+                        <article key={q.question_id || index}>
+                          <h3>
+                            {index + 1}. {q.question}
+                          </h3>
+                          <p>{q.expected_answer}</p>
+                          <small>
+                            {q.category} · {q.split} · Automated:{" "}
+                            {q.automated_validated ? "validated" : "pending"} ·
+                            Human:{" "}
+                            {q.human_reviewed ? "reviewed" : "unreviewed"}
+                          </small>
+                          {q.evidence.map((e, i) => (
+                            <blockquote key={i}>
+                              <strong>{e.doc_id}</strong> ({e.start_char}–
+                              {e.end_char})<p>{e.quote}</p>
+                            </blockquote>
+                          ))}
+                        </article>
+                      ))}
+                    </div>
+                  </details>
+                  {canReview && (
+                    <details>
+                      <summary>Edit draft questions</summary>
+                      <p>
+                        Save edits before resuming. Evidence must match the
+                        captured sources exactly; edited answers are verified
+                        again.
+                      </p>
+                      <textarea
+                        aria-label="Draft evaluation questions JSON"
+                        className="optimizer-json"
+                        value={
+                          datasetDraft ||
+                          JSON.stringify(dataset.data.payload, null, 2)
+                        }
+                        onChange={(e) => setDatasetDraft(e.target.value)}
+                        rows={16}
+                        spellCheck={false}
+                      />
+                      <ErrorNotice error={saveDataset.error} />
+                      <Button
+                        disabled={!datasetDraft || saveDataset.isPending}
+                        onClick={() => saveDataset.mutate()}
+                      >
+                        Save dataset edits
+                      </Button>
+                    </details>
+                  )}
+                </>
+              )
+            }
+          />
+          <OptimizationStages
+            key={`stages:${sessionId}`}
+            sessionId={sessionId}
+            status={session.data.status}
+            currentStage={session.data.stage}
+          />
+          <Card title="Currently running configs">
+            {trials.isPending && <p role="status">Loading running trials...</p>}
+            <ErrorNotice
+              error={trials.error}
+              retry={() => void trials.refetch()}
+            />
+            {trials.isSuccess &&
+              !trials.data.some((trial) => trial.status === "running") && (
+                <p>No trial is currently running.</p>
+              )}
+            {trials.data
+              ?.filter((trial) => trial.status === "running")
+              .map((trial) => (
+                <article
+                  key={`${sessionId}:${trial.id}`}
+                  className="optimization-running-config"
+                  aria-label={`Running trial ${trial.id}`}
+                >
+                  <h3>Trial {trial.id}</h3>
+                  <p>
+                    {trial.phase} / {trial.split} · {trial.status}
+                  </p>
+                  <TrialConfiguration
+                    sessionId={sessionId}
+                    trialId={trial.id}
+                    stage={
+                      stageDashboard.data &&
+                      stageDashboard.data.workflow_version !== 1
+                        ? trial.phase
+                        : undefined
+                    }
+                    workflowVersion={stageDashboard.data?.workflow_version ?? 1}
+                  />
+                </article>
+              ))}
+          </Card>
           <Card title="Activity">
             <details>
               <summary>Inspect tool and stage events</summary>

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link, useLocation, useSearchParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "../lib/api";
@@ -116,7 +116,7 @@ const names: Record<Phase, string> = {
 const phases: Phase[] = ["retrieval", "answer", "confirm"];
 const descriptions = {
   retrieval:
-    "Find and rank relevant evidence. Higher NDCG, recall, precision and MRR are better; lower latency is better.",
+    "Find relevant evidence with chunking, indexing, rewriting and retrieval. Higher NDCG, recall, precision and MRR are better; lower latency is better.",
   answer:
     "Evaluate complete answers on tuning questions. Higher semantic correctness, claim support and citation support are better; lower latency and cost are better.",
   confirm:
@@ -267,80 +267,30 @@ function ScoreBars({ trials, label }: { trials: StageTrial[]; label: string }) {
   );
 }
 
-function RetrievalComparison({
-  trials,
-  rawOnly = false,
-}: {
-  trials: StageTrial[];
-  rawOnly?: boolean;
-}) {
-  const [metric, setMetric] = useState("ndcg");
-  const [k, setK] = useState("10");
-  return (
-    <div className="stage-figure">
-      <h3>
-        {rawOnly
-          ? "Raw retrieval evidence"
-          : "Raw retrieval versus reranked evidence"}
-      </h3>
-      <div className="actions">
-        <label>
-          Metric{" "}
-          <select
-            aria-label="Retrieval comparison metric"
-            value={metric}
-            onChange={(e) => setMetric(e.target.value)}
-          >
-            {["ndcg", "recall", "precision", "mrr"].map((key) => (
-              <option key={key} value={key}>
-                {key.toUpperCase()}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label>
-          Top k{" "}
-          <select
-            aria-label="Retrieval comparison k"
-            value={k}
-            onChange={(e) => setK(e.target.value)}
-          >
-            {[3, 5, 10].map((n) => (
-              <option key={n}>{n}</option>
-            ))}
-          </select>
-        </label>
-      </div>
-      <p>Descriptive means on available questions. Higher is better.</p>
-      <DataTable
-        name="raw-and-reranked"
-        rows={trials.map((trial) => ({
-          trial: trial.id.slice(0, 8),
-          raw:
-            mean(trial, `raw_retrieval_${metric}@${k}`) ??
-            trial.metrics[`raw_retrieval_${metric}@${k}`]?.reason ??
-            "Not measured",
-          ...(!rawOnly
-            ? {
-                reranked:
-                  mean(trial, `reranked_${metric}@${k}`) ??
-                  trial.metrics[`reranked_${metric}@${k}`]?.reason ??
-                  "Not measured",
-              }
-            : {}),
-        }))}
-      />
-    </div>
-  );
+// Match the SVG coordinates to its rendered width so mobile labels stay readable.
+function usePlotWidth() {
+  const ref = useRef<HTMLElement>(null);
+  const [width, setWidth] = useState(540);
+  useEffect(() => {
+    if (!ref.current || typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(([entry]) => {
+      setWidth(Math.max(200, entry.contentRect.width));
+    });
+    observer.observe(ref.current);
+    return () => observer.disconnect();
+  }, []);
+  return { ref, width };
 }
 
 function AnswerScatter({ trials }: { trials: StageTrial[] }) {
+  const { ref, width } = usePlotWidth();
   const points = trials.filter(
     (t) => t.p95_seconds != null && mean(t, "answer_correctness") != null,
   );
   const maxLatency = Math.max(1, ...points.map((t) => t.p95_seconds!));
   return (
     <figure
+      ref={ref}
       className="stage-figure"
       aria-label="Answer correctness versus p95 latency"
     >
@@ -351,11 +301,17 @@ function AnswerScatter({ trials }: { trials: StageTrial[] }) {
         <>
           <svg
             className="stage-scatter"
-            viewBox="0 0 540 260"
+            viewBox={`0 0 ${width} 260`}
             role="img"
             aria-label="Correctness versus latency scatter plot; upper left favors quality and speed"
           >
-            <line x1="50" y1="220" x2="510" y2="220" stroke="currentColor" />
+            <line
+              x1="50"
+              y1="220"
+              x2={width - 30}
+              y2="220"
+              stroke="currentColor"
+            />
             <line x1="50" y1="20" x2="50" y2="220" stroke="currentColor" />
             <text x="25" y="28">
               1
@@ -366,13 +322,13 @@ function AnswerScatter({ trials }: { trials: StageTrial[] }) {
             <text x="50" y="244">
               0 s
             </text>
-            <text x="440" y="244">
+            <text x={width - 30} y="244" textAnchor="end">
               {maxLatency.toFixed(1)} s p95
             </text>
             {points.map((trial) => (
               <g key={trial.id}>
                 <circle
-                  cx={50 + (trial.p95_seconds! / maxLatency) * 430}
+                  cx={50 + (trial.p95_seconds! / maxLatency) * (width - 100)}
                   cy={220 - mean(trial, "answer_correctness")! * 190}
                   r="6"
                   fill="var(--primary)"
@@ -384,9 +340,15 @@ function AnswerScatter({ trials }: { trials: StageTrial[] }) {
                   </title>
                 </circle>
                 <text
-                  x={58 + (trial.p95_seconds! / maxLatency) * 430}
+                  x={
+                    50 +
+                    (trial.p95_seconds! / maxLatency) * (width - 100) +
+                    (trial.p95_seconds! / maxLatency > 0.6 ? -10 : 10)
+                  }
                   y={212 - mean(trial, "answer_correctness")! * 190}
-                  fontSize="11"
+                  textAnchor={
+                    trial.p95_seconds! / maxLatency > 0.6 ? "end" : "start"
+                  }
                 >
                   {trial.id.slice(0, 8)}
                 </text>
@@ -410,12 +372,13 @@ function Confirmation({
   stage: Stage;
   sessionId: string;
 }) {
+  const { ref, width } = usePlotWidth();
   const correctness = stage.comparison?.metrics.find(
     (m) => m.metric === "answer_correctness",
   );
   const interval = correctness?.ci95;
   const bound = Math.max(0.01, ...(interval ?? []).map(Math.abs));
-  const x = (value: number) => 270 + (value / bound) * 200;
+  const x = (value: number) => width / 2 + (value / bound) * (width / 2 - 35);
   return (
     <>
       <Notice
@@ -439,6 +402,7 @@ function Confirmation({
       )}
       {stage.comparison?.reason && <p>{stage.comparison.reason}</p>}
       <figure
+        ref={ref}
         className="stage-figure"
         aria-label="Holdout correctness improvement and confidence interval"
       >
@@ -448,14 +412,14 @@ function Confirmation({
         {interval && (
           <svg
             className="stage-scatter"
-            viewBox="0 0 540 95"
+            viewBox={`0 0 ${width} 80`}
             role="img"
             aria-label={`95% confidence interval ${interval[0].toFixed(3)} to ${interval[1].toFixed(3)}`}
           >
             <line
-              x1="270"
+              x1={width / 2}
               y1="10"
-              x2="270"
+              x2={width / 2}
               y2="65"
               stroke="currentColor"
               strokeDasharray="4 4"
@@ -474,13 +438,13 @@ function Confirmation({
               r="7"
               fill="var(--primary)"
             />
-            <text x="35" y="86">
-              Negative favors baseline
-            </text>
-            <text x="290" y="86">
-              Positive favors candidate
-            </text>
           </svg>
+        )}
+        {interval && (
+          <div className="stage-interval-legend">
+            <span>Negative favors baseline</span>
+            <span>Positive favors candidate</span>
+          </div>
         )}
         <p>
           95% interval:{" "}
@@ -589,7 +553,9 @@ function TrialTable({
               trial.metrics.total_estimated_cost?.reason ??
               "Unknown pricing",
           }),
-      reranker: describe(cfg.reranker),
+      ...(phase !== "retrieval" || workflowVersion < 5
+        ? { reranker: describe(cfg.reranker) }
+        : {}),
     };
   });
   return (
@@ -636,9 +602,11 @@ function TrialTable({
                       </strong>{" "}
                       {String(retriever?.type ?? "Unknown")}
                     </p>
-                    <p>
-                      <strong>Reranker:</strong> {describe(cfg.reranker)}
-                    </p>
+                    {(phase !== "retrieval" || workflowVersion < 5) && (
+                      <p>
+                        <strong>Reranker:</strong> {describe(cfg.reranker)}
+                      </p>
+                    )}
                     {phase !== "retrieval" && (
                       <>
                         <p>
@@ -699,6 +667,21 @@ function TrialTable({
   );
 }
 
+export function useOptimizationDashboard(sessionId?: string, status?: string) {
+  const active = ![
+    "completed",
+    "failed",
+    "cancelled",
+    "budget_exhausted",
+  ].includes(status ?? "");
+  return useQuery({
+    queryKey: ["optimization-stages", sessionId, status],
+    queryFn: () => api<StageDashboard>(`/optimizations/${sessionId}/stages`),
+    enabled: !!sessionId && !!status,
+    refetchInterval: active ? 3000 : false,
+  });
+}
+
 export function OptimizationStages({
   sessionId,
   status,
@@ -723,11 +706,7 @@ export function OptimizationStages({
     "cancelled",
     "budget_exhausted",
   ].includes(status);
-  const query = useQuery({
-    queryKey: ["optimization-stages", sessionId, status],
-    queryFn: () => api<StageDashboard>(`/optimizations/${sessionId}/stages`),
-    refetchInterval: active ? 3000 : false,
-  });
+  const query = useOptimizationDashboard(sessionId, status);
   const stage = query.data?.stages?.[phase];
   const select = (next: Phase) => {
     const params = new URLSearchParams(search);
@@ -768,8 +747,20 @@ export function OptimizationStages({
               }
             }}
           >
-            {index + 1}. {names[key]}
-            <small>{query.data?.stages?.[key]?.status ?? "Loading"}</small>
+            <span className="stage-step-number" aria-hidden="true">
+              {index + 1}
+            </span>
+            <span className="stage-step-copy">
+              <span>{names[key]}</span>
+              <small>
+                <span
+                  className={`stage-state-dot stage-state-${query.data?.stages?.[key]?.status ?? "pending"}`}
+                  aria-hidden="true"
+                />
+                {query.data?.stages?.[key]?.status.replaceAll("_", " ") ??
+                  "Loading"}
+              </small>
+            </span>
           </button>
         ))}
       </div>
@@ -785,30 +776,23 @@ export function OptimizationStages({
         {phase === "answer" && stage?.plan?.[0]?.reason && (
           <p>{stage.plan[0].reason}</p>
         )}
-        <p className="stage-setting-labels">
-          {query.data?.workflow_version === 1
-            ? "Historical workflow: these are the original saved trial settings. Expanded stage search applies to new sessions. Source-trial links are inferred only when matching is unambiguous."
-            : phase === "retrieval"
-              ? (query.data?.workflow_version ?? 1) >= 5
-                ? "Varied here: chunking, embeddings/index, rewriting and retrieval. Reranking is disabled. Fixed: compression, context, prompts and answer model."
-                : "Varied here: chunking, embeddings/index, rewriting, retrieval and reranking. Fixed: compression, context, prompts and answer model."
-              : phase === "answer"
-                ? "Inherited: chunking, embeddings/index, rewriting and retrieval. Varied here: reranker, context/compression and answer prompt. Fixed: answer model and generation settings."
-                : "Fixed: the selected complete pipeline and baseline. No settings are tuned using holdout results."}
-        </p>
+        {query.data && (
+          <p className="stage-setting-labels">
+            {query.data?.workflow_version === 1
+              ? "Historical workflow: these are the original saved trial settings. Expanded stage search applies to new sessions. Source-trial links are inferred only when matching is unambiguous."
+              : phase === "retrieval"
+                ? (query.data?.workflow_version ?? 1) >= 5
+                  ? "Varied here: chunking, embeddings/index, rewriting and retrieval. Reranking is disabled. Fixed: compression, context, prompts and answer model."
+                  : "Varied here: chunking, embeddings/index, rewriting, retrieval and reranking. Fixed: compression, context, prompts and answer model."
+                : phase === "answer"
+                  ? "Inherited: chunking, embeddings/index, rewriting and retrieval. Varied here: reranker, context/compression and answer prompt. Fixed: answer model and generation settings."
+                  : "Fixed: the selected complete pipeline and baseline. No settings are tuned using holdout results."}
+          </p>
+        )}
         {query.isPending && <Loading label="Loading stage results..." />}
         <ErrorNotice error={query.error} retry={() => void query.refetch()} />
         {stage && (
           <>
-            {phase !== "confirm" && stage.planner && (
-              <OptimizationHistory
-                key={`${sessionId}-${phase}`}
-                sessionId={sessionId}
-                phase={phase}
-                active={active}
-                planner={stage.planner}
-              />
-            )}
             <div className="stage-summary">
               <div>
                 <span>Trials</span>
@@ -857,12 +841,6 @@ export function OptimizationStages({
                     )}
                   </div>
                 )}
-                {phase === "retrieval" && (
-                  <RetrievalComparison
-                    trials={stage.trials}
-                    rawOnly={(query.data?.workflow_version ?? 1) >= 5}
-                  />
-                )}
                 <h3>{names[phase]} trials</h3>
                 <p>
                   Selection scores use shared questions; descriptive means use
@@ -878,6 +856,15 @@ export function OptimizationStages({
                   workflowVersion={query.data?.workflow_version ?? 1}
                 />
               </>
+            )}
+            {phase !== "confirm" && stage.planner && (
+              <OptimizationHistory
+                key={`${sessionId}-${phase}`}
+                sessionId={sessionId}
+                phase={phase}
+                active={active}
+                planner={stage.planner}
+              />
             )}
             {phase === "answer" && stage.plan && stage.plan.length > 0 && (
               <details>

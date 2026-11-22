@@ -134,12 +134,15 @@ Each optimization has three linked tabs. Share a view using
 The selected tab survives polling and reloads; active dashboards refresh every
 three seconds and fetch a final update when the session finishes.
 
-- **Retrieval / tuning** shows raw NDCG@10 selection scores and raw
-  NDCG/recall/precision/MRR at 3, 5, and 10, latency, coverage, and chunk counts.
+- **Retrieval / tuning** shows raw NDCG@10 selection scores, latency, coverage,
+  and chunk counts. Additional measured retrieval metrics are available in each
+  trial's inspector.
   Trial rows show chunking units/size/overlap, embeddings, indexes, rewriting,
-  retrieval, and the disabled reranker. New sessions keep context, compression,
-  and prompts at baseline during screening. Historical sessions retain their
-  reranked selection metrics and raw-versus-reranked comparisons.
+  and retrieval. Reranking is disabled during retrieval; its settings are varied
+  during answering and fixed for confirmation. New sessions keep context,
+  compression, and prompts at baseline during screening. Historical sessions
+  retain their saved stage annotations and reranked selection metrics. The
+  duplicate raw-versus-reranked comparison table is omitted for all versions.
 - **Answering / tuning** shows correctness, claim/citation support, latency,
   token/context usage, and known estimated costs. Each trial identifies its source
   retrieval trial and its reranker, context, and prompt settings. Configuration
@@ -249,9 +252,15 @@ semantics. Preserve the shared artifact volume and Postgres data when restarting
 
 ## APIs and exports
 
-Each run page includes a **Run configuration** card with the saved template,
-source selection, model roles, fixed answer model, limits, and component
-restrictions. Expand the saved request/template YAML to inspect all settings.
+Each run page includes an expandable **Run configuration** card with the saved
+template, source selection and guidance, model roles, fixed answer model, limits,
+and component restrictions. It starts collapsed with a template and dataset
+summary, and opens automatically when dataset review becomes required. A manual
+collapse is preserved across polling updates; switching runs resets the view.
+The **Evaluation dataset** subsection contains dataset provenance, version and
+freeze status, question evidence, and draft editing tools. It remains available
+if the saved configuration cannot be loaded. Expand the saved request/template
+YAML to inspect all settings.
 These are the stored snapshots used by the run, so later template edits do not
 change the display.
 

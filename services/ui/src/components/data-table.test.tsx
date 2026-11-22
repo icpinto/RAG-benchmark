@@ -2,6 +2,35 @@ import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { expect, it } from "vitest";
 import { DataTable } from "./data-table";
+import { useState } from "react";
+
+it("preserves an open custom inspector when polled data and cell callbacks update", async () => {
+  const user = userEvent.setup();
+  function Inspector({ value }: { value: unknown }) {
+    const [open, setOpen] = useState(false);
+    return (
+      <>
+        <button onClick={() => setOpen(!open)}>Inspect</button>
+        {open && <p>Measured score: {String(value)}</p>}
+      </>
+    );
+  }
+  const { rerender } = render(
+    <DataTable
+      rows={[{ score: 0.5 }]}
+      cell={(_, row) => <Inspector value={row.score} />}
+    />,
+  );
+  await user.click(screen.getByRole("button", { name: "Inspect" }));
+  expect(screen.getByText("Measured score: 0.5")).toBeVisible();
+  rerender(
+    <DataTable
+      rows={[{ score: 0.8 }]}
+      cell={(_, row) => <Inspector value={row.score} />}
+    />,
+  );
+  expect(screen.getByText("Measured score: 0.8")).toBeVisible();
+});
 
 it("sorts rows in both directions and exposes the sort state without changing the control name", async () => {
   const user = userEvent.setup();

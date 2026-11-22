@@ -3,6 +3,7 @@ import {
   CircleHelp,
   CircleX,
   Clock,
+  PauseCircle,
   Info,
   TriangleAlert,
   Check,
@@ -141,6 +142,10 @@ export function StatusBadge({ status }: { status?: string }) {
     completed: CheckCircle2,
     completed_with_errors: TriangleAlert,
     failed: CircleX,
+    paused: PauseCircle,
+    needs_input: CircleAlert,
+    cancelled: CircleX,
+    budget_exhausted: Clock,
   };
   const Icon = Object.hasOwn(icons, normalized)
     ? icons[normalized]

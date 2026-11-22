@@ -234,7 +234,7 @@ beforeEach(() => {
 });
 
 describe("Optimization stage dashboards", () => {
-  it("shows raw retrieval metrics and fixed reranking for version five", async () => {
+  it("keeps reranking in answering and removes duplicate evidence tables", async () => {
     fetchMock.mockImplementation((path: string) => {
       if (!path.endsWith("/stages")) {
         return response({
@@ -253,22 +253,35 @@ describe("Optimization stage dashboards", () => {
       }),
     ).toBeInTheDocument();
     expect(screen.getByText(/Reranking is disabled/)).toBeInTheDocument();
-    expect(screen.getByText("Raw retrieval evidence")).toBeInTheDocument();
+    expect(
+      screen.queryByText("Raw retrieval evidence"),
+    ).not.toBeInTheDocument();
     expect(
       screen.queryByText("Raw retrieval versus reranked evidence"),
     ).not.toBeInTheDocument();
-    const comparison = screen.getByRole("table", {
-      name: "raw-and-reranked table",
+    expect(
+      screen.queryByRole("table", {
+        name: "raw-and-reranked table",
+      }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByLabelText("Retrieval comparison metric"),
+    ).not.toBeInTheDocument();
+    const retrievalTable = screen.getByRole("table", {
+      name: "retrieval-trials table",
     });
     expect(
-      within(comparison).queryByRole("columnheader", { name: /reranked/i }),
+      within(retrievalTable).queryByRole("columnheader", { name: /reranker/i }),
+    ).not.toBeInTheDocument();
+    expect(
+      within(retrievalTable).queryByText("Reranker:"),
     ).not.toBeInTheDocument();
     const row = (
       await screen.findAllByRole("link", { name: "retrieva" })
     )[0].closest("tr")!;
     fireEvent.click(within(row).getByText("View config"));
     expect(
-      await within(row).findByText("Reranker · Fixed"),
+      await within(row).findByText("Reranker · Disabled during retrieval"),
     ).toBeInTheDocument();
     expect(
       within(row).queryByText("Reranker · Varied here"),

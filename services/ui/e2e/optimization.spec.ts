@@ -1,7 +1,7 @@
 import { test, expect } from "@playwright/test";
 import { stageFixture } from "./stage-fixture";
 
-for (const width of [1280, 375]) {
+for (const width of [1440, 1280, 375]) {
   test(`browse previous runs, reload details and start a new run at ${width}px`, async ({
     page,
   }) => {
@@ -59,6 +59,7 @@ for (const width of [1280, 375]) {
         page.getByRole("heading", { name: `Optimization · ${run.status}` }),
       ).toBeVisible();
       await expect(page.getByText(run.id, { exact: true })).toBeVisible();
+      await page.locator(".run-configuration-summary").click();
       await expect(
         page.getByText("historical-template.yaml", { exact: true }),
       ).toBeVisible();
@@ -69,6 +70,7 @@ for (const width of [1280, 375]) {
       await expect(
         page.getByRole("heading", { name: `Optimization · ${run.status}` }),
       ).toBeVisible();
+      await page.locator(".run-configuration-summary").click();
       await expect(
         page.getByText("historical-template.yaml", { exact: true }),
       ).toBeVisible();

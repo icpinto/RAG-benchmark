@@ -1,7 +1,8 @@
 import { test, expect } from "@playwright/test";
 import { stageFixture } from "./stage-fixture";
+import { expectReadableLayout } from "./readability";
 
-for (const width of [1280, 375]) {
+for (const width of [1440, 1280, 375]) {
   test(`trace retrieval through answering and holdout at ${width}px`, async ({
     page,
   }) => {
@@ -82,12 +83,13 @@ for (const width of [1280, 375]) {
       retrieval.getByRole("link", { name: "retrieva" }),
     ).toBeVisible();
     await expect(retrieval.getByText("0.800").first()).toBeVisible();
-    await page
-      .getByRole("combobox", { name: "Retrieval comparison metric" })
-      .selectOption("recall");
-    await page
-      .getByRole("combobox", { name: "Retrieval comparison k" })
-      .selectOption("5");
+    await expect(
+      retrieval.getByRole("columnheader", { name: /reranker/i }),
+    ).toHaveCount(0);
+    await expect(page.getByText(/Reranking is disabled/)).toBeVisible();
+    await expect(
+      page.getByRole("table", { name: "raw-and-reranked table" }),
+    ).toHaveCount(0);
     await page.getByRole("tab", { name: /Answering/ }).click();
     await expect(page).toHaveURL(/\?stage=answer$/);
     const answer = page.getByRole("table", { name: "answer-trials table" });
@@ -107,6 +109,7 @@ for (const width of [1280, 375]) {
       path: `test-results/stage-answer-${width}.png`,
       fullPage: true,
     });
+    await expectReadableLayout(page);
     await answer.getByRole("link", { name: "retrieva" }).first().click();
     await expect(page).toHaveURL(
       /\?stage=retrieval#trial-retrieval-winning-config$/,
@@ -142,5 +145,139 @@ for (const width of [1280, 375]) {
       await page.evaluate(() => document.documentElement.scrollWidth),
     ).toBeLessThanOrEqual(width);
     expect(requests.every((request) => request.method === "GET")).toBe(true);
+  });
+
+  test(`configuration review, errors and empty states at ${width}px`, async ({
+    page,
+  }) => {
+    let review = false;
+    let configurationFailed = false;
+    await page.route("**/api/**", async (route) => {
+      const path = new URL(route.request().url()).pathname.replace("/api", "");
+      if (configurationFailed && path.endsWith("/configuration")) {
+        await route.fulfill({
+          status: 503,
+          json: { detail: "Saved settings temporarily unavailable" },
+        });
+        return;
+      }
+      let data: unknown = null;
+      if (path === "/health") data = { status: "ok" };
+      else if (path === "/configs" || path === "/data/files")
+        data = { files: [] };
+      else if (path === "/optimizations/session")
+        data = {
+          id: "session",
+          status: review ? "needs_input" : "running",
+          stage: "freeze",
+          budget: { tokens: 25000, active_seconds: 60, cost: null },
+          progress: {},
+        };
+      else if (path.endsWith("/configuration"))
+        data = {
+          request: {
+            config_path: "review-template.yaml",
+            limits: { target_questions: 30 },
+          },
+          template: { llm: { model: "fixed-answer" } },
+        };
+      else if (path.endsWith("/dataset"))
+        data = {
+          version: 1,
+          frozen: review ? 0 : 1,
+          evaluation_dataset: {
+            status: "generated",
+            dataset_id: "qa",
+            source_dataset_id: "qa",
+            source_session_id: null,
+            question_count: 1,
+          },
+          payload: [
+            {
+              question_id: "q1",
+              question: "What is the refund window?",
+              expected_answer: "Fourteen days.",
+              category: "fact",
+              split: "tuning",
+              automated_validated: true,
+              human_reviewed: false,
+              evidence: [
+                {
+                  doc_id: "policy.txt",
+                  quote: "Refunds within fourteen days.",
+                  start_char: 0,
+                  end_char: 29,
+                },
+              ],
+            },
+          ],
+        };
+      else if (path.endsWith("/stages")) data = stageFixture();
+      else if (path.endsWith("/trials") || path.endsWith("/events")) data = [];
+      await route.fulfill({ json: data });
+    });
+    await page.setViewportSize({ width, height: 1000 });
+    await page.goto("/auto-optimize/session");
+    const configuration = page.locator(".run-configuration-disclosure");
+    await expect(configuration.locator("summary").first()).toContainText(
+      "review-template.yaml",
+    );
+    await expect(configuration).not.toHaveAttribute("open");
+    await expect(page.getByText("No trials in this stage yet")).toBeVisible();
+    await expectReadableLayout(page);
+    await page.screenshot({
+      path: `test-results/optimizer-collapsed-${width}.png`,
+      fullPage: true,
+    });
+    await configuration.locator("summary").first().focus();
+    await page.keyboard.press("Enter");
+    await expect(configuration).toHaveAttribute("open", "");
+    await configuration.locator("summary").first().click();
+    review = true;
+    await expect(
+      page.getByText("Review required", { exact: true }),
+    ).toBeVisible({ timeout: 10000 });
+    await expect(configuration).toHaveAttribute("open", "");
+    await expect(
+      page.getByRole("heading", { name: "Evaluation dataset", exact: true }),
+    ).toBeVisible();
+    await page
+      .getByText("Inspect questions and source evidence", { exact: true })
+      .click();
+    await expect(
+      page.getByText("Refunds within fourteen days.", { exact: true }),
+    ).toBeVisible();
+    await page.getByText("Edit draft questions", { exact: true }).click();
+    await expect(
+      page.getByLabel("Draft evaluation questions JSON"),
+    ).toBeVisible();
+    await expectReadableLayout(page);
+    await page.screenshot({
+      path: `test-results/optimizer-review-${width}.png`,
+      fullPage: true,
+    });
+    await configuration.locator("summary").first().click();
+    await expect(configuration).not.toHaveAttribute("open");
+    // Observe another dataset poll: an unchanged review requirement must not reopen it.
+    await page.waitForResponse((response) =>
+      response.url().endsWith("/dataset"),
+    );
+    await expect(configuration).not.toHaveAttribute("open");
+    configurationFailed = true;
+    await page.reload();
+    await expect(
+      page.getByText("Saved settings temporarily unavailable"),
+    ).toBeVisible();
+    await expect(
+      page.getByText("Edit draft questions", { exact: true }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("button", { name: "Approve draft and resume" }),
+    ).toBeEnabled();
+    await expectReadableLayout(page);
+    await page.screenshot({
+      path: `test-results/optimizer-configuration-error-${width}.png`,
+      fullPage: true,
+    });
   });
 }

@@ -353,7 +353,7 @@ test("mobile navigation, replacement confirmation, recovery and direct-link refr
   ).toBe(true);
 });
 
-for (const width of [390, 768, 1280, 1440]) {
+for (const width of [375, 768, 1280, 1440]) {
   test(`readable workspaces and long content at ${width}px`, async ({
     page,
   }) => {

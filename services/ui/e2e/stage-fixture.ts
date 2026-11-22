@@ -22,7 +22,7 @@ export function stageFixture(
     display_status: item.status,
     metrics: {
       "reranked_ndcg@10": metric(0.8),
-      "raw_retrieval_ndcg@10": metric(0.5),
+      "raw_retrieval_ndcg@10": metric(0.8),
       answer_correctness: metric(0.9),
       claim_support: metric(0.85),
       citation_support: metric(0.8),
@@ -77,13 +77,13 @@ export function stageFixture(
   });
   return {
     session_id: "session",
-    workflow_version: 2,
+    workflow_version: 5,
     stages: {
       retrieval: {
         status: "completed",
         split: "tuning",
         question_count: 24,
-        primary_metric: "reranked_ndcg@10",
+        primary_metric: "raw_retrieval_ndcg@10",
         trials: trials.filter((t) => t.phase === "retrieval").map(trial),
       },
       answer: {

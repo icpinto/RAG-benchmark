@@ -58,17 +58,16 @@ export function DataTable({
         accessorFn: (row) =>
           typeof row[key] === "number" ? row[key] : display(row[key]),
         header: key.replaceAll("_", " "),
-        cell: (info) =>
-          cell?.(key, info.row.original) ?? (
-            <span
-              className={`table-value ${wrapColumns.includes(key) ? "table-value-wrap" : ""}`}
-              title={display(info.row.original[key])}
-            >
-              {display(info.row.original[key])}
-            </span>
-          ),
+        cell: (info) => (
+          <span
+            className={`table-value ${wrapColumns.includes(key) ? "table-value-wrap" : ""}`}
+            title={display(info.row.original[key])}
+          >
+            {display(info.row.original[key])}
+          </span>
+        ),
       })),
-    [keys, cell, wrapColumns],
+    [keys, wrapColumns],
   );
   const table = useReactTable({
     data: rows,
@@ -168,16 +167,18 @@ export function DataTable({
                         className="text-link"
                         onClick={() => onRowClick(row.original)}
                       >
-                        {flexRender(
-                          entry.column.columnDef.cell,
-                          entry.getContext(),
-                        )}
+                        {cell?.(entry.column.id, row.original) ??
+                          flexRender(
+                            entry.column.columnDef.cell,
+                            entry.getContext(),
+                          )}
                       </button>
                     ) : (
+                      (cell?.(entry.column.id, row.original) ??
                       flexRender(
                         entry.column.columnDef.cell,
                         entry.getContext(),
-                      )
+                      ))
                     )}
                   </td>
                 ))}

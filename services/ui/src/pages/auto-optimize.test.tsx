@@ -222,8 +222,119 @@ beforeEach(() => {
   });
 });
 describe("Auto Optimize", () => {
+  it("starts frozen runs collapsed and keeps evaluation data inside configuration", async () => {
+    overrideFetch((path) =>
+      path.endsWith("/dataset")
+        ? response({ ...dataset, frozen: 1 })
+        : undefined,
+    );
+    mount("/auto-optimize/session");
+    const heading = await screen.findByRole("heading", {
+      name: "Run configuration",
+    });
+    const disclosure = heading.closest("details")!;
+    await screen.findByText(/saved-template.yaml.*1 questions/);
+    expect(disclosure.open).toBe(false);
+    expect(
+      screen.queryByRole("heading", { name: /Synthetic evaluation dataset/ }),
+    ).not.toBeInTheDocument();
+    expect(
+      within(disclosure).getByRole("region", {
+        name: "Evaluation dataset",
+        hidden: true,
+      }),
+    ).toBeInTheDocument();
+    fireEvent.click(heading.closest("summary")!);
+    await waitFor(() => expect(disclosure.open).toBe(true));
+  });
+
+  it("opens when review becomes required and respects manual collapse across updates", async () => {
+    overrideFetch((path) => {
+      if (path === "/api/optimizations/session")
+        return response({ ...session, status: "running" });
+      if (path.endsWith("/dataset")) return response({ ...dataset, frozen: 1 });
+    });
+    const { client } = mount("/auto-optimize/session");
+    const heading = await screen.findByRole("heading", {
+      name: "Run configuration",
+    });
+    const disclosure = heading.closest("details")!;
+    await screen.findByText(/saved-template.yaml.*Frozen/);
+    expect(disclosure.open).toBe(false);
+    act(() => {
+      client.setQueryData(["optimization", "session"], session);
+      client.setQueryData(["optimization-dataset", "session"], dataset);
+    });
+    await waitFor(() => expect(disclosure.open).toBe(true));
+    expect(screen.getByText("Review required")).toBeVisible();
+    fireEvent.click(heading.closest("summary")!);
+    await waitFor(() => expect(disclosure.open).toBe(false));
+    act(() =>
+      client.setQueryData(["optimization-dataset", "session"], {
+        ...dataset,
+        version: 2,
+      }),
+    );
+    expect(disclosure.open).toBe(false);
+  });
+
+  it("keeps dataset review available when saved configuration fails", async () => {
+    overrideFetch((path) =>
+      path.endsWith("/configuration")
+        ? Promise.resolve(
+            new Response(JSON.stringify({ detail: "Settings unavailable" }), {
+              status: 503,
+            }),
+          )
+        : undefined,
+    );
+    mount("/auto-optimize/session");
+    await screen.findByText("Settings unavailable");
+    const evaluation = await screen.findByRole("region", {
+      name: "Evaluation dataset",
+    });
+    expect(
+      within(evaluation).getByLabelText("Draft evaluation questions JSON"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Approve draft and resume" }),
+    ).toBeEnabled();
+  });
+
+  it("annotates running configurations using their saved stage and workflow", async () => {
+    overrideFetch((path) => {
+      if (path.endsWith("/stages"))
+        return response({ ...stagePayload(), workflow_version: 5 });
+      if (path.endsWith("/trials"))
+        return response([
+          trial("raw-running", "running"),
+          { ...trial("answer-running", "running"), phase: "answer" },
+          { ...trial("confirm-running", "running"), phase: "confirm" },
+        ]);
+    });
+    mount("/auto-optimize/session");
+    const raw = within(
+      await screen.findByRole("article", { name: "Running trial raw-running" }),
+    );
+    await raw.findByText("Reranker · Disabled during retrieval");
+    const answer = within(
+      screen.getByRole("article", { name: "Running trial answer-running" }),
+    );
+    await answer.findByText("Reranker · Varied here");
+    expect(answer.getByText("Retriever · Inherited")).toBeInTheDocument();
+    const confirm = within(
+      screen.getByRole("article", { name: "Running trial confirm-running" }),
+    );
+    await confirm.findByText("Reranker · Fixed for confirmation");
+  });
+
   it("sends selected DSPy recipes to Auto Optimize", async () => {
     mount("/auto-optimize/new");
+    fireEvent.click(
+      screen.getByText("Model roles and advanced search settings", {
+        selector: "summary",
+      }),
+    );
     fireEvent.click(await screen.findByLabelText("Enable DSPy compilation"));
     fireEvent.click(screen.getByLabelText("gepa_light_v1"));
     fireEvent.click(screen.getByRole("button", { name: "Start optimization" }));
@@ -550,7 +661,7 @@ describe("Auto Optimize", () => {
     });
     expect(origin).toHaveAttribute("href", "/auto-optimize/origin-session");
     expect(screen.getByText(/Reused evaluation questions/)).toBeInTheDocument();
-    expect(screen.getByText(/1 questions/)).toBeInTheDocument();
+    expect(screen.getAllByText(/1 questions/).length).toBeGreaterThan(0);
     expect(screen.queryByText("Edit draft questions")).not.toBeInTheDocument();
     expect(
       screen.getByRole("button", { name: "Resume optimization" }),
@@ -616,7 +727,11 @@ describe("Auto Optimize", () => {
     expect(run.getByLabelText("Saved template YAML")).toHaveTextContent(
       "model: saved-answer",
     );
-    expect(run.queryByRole("textbox")).not.toBeInTheDocument();
+    expect(
+      run
+        .getByRole("region", { name: "Sources and guidance" })
+        .querySelector("input, textarea, select"),
+    ).toBeNull();
     expect(
       screen.getByText("No trial is currently running."),
     ).toBeInTheDocument();
