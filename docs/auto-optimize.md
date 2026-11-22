@@ -194,8 +194,36 @@ is raised automatically. The winning configuration is the best observed complete
 pipeline, never an untested combination of individually winning settings.
 
 Confirmation evaluates that exact pipeline and the baseline on holdout, with one
-execution if they are identical. Only confirmed improvement replaces the baseline
-recommendation. Existing sessions retain their saved queues and compilation plans;
+execution if they are identical. New sessions use recommendation policy version 2:
+
+- **Confirmed improvement:** the candidate has higher mean holdout correctness,
+  and the lower bound of its 95% paired-bootstrap interval is strictly above zero.
+- **Promising candidate:** the candidate has higher mean holdout correctness, but
+  its interval includes zero, so the improvement is not statistically confirmed.
+- **Baseline retained:** the candidate ties or regresses, is identical to baseline,
+  confirmation is unavailable, or a required acceptance check fails.
+
+Both candidate outcomes recommend and export the exact tested candidate, including
+**Open in Benchmark Setup**. They require completed baseline/candidate trials,
+compatible datasets, finite paired correctness scores on at least 95% of holdout
+questions, a valid interval, and compliance with configured latency/cost limits.
+Missing measurements fail an applicable operational limit. Decisions use full
+precision; rounded display values do not decide acceptance. Lower cost or latency
+alone does not override equal or lower correctness.
+
+The Recommendation section and confirmation dashboard show the same saved decision,
+coverage, and failed or unavailable checks. A separate call using the planner model
+explains the result in plain language after acceptance is decided. It receives only
+bounded metrics, checks, and redacted configuration summaries, never questions,
+references, or source passages. The model explains the decision; it cannot change
+the winner or exported configuration. Its prompt is versioned and inspectable in
+the session artifacts. Calls use the existing model budget and caching. If the
+model fails, returns invalid output, or lacks budget, a labeled factual explanation
+is used without discarding the recommendation. Reads and exports never make calls.
+
+Existing sessions without a recommendation policy version keep the strict
+confirmed-improvement-only acceptance rule; completed reports are not rewritten.
+Existing sessions retain their saved queues and compilation plans;
 version-1 sessions retain their original workflow. Historical dashboards infer
 source trials only when matching is unambiguous.
 
@@ -210,10 +238,10 @@ source trials only when matching is unambiguous.
 - Retrieval screening ranks NDCG@10, then recall@10. End-to-end ranking uses
   semantic correctness with at least 95% matched observations. Differences below
   0.01 use latency and then known cost as tiebreakers.
-- The planner sees tuning summaries, never holdout questions, references, or
-  scores. Holdout is used once to compare the selected candidate with baseline.
-  A positive paired-bootstrap interval and satisfied constraints confirm an
-  improvement; otherwise baseline is retained and the candidate is provisional.
+- The search planner sees tuning summaries, never holdout questions, references,
+  or scores. Holdout is used once to compare the selected candidate with baseline.
+  Only the final explanation call sees holdout summary scores, after the decision
+  is fixed; no subsequent tuning is performed using these results.
 - Shared ingestion artifacts include corpus/configuration and component/dependency
   versions. Query variants reuse the built index. Reuse time is recorded separately
   from build time; measured trials disable retrieval-result caching.

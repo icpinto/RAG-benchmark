@@ -222,6 +222,96 @@ beforeEach(() => {
   });
 });
 describe("Auto Optimize", () => {
+  it.each([
+    ["confirmed_improvement", "Confirmed improvement"],
+    ["promising_candidate", "Promising candidate"],
+    ["baseline_retained", "Baseline retained"],
+  ])(
+    "renders the saved %s decision and its explanation",
+    async (outcome, label) => {
+      overrideFetch((path) => {
+        if (path.endsWith("/recommendation"))
+          return response({
+            yaml: "experiment:\n  name: recommended-candidate\n",
+            confirmed_improvement: outcome === "confirmed_improvement",
+            baseline_retained: outcome === "baseline_retained",
+            limitations: [],
+            acceptance: {
+              outcome,
+              recommended_source:
+                outcome === "baseline_retained" ? "baseline" : "candidate",
+              reason_codes: ["statistical_confirmation"],
+              checks: [
+                {
+                  code: "paired_coverage",
+                  label: "At least 95% paired scores",
+                  status: "pass",
+                  measured: { paired: 19, expected: 20, fraction: 0.95 },
+                  threshold: 0.95,
+                  required: true,
+                },
+                {
+                  code: "statistical_confirmation",
+                  label: "Improvement is statistically confirmed",
+                  status: "fail",
+                  measured: -0.02,
+                  threshold: 0,
+                  required: false,
+                },
+              ],
+            },
+            explanation: {
+              text: "<strong>Recorded explanation</strong>",
+              source: "fallback",
+              prompt_version: "v1",
+            },
+          });
+      });
+      mount("/auto-optimize/session");
+      await screen.findByRole("heading", { name: "Recommendation" });
+      const recommendation = card("Recommendation");
+      expect(recommendation.getByText(label)).toBeInTheDocument();
+      const text = recommendation.getByText(
+        "<strong>Recorded explanation</strong>",
+      );
+      expect(text.querySelector("strong")).toBeNull();
+      expect(
+        recommendation.getByText(/19 \/ 20 \(95.0%\)/),
+      ).toBeInTheDocument();
+      expect(
+        recommendation.getByText(/Model explanation unavailable/),
+      ).toBeInTheDocument();
+      expect(
+        recommendation.getByText(
+          /Not met: Improvement is statistically confirmed/,
+        ),
+      ).toBeInTheDocument();
+      expect(
+        recommendation.getByRole("button", { name: "Open in Benchmark Setup" }),
+      ).toBeEnabled();
+    },
+  );
+
+  it("keeps historical recommendation rendering without new fields", async () => {
+    overrideFetch((path) =>
+      path.endsWith("/recommendation")
+        ? response({
+            yaml: "experiment: {}",
+            confirmed_improvement: false,
+            baseline_retained: true,
+            limitations: ["Historical report"],
+          })
+        : undefined,
+    );
+    mount("/auto-optimize/session");
+    await screen.findByText(
+      "Baseline retained; candidate improvement has not been confirmed.",
+    );
+    expect(
+      card("Recommendation").getByText("Historical report"),
+    ).toBeInTheDocument();
+  });
+
   it("starts frozen runs collapsed and keeps evaluation data inside configuration", async () => {
     overrideFetch((path) =>
       path.endsWith("/dataset")

@@ -396,6 +396,33 @@ describe("Optimization stage dashboards", () => {
     ).toBeInTheDocument();
   });
 
+  it("shows promising candidates as recommended with their saved explanation", async () => {
+    const data = dashboard();
+    data.stages.confirm.outcome = "promising candidate";
+    data.stages.confirm.baseline_retained = false;
+    data.stages.confirm.acceptance = {
+      outcome: "promising_candidate",
+      recommended_source: "candidate",
+      reason_codes: ["statistical_confirmation"],
+      checks: [],
+    };
+    data.stages.confirm.explanation = {
+      text: "The candidate is promising, but improvement remains uncertain.",
+      source: "llm",
+      prompt_version: "v1",
+    };
+    fetchMock.mockImplementation(() => response(data));
+    mount("/auto-optimize/session?stage=confirm");
+    await screen.findByText("Promising candidate");
+    expect(screen.getByText(/Candidate recommended/)).toBeInTheDocument();
+    expect(
+      screen.getByText(data.stages.confirm.explanation.text),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText(/Baseline recommendation retained/),
+    ).not.toBeInTheDocument();
+  });
+
   it("preserves the chosen stage across polling and refreshes metrics", async () => {
     let updated = false;
     fetchMock.mockImplementation(() => {

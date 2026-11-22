@@ -13,6 +13,11 @@ from ragbench_core.engine.config_expander import expand_cases
 from ragbench_core.optimization import budget, store
 from ragbench_core.optimization.candidates import answer_plan, screen_config
 from ragbench_core.optimization.contracts import TrialRequest
+from ragbench_core.optimization.recommendation import (
+    POLICY_VERSION,
+    evaluate_acceptance,
+    explain_recommendation,
+)
 from ragbench_core.optimization.search import candidate_hash, seed_candidates
 from ragbench_core.optimization.selection import compare_trials
 from ragbench_core.optimization.tools import OptimizationTools
@@ -26,6 +31,28 @@ class State(TypedDict):
 def progress(session_id, **changes):
     with store.locked(session_id) as (_, row):
         row.progress = {**(row.progress or {}), **changes}
+
+
+def acceptance_decision(tools, comparison=None):
+    trials = [
+        t for t in store.rows(store.OptimizationTrial, tools.session_id)
+        if t["phase"] == "confirm"
+    ]
+    return evaluate_acceptance(
+        baseline=tools.baseline(),
+        candidate=tools.session["progress"].get("selected_config"),
+        trials=trials,
+        results={t["id"]: store.db.list_results(t["id"]) for t in trials},
+        question_ids=[
+            q["question_id"] for q in store.dataset(tools.session_id)["payload"]
+            if q["split"] == "holdout"
+        ],
+        comparison=(
+            comparison if comparison is not None
+            else tools.session["progress"].get("comparison")
+        ),
+        limits=tools.session["request"]["limits"],
+    )
 
 
 def wait_for_trial(tools, config, phase, dispatch):
@@ -194,14 +221,40 @@ def step(stage, tools, dispatch):
         confirmed = confirmed and any(
             r["trial_id"] == right["id"] and r["feasible"] for r in validation
         )
-        progress(session_id, comparison=comparison, confirmed=bool(confirmed))
+        changes = {"comparison": comparison, "confirmed": bool(confirmed)}
+        if tools.session["progress"].get("recommendation_policy_version", 1) >= POLICY_VERSION:
+            decision = acceptance_decision(tools, comparison)
+            changes.update(
+                acceptance=decision,
+                confirmed=decision["outcome"] == "confirmed_improvement",
+                baseline_retained=decision["recommended_source"] == "baseline",
+            )
+        progress(session_id, **changes)
         return "export"
     if stage == "export":
         session = tools.session
         state = session["progress"]
+        decision = None
+        explanation = None
+        if state.get("recommendation_policy_version", 1) >= POLICY_VERSION:
+            decision = state.get("acceptance") or acceptance_decision(tools)
+            # Save the authoritative decision before asking a model to explain it.
+            progress(
+                session_id,
+                acceptance=decision,
+                confirmed=decision["outcome"] == "confirmed_improvement",
+                baseline_retained=decision["recommended_source"] == "baseline",
+            )
+            explanation = explain_recommendation(tools, decision)
+            progress(session_id, explanation=explanation)
+            state = tools.session["progress"]
+        baseline_retained = (
+            decision["recommended_source"] == "baseline"
+            if decision else not state.get("confirmed", False)
+        )
         config = (
             state.get("selected_config", tools.baseline())
-            if state.get("confirmed")
+            if not baseline_retained
             else tools.baseline()
         )
         report = {
@@ -214,9 +267,16 @@ def step(stage, tools, dispatch):
             "selected_trial_id": state.get("selected_trial_id"),
             "answer_plan": state.get("answer_plan", []),
             "stop_reason": state.get("stop_reason"),
-            "baseline_retained": not state.get("confirmed", False),
+            "baseline_retained": baseline_retained,
             "status": "budget_exhausted" if state.get("stop_reason") else "completed",
         }
+        if decision:
+            report.update(
+                acceptance=decision,
+                outcome=decision["outcome"],
+                recommended_source=decision["recommended_source"],
+                explanation=explanation,
+            )
         tools.export_recommendation(report)
         store.update(
             session_id,

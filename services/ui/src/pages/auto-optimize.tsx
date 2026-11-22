@@ -17,6 +17,12 @@ import {
 } from "../components/common";
 import { DataTable } from "../components/data-table";
 import {
+  RecommendationEvidence,
+  recommendationLabel,
+  type AcceptanceDecision,
+  type RecommendationExplanation,
+} from "../components/recommendation-evidence";
+import {
   RunConfigurationCard,
   TrialConfiguration,
 } from "../components/optimization-config";
@@ -97,6 +103,8 @@ interface DatasetProvenance {
   question_count: number;
 }
 interface Recommendation {
+  acceptance?: AcceptanceDecision;
+  explanation?: RecommendationExplanation;
   yaml: string;
   confirmed_improvement: boolean;
   baseline_retained: boolean;
@@ -871,11 +879,17 @@ function OptimizationEditor({ sessionId }: { sessionId?: string }) {
             <Card
               title="Recommendation"
               description={
-                recommendation.data.confirmed_improvement
-                  ? "Candidate improvement confirmed on the held-out questions."
-                  : "Baseline retained; candidate improvement has not been confirmed."
+                recommendation.data.acceptance
+                  ? recommendationLabel(recommendation.data.acceptance.outcome)
+                  : recommendation.data.confirmed_improvement
+                    ? "Candidate improvement confirmed on the held-out questions."
+                    : "Baseline retained; candidate improvement has not been confirmed."
               }
             >
+              <RecommendationEvidence
+                acceptance={recommendation.data.acceptance}
+                explanation={recommendation.data.explanation}
+              />
               {recommendation.data.limitations.map((text) => (
                 <p key={text}>{text}</p>
               ))}

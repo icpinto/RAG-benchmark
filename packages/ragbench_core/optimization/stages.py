@@ -10,6 +10,10 @@ from sqlalchemy import select
 from ragbench_core.engine.config_expander import expand_cases
 from ragbench_core.optimization import store
 from ragbench_core.optimization.candidates import retrieval_identity, screen_config
+from ragbench_core.optimization.recommendation import (
+    POLICY_VERSION,
+    evaluate_acceptance,
+)
 from ragbench_core.optimization.search import candidate_hash, concrete_config
 from ragbench_core.optimization.selection import (
     compare_trials,
@@ -564,6 +568,21 @@ def stage_dashboard(session, *, redact=lambda value: value):
         else [],
         baseline_retained=not bool(state.get("confirmed")),
     )
+    if state.get("recommendation_policy_version", 1) >= POLICY_VERSION:
+        decision = state.get("acceptance") or evaluate_acceptance(
+            baseline=baseline, candidate=selected_config, trials=trials, results=results,
+            question_ids=[q["question_id"] for q in payload if q.get("split") == "holdout"],
+            comparison=state.get("comparison"), limits=session["request"]["limits"],
+        )
+        # Preserve progress/not-run labels until confirmation finishes. The saved
+        # acceptance decision controls final displays and exports everywhere.
+        if state.get("acceptance") or (confirmation["trials"] and all(t["status"] == "completed" for t in confirmation["trials"])):
+            confirmation["outcome"] = decision["outcome"].replace("_", " ")
+        confirmation.update(
+            acceptance=decision,
+            baseline_retained=decision["recommended_source"] == "baseline",
+            explanation=state.get("explanation"),
+        )
     return {
         "session_id": session_id,
         "workflow_version": state.get("workflow_version", 1),

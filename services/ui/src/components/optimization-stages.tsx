@@ -6,6 +6,12 @@ import { Card, Empty, ErrorNotice, Loading, Notice } from "./common";
 import { DataTable } from "./data-table";
 import { TrialConfiguration } from "./optimization-config";
 import {
+  RecommendationEvidence,
+  recommendationLabel,
+  type AcceptanceDecision,
+  type RecommendationExplanation,
+} from "./recommendation-evidence";
+import {
   OptimizationHistory,
   type PlannerStatus,
 } from "./optimization-history";
@@ -78,6 +84,8 @@ interface Planned {
   status: string;
 }
 interface Stage {
+  acceptance?: AcceptanceDecision;
+  explanation?: RecommendationExplanation;
   planner?: PlannerStatus;
   status: string;
   split: string;
@@ -384,11 +392,21 @@ function Confirmation({
       <Notice
         tone={stage.outcome === "confirmed improvement" ? "success" : "info"}
       >
-        <strong>{stage.outcome ?? "Confirmation not run"}</strong>.{" "}
+        <strong>
+          {stage.acceptance &&
+          stage.outcome === stage.acceptance.outcome.replaceAll("_", " ")
+            ? recommendationLabel(stage.acceptance.outcome)
+            : (stage.outcome ?? "Confirmation not run")}
+        </strong>
+        .{" "}
         {stage.baseline_retained
           ? "Baseline recommendation retained."
           : "Candidate recommended."}
       </Notice>
+      <RecommendationEvidence
+        acceptance={stage.acceptance}
+        explanation={stage.explanation}
+      />
       {stage.selected_trial_id && (
         <p>
           Candidate selected from answer trial{" "}
