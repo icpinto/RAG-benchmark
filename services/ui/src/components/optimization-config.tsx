@@ -253,7 +253,7 @@ export function TrialConfiguration({
 }: {
   sessionId: string;
   trialId: string;
-  stage?: "retrieval" | "answer" | "confirm";
+  stage?: "retrieval" | "answer" | "prompt" | "confirm";
   workflowVersion?: number;
 }) {
   const query = useQuery({
@@ -272,7 +272,7 @@ export function TrialConfiguration({
   const label = (name: string, group: "retrieval" | "answer") =>
     !stage
       ? name
-      : `${name} · ${stage === "confirm" ? "Fixed for confirmation" : group === "retrieval" && stage === "answer" ? "Inherited" : group === "answer" && stage === "retrieval" ? "Fixed" : "Varied here"}`;
+      : `${name} · ${stage === "confirm" ? "Fixed for confirmation" : stage === "prompt" ? (name === "Prompt settings" ? "Varied here" : "Inherited") : group === "retrieval" && stage === "answer" ? "Inherited" : group === "answer" && stage === "retrieval" ? "Fixed" : "Varied here"}`;
   return (
     <div>
       {query.isPending && <p role="status">Loading trial configuration...</p>}

@@ -68,7 +68,7 @@ interface Ranked {
 }
 interface Trial {
   id: string;
-  phase: "retrieval" | "answer" | "confirm";
+  phase: "retrieval" | "answer" | "prompt" | "confirm";
   split: string;
   status: string;
 }

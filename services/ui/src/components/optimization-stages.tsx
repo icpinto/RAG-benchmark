@@ -19,7 +19,7 @@ import {
   type CompilationHistorySummary,
 } from "./prompt-candidate-history";
 
-type Phase = "retrieval" | "answer" | "confirm";
+type Phase = "retrieval" | "answer" | "prompt" | "confirm";
 type Config = Record<string, unknown>;
 interface Metric {
   mean: number | null;
@@ -56,6 +56,7 @@ export interface StageTrial {
   selection_reasons: string[];
   source_trial_id: string | null;
   source_answer_trial_id: string | null;
+  source_answer_phase?: Phase;
   changes_from_baseline: Change[];
 }
 interface Change {
@@ -81,6 +82,10 @@ interface Planned {
   scheduled: boolean;
   trial_id: string | null;
   status: string;
+  recipe_index?: number;
+  error?: unknown;
+  compilation_job_id?: string;
+  artifact_id?: string;
 }
 interface Stage {
   acceptance?: AcceptanceDecision;
@@ -101,6 +106,9 @@ interface Stage {
   }[];
   outcome?: string;
   selected_trial_id?: string | null;
+  selected_phase?: Phase;
+  parent_answer_trial_id?: string | null;
+  budget_required?: { tokens: number; seconds: number; cost: number | null };
   baseline_retained?: boolean;
   configuration_differences?: Change[];
   comparison?: {
@@ -112,20 +120,23 @@ interface Stage {
 export interface StageDashboard {
   session_id: string;
   workflow_version: number;
-  stages: Record<Phase, Stage>;
+  stages: Record<Exclude<Phase, "prompt">, Stage> & { prompt?: Stage };
 }
 
 const names: Record<Phase, string> = {
   retrieval: "Retrieval",
   answer: "Answering",
+  prompt: "DSPy",
   confirm: "Confirmation",
 };
-const phases: Phase[] = ["retrieval", "answer", "confirm"];
+const legacyPhases: Phase[] = ["retrieval", "answer", "confirm"];
 const descriptions = {
   retrieval:
     "Find relevant evidence with chunking, indexing, rewriting and retrieval. Higher NDCG, recall, precision and MRR are better; lower latency is better.",
   answer:
     "Evaluate complete answers on tuning questions. Higher semantic correctness, claim support and citation support are better; lower latency and cost are better.",
+  prompt:
+    "Run each selected DSPy recipe from the same answer-stage winner. Compare compiled prompts and the unchanged winner on shared validation questions before holdout confirmation.",
   confirm:
     "Compare the frozen candidate with the baseline on holdout questions excluded from tuning. A positive correctness delta favors the candidate.",
 };
@@ -206,11 +217,11 @@ function Inspector({
           )}
           {trial.source_answer_trial_id && (
             <p>
-              Selected answer trial:{" "}
+              Source selected trial:{" "}
               <TrialLink
                 sessionId={sessionId}
                 trialId={trial.source_answer_trial_id}
-                phase="answer"
+                phase={trial.source_answer_phase ?? "answer"}
               />
               .
             </p>
@@ -397,11 +408,12 @@ function Confirmation({
       <RecommendationEvidence acceptance={stage.acceptance} />
       {stage.selected_trial_id && (
         <p>
-          Candidate selected from answer trial{" "}
+          Candidate selected from{" "}
+          {stage.selected_phase === "prompt" ? "DSPy" : "answer"} trial{" "}
           <TrialLink
             sessionId={sessionId}
             trialId={stage.selected_trial_id}
-            phase="answer"
+            phase={stage.selected_phase ?? "answer"}
           />
           .
         </p>
@@ -698,6 +710,11 @@ export function OptimizationStages({
   currentStage: string;
 }) {
   const [search, setSearch] = useSearchParams();
+  const query = useOptimizationDashboard(sessionId, status);
+  const phases: Phase[] =
+    (query.data?.workflow_version ?? 1) >= 6
+      ? ["retrieval", "answer", "prompt", "confirm"]
+      : legacyPhases;
   const requested = search.get("stage");
   const phase: Phase = phases.includes(requested as Phase)
     ? (requested as Phase)
@@ -712,7 +729,6 @@ export function OptimizationStages({
     "cancelled",
     "budget_exhausted",
   ].includes(status);
-  const query = useOptimizationDashboard(sessionId, status);
   const stage = query.data?.stages?.[phase];
   const select = (next: Phase) => {
     const params = new URLSearchParams(search);
@@ -722,12 +738,12 @@ export function OptimizationStages({
   return (
     <Card
       title="Stage dashboards"
-      description="Trace evidence retrieval, answer optimization, and final holdout confirmation."
+      description="Trace evidence retrieval, answer optimization, prompt compilation, and final holdout confirmation."
     >
       <div
         role="tablist"
         aria-label="Optimization stage"
-        className="stage-tabs"
+        className={`stage-tabs${phases.length === 4 ? " stage-tabs-four" : ""}`}
       >
         {phases.map((key, index) => (
           <button
@@ -745,7 +761,7 @@ export function OptimizationStages({
               if (event.key === "ArrowLeft")
                 next = phases[(index + phases.length - 1) % phases.length];
               if (event.key === "Home") next = phases[0];
-              if (event.key === "End") next = phases[2];
+              if (event.key === "End") next = phases[phases.length - 1];
               if (next) {
                 event.preventDefault();
                 select(next);
@@ -792,7 +808,9 @@ export function OptimizationStages({
                   : "Varied here: chunking, embeddings/index, rewriting, retrieval and reranking. Fixed: compression, context, prompts and answer model."
                 : phase === "answer"
                   ? "Inherited: chunking, embeddings/index, rewriting and retrieval. Varied here: reranker, context/compression and answer prompt. Fixed: answer model and generation settings."
-                  : "Fixed: the selected complete pipeline and baseline. No settings are tuned using holdout results."}
+                  : phase === "prompt"
+                    ? "Inherited: the winning answer pipeline and prompt. Varied here: DSPy instructions and demonstrations. Fixed: retrieval, reranker, context, answer model and generation settings."
+                    : "Fixed: the selected complete pipeline and baseline. No settings are tuned using holdout results."}
           </p>
         )}
         {query.isPending && <Loading label="Loading stage results..." />}
@@ -863,7 +881,7 @@ export function OptimizationStages({
                 />
               </>
             )}
-            {phase !== "confirm" && stage.planner && (
+            {(phase === "retrieval" || phase === "answer") && stage.planner && (
               <OptimizationHistory
                 key={`${sessionId}-${phase}`}
                 sessionId={sessionId}
@@ -877,10 +895,12 @@ export function OptimizationStages({
                 <summary>
                   Search coverage:{" "}
                   {stage.plan.filter((p) => p.scheduled).length}{" "}
-                  {query.data?.workflow_version === 4 ? "selected" : "planned"},{" "}
-                  {stage.plan.filter((p) => p.trial_id).length} dispatched,{" "}
+                  {(query.data?.workflow_version ?? 1) >= 4
+                    ? "selected"
+                    : "planned"}
+                  , {stage.plan.filter((p) => p.trial_id).length} dispatched,{" "}
                   {stage.plan.filter((p) => !p.scheduled).length}{" "}
-                  {query.data?.workflow_version === 4
+                  {(query.data?.workflow_version ?? 1) >= 4
                     ? "untested"
                     : "outside trial cap"}
                 </summary>
@@ -901,33 +921,88 @@ export function OptimizationStages({
                 />
               </details>
             )}
-            {phase === "answer" && !!stage.compilations?.length && (
+            {phase === "prompt" && (
               <>
-                <h3>DSPy prompt compilation</h3>
                 <p>
-                  Compilation usage is offline optimization work, separate from
-                  benchmark answer trials. Ranking uses the shared
-                  prompt-validation partition.
+                  DSPy stage:{" "}
+                  <strong>{stage.status.replaceAll("_", " ")}</strong>
                 </p>
-                <DataTable
-                  name="prompt-compilations"
-                  rows={stage.compilations.map((job) => ({
-                    job: job.id,
-                    status: job.status,
-                    reserved_tokens: job.usage.tokens,
-                    cost: job.usage.cost ?? "Unknown pricing",
-                  }))}
-                />
-                {stage.compilations.map((job) => (
-                  <PromptCandidateHistory
-                    key={job.id}
-                    jobId={job.id}
-                    status={job.status}
-                    history={job.history}
+                {stage.parent_answer_trial_id && (
+                  <p>
+                    Starting answer winner:{" "}
+                    <TrialLink
+                      sessionId={sessionId}
+                      trialId={stage.parent_answer_trial_id}
+                      phase="answer"
+                    />
+                  </p>
+                )}
+                {stage.budget_required && (
+                  <p>
+                    Protected DSPy capacity:{" "}
+                    {stage.budget_required.tokens.toLocaleString()} tokens;{" "}
+                    {stage.budget_required.seconds.toLocaleString()} seconds.
+                    Confirmation is reserved separately.
+                  </p>
+                )}
+                {!!stage.plan?.length && (
+                  <DataTable
+                    name="dspy-recipe-progress"
+                    rows={stage.plan.map((entry, index) => ({
+                      order: index + 1,
+                      recipe: entry.variant,
+                      status: entry.status.replaceAll("_", " "),
+                      compilation: entry.compilation_job_id ?? "Not queued",
+                      artifact: entry.artifact_id ?? "None",
+                      trial: entry.trial_id ?? "Not evaluated",
+                      reason: entry.error ? describe(entry.error) : "",
+                    }))}
                   />
-                ))}
+                )}
+                {!stage.compilations?.length && (
+                  <Notice>
+                    {stage.status === "disabled"
+                      ? "DSPy is disabled for this run. Enable it when creating a new optimization."
+                      : [
+                            "completed",
+                            "failed",
+                            "cancelled",
+                            "budget_exhausted",
+                          ].includes(stage.status)
+                        ? "No compilation jobs were created. Review the recipe outcomes above."
+                        : "Selected DSPy recipes will compile in order after answer optimization finishes. No compilation jobs have started yet."}
+                  </Notice>
+                )}
               </>
             )}
+            {(phase === "answer" || phase === "prompt") &&
+              !!stage.compilations?.length && (
+                <>
+                  <h3>DSPy prompt compilation</h3>
+                  <p>
+                    Compilation usage is offline optimization work, separate
+                    from benchmark answer trials. Ranking uses the shared
+                    prompt-validation partition.
+                  </p>
+                  <DataTable
+                    name="prompt-compilations"
+                    rows={stage.compilations.map((job) => ({
+                      job: job.id,
+                      status: job.status,
+                      reserved_tokens: job.usage.tokens,
+                      cost: job.usage.cost ?? "Unknown pricing",
+                    }))}
+                  />
+                  {stage.compilations.map((job) => (
+                    <PromptCandidateHistory
+                      key={job.id}
+                      jobId={job.id}
+                      status={job.status}
+                      history={job.history}
+                    />
+                  ))}
+                </>
+              )}
           </>
         )}
       </div>

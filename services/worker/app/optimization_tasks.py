@@ -131,6 +131,7 @@ def run_optimization_trial(run_id):
             tools.session["request"]["judge"],
         )
         confirmation = config["_optimization"].get("split") == "holdout"
+        protected = confirmation or bool(config["_optimization"].get("budget_credit"))
         budget.reserve(
             session_id,
             operation,
@@ -138,9 +139,9 @@ def run_optimization_trial(run_id):
             estimate,
             cost,
             seconds=min(300, tools.session["request"]["limits"]["active_seconds"] // 8)
-            if confirmation
+            if protected
             else 0,
-            credit=session_id + ":holdout" if confirmation else None,
+            credit=config["_optimization"].get("budget_credit") or (session_id + ":holdout" if confirmation else None),
         )
         per_question = time.monotonic()
 
@@ -200,8 +201,9 @@ def run_optimization_trial(run_id):
     except budget.BudgetExhausted as exc:
         with store.locked(session_id) as (conn, session):
             row = conn.get(store.OptimizationTrial, run_id)
-            row.status, row.summary = "failed", {"error": str(exc)}
-            session.progress = {**session.progress, "stop_reason": str(exc)}
+            row.status, row.summary = "failed", {"error": str(exc), "budget_exhausted": True}
+            if not (session.progress.get("workflow_version", 1) >= 6 and row.phase == "prompt"):
+                session.progress = {**session.progress, "stop_reason": str(exc)}
     except Exception as exc:  # noqa: BLE001 -- isolate provider/plugin/queue failures at the service boundary.
         with store.locked(session_id) as (conn, _):
             row = conn.get(store.OptimizationTrial, run_id)

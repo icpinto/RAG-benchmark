@@ -81,14 +81,33 @@ Select recipes in the new optimization form, in execution order. API clients can
 send `prompt_optimization` on `POST /optimizations`; omitting it inherits the
 template settings, while an explicit empty list disables the feature.
 
-New sessions use workflow version 5, with an adaptive outer experiment loop described
+New sessions use workflow version 6, with an adaptive outer experiment loop described
 in [Auto Optimize](auto-optimize.md#adaptive-experiment-loop). Existing DSPy sessions
-retain their workflow version and saved state. Version 5 disables reranking during
+retain their workflow version and saved state. Versions 5–6 disable reranking during
 retrieval screening and selects retrieval winners using raw NDCG@10. Answering and
 DSPy compilation restore the template reranker on the winning retrieval settings.
 The frozen tuning partition is split 75/25 into prompt training and validation,
 preserving evidence groups. The existing final holdout remains separate. Too few
 independent tuning groups requires a fresh dataset/version with additional evidence.
+
+Version 6 runs **Retrieval → Answering → DSPy → Confirmation**. DSPy remains opt-in.
+The answer planner cannot select or skip recipes. After answering, every selected
+recipe independently starts from the same winning pipeline and resolved answer
+prompt. Compiled prompts preserve source-artifact training provenance. Retrieval,
+reranking, compression, context settings, and the answer model remain fixed.
+Successful outputs receive ordinary benchmark evaluations on the same validation
+partition as answering. Failed recipes are recorded and later recipes continue;
+an unchanged winner remains eligible and wins exact ties. Final confirmation uses
+the existing baseline comparison and acceptance rules.
+
+Before search, compilation token/time allowances, one evaluation per recipe, a
+fallback control evaluation, and confirmation capacity are protected in the parent
+ledger. Infeasible budgets require input before retrieval; reduce recipe limits or
+increase session limits in a new run. Monetary-capped sessions must supply each
+recipe's `limits.max_cost`. Compiled-prompt growth is checked before evaluation.
+Prompt evaluations have phase `prompt`, independent of the answer-trial cap.
+The DSPy dashboard is available at `?stage=prompt`; historical sessions keep their
+saved answering-stage compilation displays.
 
 In historical version-3 sessions, answer slots are allocated to the unchanged highest-ranked feasible retrieval
 trial, selected DSPy configurations using that parent, then existing prompt,

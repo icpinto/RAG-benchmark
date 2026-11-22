@@ -320,7 +320,7 @@ def test_v4_preserves_template_reranking_and_legacy_ranking_policy(raw_tools):
     assert all(
         c["pipeline"]["query"]["rerankers"]
         == raw_tools.baseline()["pipeline"]["query"]["rerankers"]
-        for c in adaptive.available_candidates(raw_tools, "retrieval")
+        for c in adaptive.retrieval_candidates(raw_tools).values()
     )
     assert (
         stage_dashboard(raw_tools.session)["stages"]["retrieval"]["primary_metric"]

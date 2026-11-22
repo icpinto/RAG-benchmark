@@ -263,11 +263,15 @@ def stage_dashboard(session, *, redact=lambda value: value):
         or session["stage"] in {"answer", "confirm", "export", "done"}
     )
     sections = {}
-    for phase in PHASES:
+    phases = ("retrieval", "answer", "prompt", "confirm") if state.get("workflow_version", 1) >= 6 else PHASES
+    for phase in phases:
         split = "holdout" if phase == "confirm" else "tuning"
         phase_trials = [t for t in trials if t["phase"] == phase]
+        if phase == "prompt":
+            control_id = state.get("prompt_control_trial_id") or state.get("answer_winner_trial_id")
+            phase_trials += [t for t in trials if t["id"] == control_id and t["phase"] != "prompt"]
         question_ids = [q["question_id"] for q in payload if q.get("split") == split]
-        if phase == "answer" and state.get("prompt_splits"):
+        if phase in {"answer", "prompt"} and state.get("prompt_splits"):
             question_ids = state["prompt_splits"]["validation"]
             split = "prompt validation"
         if not question_ids:
@@ -316,6 +320,12 @@ def stage_dashboard(session, *, redact=lambda value: value):
                     else "insufficient shared coverage"
                 )
             roles, reasons = [], []
+            if phase == "prompt":
+                if trial["id"] == state.get("prompt_control_trial_id"):
+                    roles.append("unchanged answer winner")
+                    reasons.append("Control reused on the identical prompt-validation partition")
+                else:
+                    reasons.append("Compiled prompt evaluated against the unchanged answer winner")
             if phase == "answer":
                 entry = next(
                     (
@@ -346,6 +356,8 @@ def stage_dashboard(session, *, redact=lambda value: value):
                 reasons.append(
                     "Best feasible complete pipeline on matched tuning questions"
                 )
+            if phase == "answer" and trial["id"] == state.get("answer_winner_trial_id"):
+                roles.append("answer stage winner")
             if (
                 phase == "confirm"
                 and selected_config
@@ -394,7 +406,7 @@ def stage_dashboard(session, *, redact=lambda value: value):
             output.append(
                 {
                     "id": trial["id"],
-                    "phase": phase,
+                    "phase": trial["phase"],
                     "split": split,
                     "status": trial["status"],
                     "display_status": "Completed with errors"
@@ -420,9 +432,10 @@ def stage_dashboard(session, *, redact=lambda value: value):
                     "roles": roles,
                     "selection_reasons": reasons,
                     "source_trial_id": sources[trial["id"]],
-                    "source_answer_trial_id": selected_id
+                    "source_answer_trial_id": state.get("answer_winner_trial_id") if phase == "prompt" else selected_id
                     if phase == "confirm" and "holdout candidate" in roles
                     else None,
+                    "source_answer_phase": state.get("selected_phase", "answer") if phase == "confirm" else "answer",
                     "configuration": config,
                     "changes_from_baseline": configuration_diff(
                         baseline_summary, config
@@ -431,7 +444,7 @@ def stage_dashboard(session, *, redact=lambda value: value):
                     else [],
                 }
             )
-        ordering = {"retrieval": 0, "answer": 1, "confirm": 2, "export": 3, "done": 4}
+        ordering = {name: i for i, name in enumerate((*phases, "export", "done"))}
         position = ordering.get(session["stage"], -1)
         phase_position = ordering[phase]
         stage_status = (
@@ -499,15 +512,33 @@ def stage_dashboard(session, *, redact=lambda value: value):
         for entry in plan
     ]
     sections["answer"].update(plan=plan, selected_trial_id=selected_id)
+    if state.get("workflow_version", 1) >= 6:
+        sections["answer"]["selected_trial_id"] = state.get("answer_winner_trial_id") or selected_id
+        prompt_status = state.get("prompt_status", sections["prompt"]["status"])
+        if not session["request"].get("prompt_optimization", {}).get("configs"):
+            prompt_status = "disabled"
+        elif session["stage"] == "prompt" and session["status"] in {
+            "paused", "needs_input", "failed", "cancelled", "budget_exhausted"
+        }:
+            prompt_status = session["status"]
+        sections["prompt"].update(
+            status=prompt_status,
+            plan=[{k: v for k, v in e.items() if k not in {"config", "seed_prompt"}} for e in state.get("prompt_plan", [])],
+            parent_answer_trial_id=state.get("answer_winner_trial_id"),
+            selected_trial_id=selected_id,
+            budget_required=state.get("prompt_budget_required"),
+        )
     if state.get("prompt_splits"):
         from ragbench_core.optimization.budget import totals
         from ragbench_core.prompt_optimization.history_store import history_status
         from ragbench_core.prompt_optimization.service import get_job
-        job_ids = {e["compilation_job_id"] for e in (adaptive_entries if state.get("workflow_version", 1) >= 4 else state.get("prompt_answer_plan", [])) if e.get("compilation_job_id")}
-        sections["answer"]["compilations"] = []
+        entries = state.get("prompt_plan", []) if state.get("workflow_version", 1) >= 6 else adaptive_entries if state.get("workflow_version", 1) >= 4 else state.get("prompt_answer_plan", [])
+        job_ids = {e["compilation_job_id"] for e in entries if e.get("compilation_job_id")}
+        compilation_section = sections["prompt"] if state.get("workflow_version", 1) >= 6 else sections["answer"]
+        compilation_section["compilations"] = []
         for jid in sorted(job_ids):
             job = get_job(jid)
-            sections["answer"]["compilations"].append({
+            compilation_section["compilations"].append({
                 "id": jid, "status": job["status"], "progress": job["progress"],
                 "usage": totals(jid), "history": history_status(job),
             })
@@ -561,6 +592,7 @@ def stage_dashboard(session, *, redact=lambda value: value):
         outcome=outcome,
         comparison=comparison,
         selected_trial_id=selected_id,
+        selected_phase=state.get("selected_phase", "answer"),
         configuration_differences=configuration_diff(
             baseline_summary, redact(config_summary(selected_config))
         )

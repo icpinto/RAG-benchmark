@@ -659,6 +659,8 @@ class OptimizationTools:
             if self.session["progress"].get("workflow_version", 1) >= 4:
                 from ragbench_core.optimization.adaptive import catalog
                 entries = catalog(self)
+                if self.session["progress"].get("workflow_version", 1) >= 6:
+                    entries = entries + self.session["progress"].get("prompt_plan", [])
             else:
                 entries = self.session["progress"].get("prompt_answer_plan", [])
             for entry in entries:
@@ -678,6 +680,14 @@ class OptimizationTools:
     def run_trial(self, request: TrialRequest, dispatch):
         if request.session_id != self.session_id:
             raise ValueError("Trial belongs to another session")
+        if request.phase == "prompt":
+            parent = self.session["progress"].get("answer_winner_config")
+            if self.session["progress"].get("workflow_version", 1) < 6 or parent is None:
+                raise ValueError("Prompt trials require a frozen version-six answer winner")
+            pipeline = deepcopy(request.config["pipeline"])
+            pipeline["query"]["prompt_builders"] = deepcopy(parent["pipeline"]["query"]["prompt_builders"])
+            if pipeline != parent["pipeline"]:
+                raise ValueError("Prompt trials must preserve the frozen answer pipeline except its prompt")
         if (request.phase == "confirm") != (request.split == "holdout"):
             raise ValueError("Holdout is available only to confirmation")
         if request.phase == "confirm" and not self.session["progress"].get(
@@ -729,7 +739,7 @@ class OptimizationTools:
             QueryExample(**legacy_question(q))
             for q in dataset["payload"]
             if q["split"] == request.split
-            and (request.phase != "answer" or not self.session["progress"].get("prompt_splits") or q["question_id"] in self.session["progress"]["prompt_splits"]["validation"])
+            and (request.phase not in {"answer", "prompt"} or not self.session["progress"].get("prompt_splits") or q["question_id"] in self.session["progress"]["prompt_splits"]["validation"])
         ]
         run_id = str(uuid.uuid4())
         config["_snapshot"] = attach_evaluation(
@@ -765,6 +775,13 @@ class OptimizationTools:
             self.session["request"]["judge"],
         )
         initial_operation = self.session_id + ":trial:" + run_id + ":initial"
+        trial_credit = self.session_id + ":holdout" if request.phase == "confirm" else None
+        if request.phase == "prompt":
+            from ragbench_core.optimization.prompt_stage import credit
+            entry = next((e for e in self.session["progress"].get("prompt_plan", [])
+                          if e.get("artifact_id") and candidate_hash(e["config"]) == candidate_hash(config)), None)
+            trial_credit = credit(self, entry["recipe_index"] if entry else "control", "evaluate")
+        config["_optimization"]["budget_credit"] = trial_credit
         budget.reserve(
             self.session_id,
             initial_operation,
@@ -772,9 +789,9 @@ class OptimizationTools:
             estimate,
             cost,
             seconds=min(300, self.session["request"]["limits"]["active_seconds"] // 8)
-            if request.phase == "confirm"
+            if request.phase in {"confirm", "prompt"}
             else 0,
-            credit=self.session_id + ":holdout" if request.phase == "confirm" else None,
+            credit=trial_credit,
         )
         config["_optimization"]["budget_operation"] = initial_operation
         with store.locked(self.session_id) as (conn, session):
@@ -791,6 +808,8 @@ class OptimizationTools:
             maximum = (
                 2
                 if request.phase == "confirm"
+                else len(session.request["prompt_optimization"]["configs"]) + 1
+                if request.phase == "prompt"
                 else session.request["limits"][
                     "retrieval_trials"
                     if request.phase == "retrieval"
@@ -846,7 +865,7 @@ class OptimizationTools:
             q["question_id"]
             for q in store.dataset(self.session_id)["payload"]
             if q["split"] == "tuning"
-            and (phase != "answer" or not self.session["progress"].get("prompt_splits") or q["question_id"] in self.session["progress"]["prompt_splits"]["validation"])
+            and (phase not in {"answer", "prompt"} or not self.session["progress"].get("prompt_splits") or q["question_id"] in self.session["progress"]["prompt_splits"]["validation"])
         ]
         return compare_trials(
             trials,
@@ -935,6 +954,13 @@ class OptimizationTools:
                 "planner_memory": self.session["progress"].get("planner_memory", {"lessons": []}),
                 "stage_stops": {phase: value.get("stop_reason") for phase, value in self.session["progress"].get("adaptive", {}).items()},
                 "answer_plan": [{k: v for k, v in e.items() if k != "config"} for e in catalog(self)],
+                **({"prompt_plan": [{k: v for k, v in e.items() if k not in {"config", "seed_prompt"}}
+                                     for e in session["progress"].get("prompt_plan", [])],
+                    "prompt_ranking": session["progress"].get("prompt_ranking", []),
+                    "prompt_budget_required": session["progress"].get("prompt_budget_required"),
+                    "answer_winner_trial_id": session["progress"].get("answer_winner_trial_id"),
+                    "selected_phase": session["progress"].get("selected_phase", "answer")}
+                   if version >= 6 else {}),
             }
         self.write(
             "report.json",

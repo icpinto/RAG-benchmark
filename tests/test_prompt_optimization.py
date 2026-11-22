@@ -582,9 +582,10 @@ def test_compiler_propagates_cancellation_and_provider_errors(
         )
 
 
+@pytest.mark.parametrize("seeded", [False, True])
 @pytest.mark.parametrize("preset", PRESETS)
 def test_real_optimizers_compile_with_deterministic_transport(
-    dspy_runtime, preset, config, examples, monkeypatch
+    dspy_runtime, preset, seeded, config, examples, monkeypatch
 ):
     from ragbench_core.prompt_optimization import compiler
 
@@ -635,6 +636,11 @@ def test_real_optimizers_compile_with_deterministic_transport(
         else {},
     )
     config = {**config, "_snapshot": {"dataset_hash": "test"}}
+    initial_prompt = {
+        "instructions": "Start from the winning concise answer instructions.",
+        "demonstrations": [],
+        "prior_provenance": {"training_question_ids": ["inherited-training-id"]},
+    } if seeded else None
     artifact, summary = compiler.compile_prompt(
         recipe,
         prepared,
@@ -642,10 +648,13 @@ def test_real_optimizers_compile_with_deterministic_transport(
         config,
         task_profile(config).model_dump(),
         NullAccount(),
+        initial_prompt=initial_prompt,
     )
     assert summary["validation_count"] == len(splits["validation"])
     assert summary["validation_score"] == pytest.approx(0.9)
-    assert artifact["provenance"]["training_question_ids"] == splits["training"]
+    assert set(artifact["provenance"]["training_question_ids"]) == set(splits["training"]) | ({"inherited-training-id"} if seeded else set())
+    if seeded:
+        assert artifact["provenance"]["seed_prompt"] == initial_prompt
     assert outputs
     candidates = summary["candidate_history"]["candidates"]
     selected = [item for item in candidates if item["selected"]]
@@ -704,6 +713,7 @@ def test_real_optimizers_compile_with_deterministic_transport(
         config,
         task_profile(config).model_dump(),
         RecordingAccount(),
+        initial_prompt=initial_prompt,
     )
     capture_calls = list(observed_calls)
     observed_calls.clear()
@@ -721,6 +731,7 @@ def test_real_optimizers_compile_with_deterministic_transport(
         config,
         task_profile(config).model_dump(),
         RecordingAccount(),
+        initial_prompt=initial_prompt,
     )
     assert original == captured == artifact
     assert observed_calls == capture_calls

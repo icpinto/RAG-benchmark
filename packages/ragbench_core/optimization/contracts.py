@@ -89,7 +89,7 @@ class ArtifactRequest(Contract):
 
 class TrialRequest(ArtifactRequest):
     config: dict
-    phase: Literal["retrieval", "answer", "confirm"]
+    phase: Literal["retrieval", "answer", "prompt", "confirm"]
     split: Literal["tuning", "holdout"] = "tuning"
 
 

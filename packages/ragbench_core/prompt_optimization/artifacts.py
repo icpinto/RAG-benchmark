@@ -74,6 +74,39 @@ def builder_config(artifact):
     }
 
 
+def seed_prompt(config):
+    """Resolve approved answer prompts without parsing arbitrary templates."""
+    from ragbench_core.engine.config_expander import expand_cases
+
+    prompt = expand_cases(config)[0].query_config["prompt_builder"]
+    if prompt["type"] == "compiled":
+        artifact = CompiledPrompt.model_validate(prompt["artifact"])
+        return {
+            "instructions": artifact.instructions,
+            "demonstrations": [d.model_dump() for d in artifact.demonstrations],
+            "prior_provenance": {
+                key: artifact.provenance.get(key, [])
+                for key in (
+                    "training_question_ids", "validation_question_ids",
+                    "training_question_hashes", "validation_question_hashes",
+                )
+            },
+            "source": {"type": "compiled", "artifact_id": artifact.content_hash},
+        }
+    instructions = {
+        "baseline_v1": "Give a direct, evidence-grounded answer to the question.",
+        "concise_v1": "Give a brief, direct, evidence-grounded answer without unnecessary background.",
+        "evidence_first_v1": "Organize the answer around the relevant supporting evidence, then state the conclusion.",
+    }
+    preset = prompt.get("preset_id", "baseline_v1")
+    if prompt["type"] not in {"default", "preset"} or preset not in instructions:
+        raise ValueError("DSPy requires an approved built-in or compiled seed prompt")
+    return {
+        "instructions": instructions[preset], "demonstrations": [],
+        "source": {"type": prompt["type"], "preset_id": preset},
+    }
+
+
 def assert_no_training_overlap(artifact, examples, *, allow_validation=False):
     provenance = CompiledPrompt.model_validate(artifact).provenance
     used = set(provenance.get("training_question_ids", [])) | (

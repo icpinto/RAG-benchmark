@@ -260,7 +260,7 @@ def make_optimizer(dspy, recipe, metric, proposal, history=None):
 
 
 @_compiler_boundary
-def compile_prompt(recipe, prepared, splits, config, judge_config, account):
+def compile_prompt(recipe, prepared, splits, config, judge_config, account, *, initial_prompt=None):
     account = _FatalAccount(account)
     os.environ.setdefault("LITELLM_LOCAL_MODEL_COST_MAP", "True")
     os.environ.setdefault(
@@ -286,6 +286,9 @@ def compile_prompt(recipe, prepared, splits, config, judge_config, account):
         def __init__(self):
             super().__init__()
             self.answer = dspy.Predict(AnswerSignature)
+            if initial_prompt is not None:
+                self.answer.signature = self.answer.signature.with_instructions(initial_prompt["instructions"])
+                self.answer.demos = [dspy.Example(**d) for d in initial_prompt["demonstrations"]]
             self.answer.set_lm(task)
 
         def forward(self, question, context):
@@ -397,14 +400,19 @@ def compile_prompt(recipe, prepared, splits, config, judge_config, account):
             {k: getattr(demo, k) for k in ("question", "context", "answer")}
             for demo in predictor.demos
         ]
+        lineage = provenance(prepared, splits, recipe, config)
+        if initial_prompt is not None:
+            for key, values in initial_prompt.get("prior_provenance", {}).items():
+                lineage[key] = sorted(set(lineage.get(key, [])) | set(values))
         payload = CompiledPrompt(
             instructions=predictor.signature.instructions,
             demonstrations=demos,
             provenance={
-                **provenance(prepared, splits, recipe, config),
+                **lineage,
                 "dspy_version": DSPY_VERSION,
                 "judge_model": judge_profile.model_dump(),
                 "judge_rubric_version": CORRECTNESS_RUBRIC_VERSION,
+                **({"seed_prompt": initial_prompt} if initial_prompt is not None else {}),
             },
         ).model_dump()
         scores = []

@@ -109,6 +109,12 @@ def create_optimization(req: OptimizationRequest):
             req.prompt_optimization = PromptOptimizationSettings.model_validate(template.get("prompt_optimization", {}))
             req.policy()
         template["prompt_optimization"] = req.prompt_optimization.model_dump()
+        if req.limits.max_cost is not None and any(
+            recipe.limits.max_cost is None for recipe in req.prompt_optimization.configs
+        ):
+            raise ValueError(
+                "Protected DSPy budgets require max_cost for each recipe when the session has a monetary cap"
+            )
         reject_secrets(template)
         template.setdefault("runtime", {})["artifact_dir"] = str(ARTIFACT_ROOT)
         template.setdefault("llm", {}).setdefault("max_output_tokens", 1024)
@@ -182,7 +188,7 @@ def create_optimization(req: OptimizationRequest):
                     id=session_id,
                     request=req.model_dump(),
                     template=template,
-                    progress={"workflow_version": 5, "recommendation_policy_version": POLICY_VERSION},
+                    progress={"workflow_version": 6, "recommendation_policy_version": POLICY_VERSION},
                 )
             )
             conn.add(
@@ -400,6 +406,9 @@ def cancel(session_id: str):
         for phase in ("retrieval", "answer"):
             capture_pending_terminal(tools, phase)
         stop_planning(tools, "cancelled", "Session cancelled")
+        if session["progress"].get("workflow_version", 1) >= 6:
+            from ragbench_core.optimization.prompt_stage import cancel
+            cancel(tools)
     return {"status": "cancelled"}
 
 

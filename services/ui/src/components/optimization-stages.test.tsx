@@ -233,6 +233,75 @@ beforeEach(() => {
   });
 });
 
+it("shows ordered DSPy recipes, protected capacity, and failures in version six", async () => {
+  const data = dashboard();
+  data.workflow_version = 6;
+  data.stages.prompt = {
+    status: "running",
+    split: "prompt validation",
+    question_count: 6,
+    primary_metric: "answer_correctness",
+    trials: [],
+    parent_answer_trial_id: "answer-best",
+    budget_required: { tokens: 4000000, seconds: 1800, cost: null },
+    plan: [
+      {
+        candidate_hash: "first",
+        variant: "dspy:mipro_zero_shot_v1",
+        source_trial_id: null,
+        scheduled: true,
+        trial_id: null,
+        status: "failed",
+        error: "Model timeout",
+      },
+      {
+        candidate_hash: "second",
+        variant: "dspy:bootstrap_small_v1",
+        source_trial_id: null,
+        scheduled: true,
+        trial_id: null,
+        status: "planned",
+      },
+    ],
+  };
+  fetchMock.mockImplementation(() => response(data));
+  mount("/auto-optimize/session?stage=prompt", "running");
+  expect(await screen.findByRole("tab", { name: /DSPy/ })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  expect(
+    await screen.findByText("4,000,000", { exact: false }),
+  ).toBeInTheDocument();
+  expect(screen.getByText("Model timeout")).toBeInTheDocument();
+  expect(screen.getByText("dspy:bootstrap_small_v1")).toBeInTheDocument();
+  expect(
+    screen.getByText(/No compilation jobs have started yet/),
+  ).toBeInTheDocument();
+  fireEvent.keyDown(screen.getByRole("tab", { name: /DSPy/ }), { key: "End" });
+  expect(screen.getByRole("tab", { name: /Confirmation/ })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+});
+
+it("explains a disabled DSPy stage and preserves historical navigation", async () => {
+  const data = dashboard();
+  data.workflow_version = 6;
+  data.stages.prompt = {
+    status: "disabled",
+    split: "prompt validation",
+    question_count: 0,
+    primary_metric: "answer_correctness",
+    trials: [],
+  };
+  fetchMock.mockImplementation(() => response(data));
+  mount("/auto-optimize/session?stage=prompt");
+  expect(
+    await screen.findByText(/DSPy is disabled for this run/),
+  ).toBeInTheDocument();
+});
+
 describe("Optimization stage dashboards", () => {
   it("keeps reranking in answering and removes duplicate evidence tables", async () => {
     fetchMock.mockImplementation((path: string) => {

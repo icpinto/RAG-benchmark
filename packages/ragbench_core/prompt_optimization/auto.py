@@ -190,6 +190,9 @@ def prepare_answer_entry(tools, entry, save_entry):
                 + str(entry["recipe_index"])
                 + ":"
                 + candidate_hash(config),
+                initial_prompt=entry.get("seed_prompt"),
+                compilation_credit=entry.get("compilation_credit"),
+                parent_trial_id=entry.get("parent_answer_trial_id"),
             )
             entry["compilation_job_id"] = job_id
             entry["compilation_status"] = "queued"

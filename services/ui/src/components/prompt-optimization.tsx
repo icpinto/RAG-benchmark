@@ -68,8 +68,10 @@ export function PromptOptimizerSettings({
       {enabled && (
         <>
           <p>
-            Choose reusable presets. Configurations run in the order below,
-            within their compilation limits and the session budget.
+            Choose reusable presets. In new Auto Optimize runs, each recipe runs
+            after answer optimization, in the order below, starting from the
+            same answer winner. Compilation and evaluation reserve part of the
+            session budget. Manual compilation uses the selected pipeline.
           </p>
           {presetIds.map((id) => (
             <label className="check-row" key={id}>

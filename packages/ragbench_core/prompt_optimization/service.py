@@ -80,6 +80,9 @@ def create_job(
     allow_hosted=False,
     session_id=None,
     operation_key=None,
+    initial_prompt=None,
+    compilation_credit=None,
+    parent_trial_id=None,
 ):
     settings = PromptOptimizationSettings.model_validate(settings)
     if not settings.configs:
@@ -91,6 +94,8 @@ def create_job(
     for recipe in settings.configs:
         recipe.proposal_model = recipe.proposal_model or task_profile(config)
     request = {
+        **({"initial_prompt": initial_prompt, "compilation_credit": compilation_credit,
+            "parent_trial_id": parent_trial_id} if initial_prompt is not None else {}),
         "prompt_optimization": settings.model_dump(),
         "judge": judge.model_dump(),
         "allow_hosted": allow_hosted,
@@ -252,6 +257,7 @@ class CompilationAccount:
                 tokens,
                 cost,
                 seconds=timeout,
+                credit=get_job(self.job_id)["request"].get("compilation_credit"),
             )
         budget.reserve(self.job_id, operation, role, tokens, cost, seconds=timeout)
         usage, started = {}, time.monotonic()
@@ -429,7 +435,13 @@ def run_job(job_id, *, compiler=None, prepare=None):
                     job["config"],
                     job["request"]["judge"],
                     account,
+                    **({"initial_prompt": job["request"]["initial_prompt"]}
+                       if job["request"].get("initial_prompt") is not None else {}),
                 )
+                if job["request"].get("parent_trial_id") is not None:
+                    payload = deepcopy(payload)
+                    payload["provenance"]["parent_answer_trial_id"] = job["request"]["parent_trial_id"]
+                    payload["content_hash"] = ""
                 payload = CompiledPrompt.model_validate(payload).model_dump()
                 summary = dict(summary)
                 history = summary.pop("candidate_history", None)

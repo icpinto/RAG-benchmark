@@ -104,6 +104,8 @@ def initialize(tools, phase):
         recipes = (
             tools.session["request"].get("prompt_optimization", {}).get("configs", [])
         )
+        if tools.session["progress"].get("workflow_version", 1) >= 6:
+            recipes = []  # DSPy runs deterministically after answer search.
         if recipes and not tools.session["progress"].get("prompt_splits"):
             from ragbench_core.prompt_optimization.datasets import split_questions
 
@@ -698,7 +700,7 @@ def finish_phase(tools, phase):
         selected_config=tools.validate_candidate(config),
         selected_trial_id=winner["trial_id"] if winner else None,
     )
-    return "confirm"
+    return "prompt" if tools.session["progress"].get("workflow_version", 1) >= 6 else "confirm"
 
 
 def stop_planning(tools, status, reason):

@@ -109,6 +109,20 @@ def build_graph(checkpointer, dispatch, tools_factory=OptimizationTools):
                     return {"stage": "export"}
                 next_stage = step(stage, tools, dispatch)
             except budget.BudgetExhausted as exc:
+                if session["progress"].get("workflow_version", 1) >= 6 and stage in {"retrieval", "answer"}:
+                    from ragbench_core.optimization.adaptive import (
+                        capture_pending_terminal,
+                        finish_phase,
+                        stop_planning,
+                    )
+                    capture_pending_terminal(tools, stage)
+                    stop_planning(tools, "budget_exhausted", str(exc))
+                    with store.locked(session_id) as (_, row):
+                        saved = {**row.progress}
+                        saved.pop("stop_reason", None)
+                        saved["search_stops"] = {**saved.get("search_stops", {}), stage: str(exc)}
+                        row.progress = saved
+                    return {"stage": finish_phase(tools, stage)}
                 if session["progress"].get("workflow_version", 1) >= 4:
                     from ragbench_core.optimization.adaptive import stop_planning
                     stop_planning(tools, "budget_exhausted", str(exc))
@@ -132,6 +146,7 @@ def build_graph(checkpointer, dispatch, tools_factory=OptimizationTools):
         "freeze",
         "retrieval",
         "answer",
+        "prompt",
         "confirm",
         "export",
     )
@@ -160,7 +175,17 @@ def step(stage, tools, dispatch):
         ].get("review_approved"):
             store.update(session_id, status="paused")
             interrupt({"reason": "dataset_review"})
-        result = tools.validate_evaluation_dataset()
+        try:
+            result = tools.validate_evaluation_dataset()
+            if not result.summary.get("needs_input") and tools.session["progress"].get("workflow_version", 1) >= 6:
+                from ragbench_core.optimization.prompt_stage import prepare
+                prepare(tools)
+        except (ValueError, budget.BudgetExhausted) as exc:
+            if tools.session["progress"].get("workflow_version", 1) < 6:
+                raise
+            store.update(session_id, status="needs_input", error=str(exc))
+            interrupt({"reason": "prompt_preflight", "message": str(exc)})
+            return "freeze"
         if result.summary.get("needs_input"):
             store.update(
                 session_id,
@@ -177,6 +202,9 @@ def step(stage, tools, dispatch):
         return search_retrieval(tools, dispatch)
     if stage == "answer":
         return search_answers(tools, dispatch)
+    if stage == "prompt":
+        from ragbench_core.optimization.prompt_stage import search
+        return search(tools, dispatch, wait_for_trial)
     if stage == "confirm":
         selected = tools.session["progress"]["selected_config"]
         baseline = tools.baseline()
@@ -232,6 +260,10 @@ def step(stage, tools, dispatch):
         progress(session_id, **changes)
         return "export"
     if stage == "export":
+        if tools.session["progress"].get("workflow_version", 1) >= 6:
+            for row in store.rows(store.BudgetUsage, session_id):
+                if row["role"] == "reserved_prompt" or row["id"] == session_id + ":holdout":
+                    budget.release_reservation(session_id, row["id"])
         session = tools.session
         state = session["progress"]
         decision = None

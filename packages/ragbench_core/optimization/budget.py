@@ -20,6 +20,8 @@ def check_control(session_id):
     if session["status"] in {"paused", "cancelled"}:
         raise OptimizationStopped(session["status"])
     usage = store.rows(store.BudgetUsage, session_id)
+    if session.get("progress", {}).get("workflow_version", 1) >= 6:
+        usage = [u for u in usage if not u["role"].startswith("reserved_")]
     if (
         sum(u["seconds"] or 0 for u in usage)
         >= session["request"]["limits"]["active_seconds"]
@@ -73,6 +75,35 @@ def reserve(session_id, operation, role, tokens, cost, seconds=0, credit=None):
             )
         )
     return True
+
+
+def reserve_batch(session_id, requirements, role):
+    """Atomically protect a future stage; replay preserves already drawn credits."""
+    with store.locked_budget_owner(session_id) as (conn, session):
+        rows = conn.execute(
+            select(store.BudgetUsage).where(store.BudgetUsage.session_id == session_id)
+        ).scalars().all()
+        existing = {r.id for r in rows}
+        pending = [r for r in requirements if r[0] not in existing]
+        limits = session.request["limits"]
+        tokens = sum(r.tokens for r in rows) + sum(r[1] for r in pending)
+        seconds = sum(r.seconds for r in rows) + sum(r[3] for r in pending)
+        cost = (
+            None
+            if any(r.cost is None for r in rows) or any(r[2] is None for r in pending)
+            else sum(r.cost for r in rows) + sum(r[2] for r in pending)
+        )
+        if tokens > limits["max_tokens"] or seconds > limits["active_seconds"] or (
+            limits.get("max_cost") is not None and (cost is None or cost > limits["max_cost"])
+        ):
+            raise BudgetExhausted(
+                f"Protected DSPy and confirmation capacity cannot fit: {tokens} tokens, {seconds:g} seconds, cost {cost}; increase session limits or reduce recipe limits"
+            )
+        for operation, tokens, cost, seconds in pending:
+            conn.add(store.BudgetUsage(
+                id=operation, session_id=session_id, role=role,
+                tokens=tokens, cost=cost, seconds=seconds,
+            ))
 
 
 def reported_token_total(usage):
@@ -139,7 +170,7 @@ def totals(session_id):
         "reservations": len(rows),
         "reported_actual_tokens": sum(r["actual_tokens"] or 0 for r in rows),
         "unreported_token_operations": sum(
-            r["actual_tokens"] is None and r["role"] not in {"reserved_confirmation", "reserved_planner"}
+            r["actual_tokens"] is None and not r["role"].startswith("reserved_")
             for r in rows
         ),
         "by_role": {
