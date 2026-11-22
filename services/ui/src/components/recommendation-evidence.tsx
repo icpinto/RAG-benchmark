@@ -29,10 +29,8 @@ export const recommendationLabel = (outcome: AcceptanceDecision["outcome"]) =>
 
 export function RecommendationEvidence({
   acceptance,
-  explanation,
 }: {
   acceptance?: AcceptanceDecision;
-  explanation?: RecommendationExplanation;
 }) {
   const coverage = acceptance?.checks.find((c) => c.code === "paired_coverage")
     ?.measured as
@@ -40,13 +38,6 @@ export function RecommendationEvidence({
     | undefined;
   return (
     <>
-      {explanation && <p>{explanation.text}</p>}
-      {explanation?.source === "fallback" && (
-        <p className="muted">
-          Model explanation unavailable; this explanation uses the recorded
-          checks.
-        </p>
-      )}
       {coverage && (
         <p>
           Paired holdout questions: {coverage.paired ?? "unavailable"} /{" "}

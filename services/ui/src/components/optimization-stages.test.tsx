@@ -372,7 +372,7 @@ describe("Optimization stage dashboards", () => {
 
   it("shows holdout comparison and an accessible confidence interval without using tuning scores", async () => {
     mount("/auto-optimize/session?stage=confirm");
-    await screen.findByText("confirmed improvement");
+    await screen.findByText(/Holdout correctness delta:/);
     expect(
       screen.getByRole("img", {
         name: "95% confidence interval 0.300 to 0.600",
@@ -396,7 +396,7 @@ describe("Optimization stage dashboards", () => {
     ).toBeInTheDocument();
   });
 
-  it("shows promising candidates as recommended with their saved explanation", async () => {
+  it("keeps acceptance evidence without repeating the recommendation summary", async () => {
     const data = dashboard();
     data.stages.confirm.outcome = "promising candidate";
     data.stages.confirm.baseline_retained = false;
@@ -404,7 +404,24 @@ describe("Optimization stage dashboards", () => {
       outcome: "promising_candidate",
       recommended_source: "candidate",
       reason_codes: ["statistical_confirmation"],
-      checks: [],
+      checks: [
+        {
+          code: "paired_coverage",
+          label: "At least 95% paired scores",
+          status: "pass",
+          measured: { paired: 6, expected: 6, fraction: 1 },
+          threshold: 0.95,
+          required: true,
+        },
+        {
+          code: "statistical_confirmation",
+          label: "Improvement is statistically confirmed",
+          status: "fail",
+          measured: -0.02,
+          threshold: 0,
+          required: false,
+        },
+      ],
     };
     data.stages.confirm.explanation = {
       text: "The candidate is promising, but improvement remains uncertain.",
@@ -413,11 +430,15 @@ describe("Optimization stage dashboards", () => {
     };
     fetchMock.mockImplementation(() => response(data));
     mount("/auto-optimize/session?stage=confirm");
-    await screen.findByText("Promising candidate");
-    expect(screen.getByText(/Candidate recommended/)).toBeInTheDocument();
+    await screen.findByText(/6 \/ 6 \(100.0%\)/);
     expect(
-      screen.getByText(data.stages.confirm.explanation.text),
+      screen.getByText(/Not met: Improvement is statistically confirmed/),
     ).toBeInTheDocument();
+    expect(screen.queryByText("Promising candidate")).not.toBeInTheDocument();
+    expect(screen.queryByText(/Candidate recommended/)).not.toBeInTheDocument();
+    expect(
+      screen.queryByText(data.stages.confirm.explanation.text),
+    ).not.toBeInTheDocument();
     expect(
       screen.queryByText(/Baseline recommendation retained/),
     ).not.toBeInTheDocument();

@@ -17,7 +17,6 @@ import {
 } from "../components/common";
 import { DataTable } from "../components/data-table";
 import {
-  RecommendationEvidence,
   recommendationLabel,
   type AcceptanceDecision,
   type RecommendationExplanation,
@@ -886,24 +885,18 @@ function OptimizationEditor({ sessionId }: { sessionId?: string }) {
                     : "Baseline retained; candidate improvement has not been confirmed."
               }
             >
-              <RecommendationEvidence
-                acceptance={recommendation.data.acceptance}
-                explanation={recommendation.data.explanation}
-              />
+              {recommendation.data.explanation && (
+                <p>{recommendation.data.explanation.text}</p>
+              )}
+              {recommendation.data.explanation?.source === "fallback" && (
+                <p className="muted">
+                  Model explanation unavailable; this explanation uses the
+                  recorded checks.
+                </p>
+              )}
               {recommendation.data.limitations.map((text) => (
                 <p key={text}>{text}</p>
               ))}
-              {recommendation.data.comparison?.metrics
-                .filter((m) => m.metric === "answer_correctness")
-                .map((m) => (
-                  <p key={m.metric}>
-                    Holdout correctness delta:{" "}
-                    {m.mean_delta?.toFixed(3) ?? "unavailable"}; 95% interval:{" "}
-                    {m.ci95?.map((v) => v.toFixed(3)).join(" to ") ??
-                      "unavailable"}
-                    ; paired questions: {m.paired_count}.
-                  </p>
-                ))}
               <div className="actions">
                 <Button
                   onClick={() => {

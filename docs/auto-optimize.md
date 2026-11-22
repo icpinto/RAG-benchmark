@@ -149,7 +149,8 @@ three seconds and fetch a final update when the session finishes.
   inspection distinguishes inherited, varied, and fixed settings.
 - **Confirmation / holdout** shows baseline/candidate paired metrics, correctness
   delta and its 95% bootstrap interval, coverage, configuration differences, and
-  the confirmation outcome. It links back to the selected answer configuration.
+  any incomplete confirmation status. It links back to the selected answer
+  configuration.
 
 Measured descriptive means remain visible even when a trial is not eligible for
 ranking. Selection scores use matched questions with at least 95% coverage.
@@ -211,9 +212,10 @@ Missing measurements fail an applicable operational limit. Decisions use full
 precision; rounded display values do not decide acceptance. Lower cost or latency
 alone does not override equal or lower correctness.
 
-The Recommendation section and confirmation dashboard show the same saved decision,
-coverage, and failed or unavailable checks. A separate call using the planner model
-explains the result in plain language after acceptance is decided. It receives only
+The Recommendation section shows the saved decision and explanation; the
+confirmation dashboard shows coverage, failed or unavailable checks, and detailed
+holdout metrics. A separate call using the planner model explains the result in
+plain language after acceptance is decided. It receives only
 bounded metrics, checks, and redacted configuration summaries, never questions,
 references, or source passages. The model explains the decision; it cannot change
 the winner or exported configuration. Its prompt is versioned and inspectable in

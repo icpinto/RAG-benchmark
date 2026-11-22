@@ -81,17 +81,12 @@ for (const [outcome, label] of [
       await route.fulfill({ json: data });
     });
     await page.goto("/auto-optimize/session?stage=confirm");
-    await expect(page.getByText(label, { exact: true })).toHaveCount(2);
+    await expect(page.getByText(label, { exact: true })).toHaveCount(1);
     await expect(page.getByText(explanation.text, { exact: true })).toHaveCount(
-      2,
+      1,
     );
     await expect(
-      page.getByText(
-        baseline
-          ? "Baseline recommendation retained."
-          : "Candidate recommended.",
-        { exact: false },
-      ),
+      page.getByText(/Paired holdout questions: 6 \/ 6/),
     ).toBeVisible();
     const downloaded = page.waitForEvent("download");
     await page.getByRole("button", { name: "Download YAML" }).click();
@@ -100,7 +95,7 @@ for (const [outcome, label] of [
     expect(await readFile((await download.path())!, "utf8")).toBe(yaml);
     await page.getByRole("button", { name: "Open in Benchmark Setup" }).click();
     await expect(page).toHaveURL(/\/benchmark-setup$/);
-      await page.getByRole("button", { name: "YAML source" }).click();
+    await page.getByRole("button", { name: "YAML source" }).click();
     await expect(page.locator(".cm-content")).toContainText(
       `recommended-${source}`,
     );

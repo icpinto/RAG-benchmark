@@ -7,7 +7,6 @@ import { DataTable } from "./data-table";
 import { TrialConfiguration } from "./optimization-config";
 import {
   RecommendationEvidence,
-  recommendationLabel,
   type AcceptanceDecision,
   type RecommendationExplanation,
 } from "./recommendation-evidence";
@@ -389,24 +388,13 @@ function Confirmation({
   const x = (value: number) => width / 2 + (value / bound) * (width / 2 - 35);
   return (
     <>
-      <Notice
-        tone={stage.outcome === "confirmed improvement" ? "success" : "info"}
-      >
-        <strong>
-          {stage.acceptance &&
-          stage.outcome === stage.acceptance.outcome.replaceAll("_", " ")
-            ? recommendationLabel(stage.acceptance.outcome)
-            : (stage.outcome ?? "Confirmation not run")}
-        </strong>
-        .{" "}
-        {stage.baseline_retained
-          ? "Baseline recommendation retained."
-          : "Candidate recommended."}
-      </Notice>
-      <RecommendationEvidence
-        acceptance={stage.acceptance}
-        explanation={stage.explanation}
-      />
+      {stage.outcome &&
+        ![
+          "confirmed improvement",
+          "promising candidate",
+          "baseline retained",
+        ].includes(stage.outcome) && <Notice>{stage.outcome}</Notice>}
+      <RecommendationEvidence acceptance={stage.acceptance} />
       {stage.selected_trial_id && (
         <p>
           Candidate selected from answer trial{" "}

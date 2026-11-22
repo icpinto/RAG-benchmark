@@ -119,9 +119,7 @@ for (const width of [1440, 1280, 375]) {
       "true",
     );
     await page.getByRole("tab", { name: /Confirmation/ }).click();
-    await expect(
-      page.getByText("confirmed improvement", { exact: true }),
-    ).toBeVisible();
+    await expect(page.getByText(/Holdout correctness delta:/)).toBeVisible();
     await expect(
       page.getByRole("img", { name: "95% confidence interval 0.200 to 0.600" }),
     ).toBeVisible();
@@ -134,9 +132,7 @@ for (const width of [1440, 1280, 375]) {
     await expect(
       page.getByRole("tab", { name: /Confirmation/ }),
     ).toHaveAttribute("aria-selected", "true");
-    await expect(
-      page.getByText("confirmed improvement", { exact: true }),
-    ).toBeVisible();
+    await expect(page.getByText(/Holdout correctness delta:/)).toBeVisible();
     await page.screenshot({
       path: `test-results/stage-confirm-${width}.png`,
       fullPage: true,

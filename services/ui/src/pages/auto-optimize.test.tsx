@@ -276,16 +276,16 @@ describe("Auto Optimize", () => {
       );
       expect(text.querySelector("strong")).toBeNull();
       expect(
-        recommendation.getByText(/19 \/ 20 \(95.0%\)/),
-      ).toBeInTheDocument();
+        recommendation.queryByText(/19 \/ 20 \(95.0%\)/),
+      ).not.toBeInTheDocument();
       expect(
         recommendation.getByText(/Model explanation unavailable/),
       ).toBeInTheDocument();
       expect(
-        recommendation.getByText(
+        recommendation.queryByText(
           /Not met: Improvement is statistically confirmed/,
         ),
-      ).toBeInTheDocument();
+      ).not.toBeInTheDocument();
       expect(
         recommendation.getByRole("button", { name: "Open in Benchmark Setup" }),
       ).toBeEnabled();
