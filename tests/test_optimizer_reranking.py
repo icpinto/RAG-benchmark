@@ -48,7 +48,7 @@ def test_retrieval_control_and_seed_suggestions_disable_reranking(raw_tools):
     assert raw_tools.get_search_space()["rerankers"] == ["flashrank", "diversity_mmr"]
     seeds = adaptive.available_candidates(raw_tools, "retrieval")
     assert seeds
-    assert all(c["pipeline"]["query"]["rerankers"] == [{"type": "none"}] for c in seeds)
+    assert all(c["configuration"]["reranker"] == {"type": "none"} for c in seeds)
     with pytest.raises(ValueError, match="outside approved search space"):
         raw_tools.validate_candidate(action["config"])
 
@@ -63,7 +63,10 @@ def test_active_reranker_rejected_before_retrieval_dispatch(raw_tools):
         config["pipeline"]["query"]["rerankers"] = reranker
         with pytest.raises(ValueError):
             adaptive.validate_decision(
-                raw_tools, "retrieval", choose({}, pipeline=config["pipeline"]), False
+                raw_tools,
+                "retrieval",
+                {**choose({}, candidate_id="unlisted"), "pipeline": config["pipeline"]},
+                False,
             )
         with pytest.raises(ValueError):
             raw_tools.run_trial(
@@ -255,9 +258,9 @@ def test_adaptive_answering_inherits_raw_winner_when_reranked_scores_disagree(
             candidate = next(
                 c
                 for c in data["candidates"]
-                if c["pipeline"]["query"]["retrievers"] == [{"type": "bm25"}]
+                if c["configuration"]["retriever"] == {"type": "bm25"}
             )
-            return choose(data, pipeline=candidate["pipeline"])
+            return choose(data, candidate_id=candidate["candidate_id"])
         return stop(data)
 
     raw_tools.model_call = transport(decide, calls)

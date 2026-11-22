@@ -17,7 +17,7 @@ from ragbench_core.optimization.selection import (
 )
 from ragbench_core.optimization.stages import config_summary, configuration_diff
 
-PROMPT_VERSION = "ragbench-react-v1"
+PROMPT_VERSION = "ragbench-react-v2"
 MAX_INPUT_BYTES = 64 * 1024
 INSTRUCTION = (
     "Choose the next RAG experiment from measured tuning evidence. Keep facts separate "
@@ -25,8 +25,9 @@ INSTRUCTION = (
     "from an uncontrolled comparison. Return the supplied decision schema as JSON. "
     "A run requires a nonempty testable hypothesis; a stop requires a reason. "
     "Lessons must cite observed trial IDs and be tentative, supported, or contradicted. "
-    "Respect allowed_actions, fixed stages, and remaining budgets. Never repeat an attempted "
-    "configuration. Native fixed/recursive chunk sizes are characters; LlamaIndex uses native units."
+    "Respect allowed_actions, fixed stages, and remaining budgets. For a run, select a "
+    "candidate_id from candidates; do not compose a pipeline. Native fixed/recursive "
+    "chunk sizes are characters; LlamaIndex uses native units."
 )
 
 
