@@ -9,6 +9,7 @@ import {
   RecommendationEvidence,
   type AcceptanceDecision,
   type RecommendationExplanation,
+  type RecommendationMeasurements,
 } from "./recommendation-evidence";
 import {
   OptimizationHistory,
@@ -90,6 +91,7 @@ interface Planned {
 interface Stage {
   acceptance?: AcceptanceDecision;
   explanation?: RecommendationExplanation;
+  recommendation_evidence?: RecommendationMeasurements;
   planner?: PlannerStatus;
   status: string;
   split: string;
@@ -405,7 +407,10 @@ function Confirmation({
           "promising candidate",
           "baseline retained",
         ].includes(stage.outcome) && <Notice>{stage.outcome}</Notice>}
-      <RecommendationEvidence acceptance={stage.acceptance} />
+      <RecommendationEvidence
+        acceptance={stage.acceptance}
+        evidence={stage.recommendation_evidence}
+      />
       {stage.selected_trial_id && (
         <p>
           Candidate selected from{" "}

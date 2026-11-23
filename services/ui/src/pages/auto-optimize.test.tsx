@@ -11,6 +11,10 @@ import { createMemoryRouter, RouterProvider } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import AutoOptimize from "./auto-optimize";
 import { DraftProvider } from "../hooks/draft";
+import {
+  measuredAcceptance,
+  measuredFixture,
+} from "../test/recommendation-fixture";
 
 const fetchMock = vi.fn();
 const response = (data: unknown) =>
@@ -222,6 +226,45 @@ beforeEach(() => {
   });
 });
 describe("Auto Optimize", () => {
+  it("renders measured evidence and omits the generic limitations for new runs", async () => {
+    overrideFetch((path) =>
+      path.endsWith("/recommendation")
+        ? response({
+            yaml: "experiment: {}",
+            confirmed_improvement: false,
+            baseline_retained: false,
+            acceptance: measuredAcceptance(),
+            explanation: {
+              text: "Recorded correctness: 0.5 baseline to 0.55 candidate (+0.05).",
+              source: "measured",
+              prompt_version: "recommendation-measured-v1",
+            },
+            recommendation_evidence: measuredFixture(),
+            limitations: ["Synthetic reference data is not human gold"],
+          })
+        : undefined,
+    );
+    mount("/auto-optimize/session");
+    await screen.findByRole("heading", { name: "Recommendation" });
+    const recommendation = card("Recommendation");
+    expect(
+      recommendation.getByRole("table", {
+        name: "Recommendation measured comparison",
+      }),
+    ).toBeInTheDocument();
+    expect(
+      recommendation.getByText(
+        /Recorded correctness: 0.5 baseline to 0.55 candidate/,
+      ),
+    ).toBeInTheDocument();
+    expect(
+      recommendation.queryByText("Synthetic reference data is not human gold"),
+    ).not.toBeInTheDocument();
+    expect(
+      recommendation.queryByText(/Model explanation unavailable/),
+    ).not.toBeInTheDocument();
+  });
+
   it.each([
     ["confirmed_improvement", "Confirmed improvement"],
     ["promising_candidate", "Promising candidate"],

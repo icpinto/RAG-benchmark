@@ -225,9 +225,27 @@ Missing measurements fail an applicable operational limit. Decisions use full
 precision; rounded display values do not decide acceptance. Lower cost or latency
 alone does not override equal or lower correctness.
 
-The Recommendation section shows the saved decision and explanation; the
-confirmation dashboard shows coverage, failed or unavailable checks, and detailed
-holdout metrics. A separate call using the planner model explains the result in
+New sessions and forks also record recommendation presentation version 1. Their
+Recommendation section shows a deterministic factual summary and a measured
+baseline/candidate table: paired correctness, claim support, citation support,
+p95 query latency in seconds, and known estimated cost per query in USD. Score
+changes are absolute score units, not percentages of correct answers. The summary
+includes the 95% correctness interval and paired coverage; failed checks include
+their measured values and configured thresholds. Configuration differences are
+expandable. Dataset provenance, tuning/holdout counts, human-review counts, and any
+confirmation stop reason replace the generic limitations. Missing values remain
+unavailable and unknown pricing remains unknown, while measured zeros stay zero.
+
+These sessions do not call a model to explain recommendations. The versioned
+`recommendation_evidence` and explanation (`source: measured`) are saved in the
+report and returned by the recommendation API; the confirmation dashboard shares
+the saved check details. Reads and exports do not regenerate evidence or rerun
+benchmarks. The acceptance policy and recommended YAML are unchanged.
+
+Sessions without a presentation version retain their previous behavior, including
+completed reports. Their Recommendation section shows the saved decision and
+explanation; the confirmation dashboard shows coverage, failed or unavailable
+checks, and detailed holdout metrics. A separate call using the planner model explains the result in
 plain language after acceptance is decided. It receives only
 bounded metrics, checks, and redacted configuration summaries, never questions,
 references, or source passages. The model explains the decision; it cannot change

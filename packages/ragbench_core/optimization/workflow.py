@@ -18,6 +18,7 @@ from ragbench_core.optimization.recommendation import (
     evaluate_acceptance,
     explain_recommendation,
 )
+from ragbench_core.optimization.recommendation_metrics import measured_recommendation
 from ragbench_core.optimization.search import candidate_hash, seed_candidates
 from ragbench_core.optimization.selection import compare_trials
 from ragbench_core.optimization.tools import OptimizationTools
@@ -268,17 +269,22 @@ def step(stage, tools, dispatch):
         state = session["progress"]
         decision = None
         explanation = None
+        evidence = None
         if state.get("recommendation_policy_version", 1) >= POLICY_VERSION:
             decision = state.get("acceptance") or acceptance_decision(tools)
-            # Save the authoritative decision before asking a model to explain it.
+            # Save the authoritative decision before generating its presentation.
             progress(
                 session_id,
                 acceptance=decision,
                 confirmed=decision["outcome"] == "confirmed_improvement",
                 baseline_retained=decision["recommended_source"] == "baseline",
             )
-            explanation = explain_recommendation(tools, decision)
-            progress(session_id, explanation=explanation)
+            if state.get("recommendation_presentation_version"):
+                evidence, explanation = measured_recommendation(tools, decision)
+                progress(session_id, recommendation_evidence=evidence, explanation=explanation)
+            else:
+                explanation = explain_recommendation(tools, decision)
+                progress(session_id, explanation=explanation)
             state = tools.session["progress"]
         baseline_retained = (
             decision["recommended_source"] == "baseline"
@@ -309,6 +315,8 @@ def step(stage, tools, dispatch):
                 recommended_source=decision["recommended_source"],
                 explanation=explanation,
             )
+        if evidence is not None:
+            report["recommendation_evidence"] = evidence
         tools.export_recommendation(report)
         store.update(
             session_id,

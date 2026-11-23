@@ -17,6 +17,7 @@ from ragbench_core.optimization import budget, store
 from ragbench_core.optimization.contracts import DatasetEdit, OptimizationRequest
 from ragbench_core.optimization.datasets import validate_questions
 from ragbench_core.optimization.recommendation import POLICY_VERSION
+from ragbench_core.optimization.recommendation_metrics import PRESENTATION_VERSION
 from ragbench_core.optimization.redaction import public_configuration
 from ragbench_core.optimization.tools import OptimizationTools
 from ragbench_core.utils.config import load_yaml
@@ -188,7 +189,11 @@ def create_optimization(req: OptimizationRequest):
                     id=session_id,
                     request=req.model_dump(),
                     template=template,
-                    progress={"workflow_version": 6, "recommendation_policy_version": POLICY_VERSION},
+                    progress={
+                        "workflow_version": 6,
+                        "recommendation_policy_version": POLICY_VERSION,
+                        "recommendation_presentation_version": PRESENTATION_VERSION,
+                    },
                 )
             )
             conn.add(

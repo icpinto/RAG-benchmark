@@ -18,8 +18,10 @@ import {
 import { DataTable } from "../components/data-table";
 import {
   recommendationLabel,
+  RecommendationResults,
   type AcceptanceDecision,
   type RecommendationExplanation,
+  type RecommendationMeasurements,
 } from "../components/recommendation-evidence";
 import {
   RunConfigurationCard,
@@ -104,6 +106,7 @@ interface DatasetProvenance {
 interface Recommendation {
   acceptance?: AcceptanceDecision;
   explanation?: RecommendationExplanation;
+  recommendation_evidence?: RecommendationMeasurements;
   yaml: string;
   confirmed_improvement: boolean;
   baseline_retained: boolean;
@@ -894,9 +897,16 @@ function OptimizationEditor({ sessionId }: { sessionId?: string }) {
                   recorded checks.
                 </p>
               )}
-              {recommendation.data.limitations.map((text) => (
-                <p key={text}>{text}</p>
-              ))}
+              {recommendation.data.recommendation_evidence && (
+                <RecommendationResults
+                  evidence={recommendation.data.recommendation_evidence}
+                  acceptance={recommendation.data.acceptance}
+                />
+              )}
+              {!recommendation.data.recommendation_evidence &&
+                recommendation.data.limitations.map((text) => (
+                  <p key={text}>{text}</p>
+                ))}
               <div className="actions">
                 <Button
                   onClick={() => {

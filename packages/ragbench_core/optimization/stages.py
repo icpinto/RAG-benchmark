@@ -615,6 +615,8 @@ def stage_dashboard(session, *, redact=lambda value: value):
             baseline_retained=decision["recommended_source"] == "baseline",
             explanation=state.get("explanation"),
         )
+        if state.get("recommendation_evidence"):
+            confirmation["recommendation_evidence"] = deepcopy(state["recommendation_evidence"])
     return {
         "session_id": session_id,
         "workflow_version": state.get("workflow_version", 1),

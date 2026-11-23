@@ -29,6 +29,21 @@ def primary_metric(phase, workflow_version=1):
     return "raw_retrieval_ndcg@10" if workflow_version >= 5 else "reranked_ndcg@10"
 
 
+def operational_metrics(trial, rows):
+    """Use the same observed latency and known-price cost in selection and reports."""
+    p95 = percentile([r["metrics"].get("query_latency_seconds") for r in rows])
+    costs = [r["metrics"].get("total_estimated_cost") for r in rows]
+    known_cost = (
+        all(finite(v) for v in costs)
+        and bool(costs)
+        and trial.get("summary", {}).get("pricing_known", False)
+    )
+    return {
+        "p95_seconds": p95,
+        "cost_per_query": sum(costs) / len(costs) if known_cost else None,
+    }
+
+
 def compare_trials(
     trials, results_by_trial, question_ids, phase, limits, *, workflow_version=1
 ):
@@ -57,16 +72,8 @@ def compare_trials(
     for trial, valid in eligible:
         rows = by_trial[trial["id"]]
         scores = [rows[q]["metrics"][metric] for q in sorted(common)]
-        p95 = percentile(
-            [r["metrics"].get("query_latency_seconds") for r in rows.values()]
-        )
-        costs = [r["metrics"].get("total_estimated_cost") for r in rows.values()]
-        known_cost = (
-            all(finite(v) for v in costs)
-            and bool(costs)
-            and trial.get("summary", {}).get("pricing_known", False)
-        )
-        cost = sum(costs) / len(costs) if known_cost else None
+        operational = operational_metrics(trial, rows.values())
+        p95, cost = operational["p95_seconds"], operational["cost_per_query"]
         violations = []
         if limits.get("max_query_p95_seconds") is not None and (
             p95 is None or p95 > limits["max_query_p95_seconds"]

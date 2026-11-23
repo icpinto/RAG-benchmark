@@ -344,6 +344,7 @@ def test_explanation_failure_preserves_candidate_and_finishes(
     assert report["outcome"] == "promising_candidate"
     assert report["status"] == tools.session["status"] == "completed"
     assert report["explanation"]["source"] == "fallback"
+    assert "recommendation_evidence" not in report
     assert "secret provider diagnostic" not in json.dumps(report)
     assert "not statistically confirmed" in report["explanation"]["text"]
     assert not report["baseline_retained"]

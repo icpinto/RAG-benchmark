@@ -973,7 +973,7 @@ class OptimizationTools:
                 "budget": budget.totals(self.session_id),
                 "profile": self.read("profile.json"),
                 "synthetic_data": True,
-                "limitations": [
+                "limitations": [] if report.get("recommendation_evidence") else [
                     "Synthetic reference data is not human gold",
                     "Best observed within the approved search space and budget",
                     "Results depend on the inferred or supplied question distribution",
