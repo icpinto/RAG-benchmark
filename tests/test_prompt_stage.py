@@ -364,16 +364,20 @@ def test_larger_compiled_prompt_must_fit_evaluation_and_confirmation(tools):
         )
 
 
+@pytest.mark.parametrize("version", [6, 7])
 def test_async_evaluation_replay_does_not_replenish_consumed_reservations(
-    tools, monkeypatch
+    tools, monkeypatch, version
 ):
     from ragbench_core.optimization.prompt_stage import credit
 
     from services.worker.app import prompt_tasks
 
     configure(tools, 1)
+    progress(tools.session_id, workflow_version=version)
     prepare(tools)
     progress(tools.session_id, selected_config=tools.baseline(), selected_trial_id=None)
+    if version == 7:
+        progress(tools.session_id, answer_screening_complete=True)
     jobs, dispatched = [], []
     monkeypatch.setattr(
         prompt_tasks.compile_prompt_job,
@@ -401,7 +405,8 @@ def test_async_evaluation_replay_does_not_replenish_consumed_reservations(
             )
 
     graph, config = graph_for(tools, dispatch)
-    graph.invoke({"session_id": tools.session_id, "stage": "prompt"}, config)
+    phase = "answer" if version == 7 else "prompt"
+    graph.invoke({"session_id": tools.session_id, "stage": phase}, config)
     assert len(dispatched) == 1 and not jobs
     complete(tools, dispatched[0]["id"], 0.5)
     graph.invoke(Command(resume=True), config)
@@ -437,11 +442,12 @@ def test_async_evaluation_replay_does_not_replenish_consumed_reservations(
     complete(tools, dispatched[1]["id"], 0.9)
     graph.invoke(Command(resume=True), config)
     assert tools.session["status"] == "completed"
-    assert len([t for t in dispatched if t["phase"] == "prompt"]) == 2
-    assert tools.session["progress"]["selected_phase"] == "prompt"
+    assert len([t for t in dispatched if t["phase"] == phase]) == 2
+    assert tools.session["progress"]["selected_phase"] == phase
 
 
-def test_prompt_worker_budget_failure_does_not_stop_later_recipes(tools, monkeypatch):
+@pytest.mark.parametrize("version", [6, 7])
+def test_prompt_worker_budget_failure_does_not_stop_later_recipes(tools, monkeypatch, version):
     from types import SimpleNamespace
 
     from ragbench_core.engine import runner
@@ -451,11 +457,14 @@ def test_prompt_worker_budget_failure_does_not_stop_later_recipes(tools, monkeyp
     from services.worker.app import optimization_tasks
 
     configure(tools, 1)
+    progress(tools.session_id, workflow_version=version)
     prepare(tools)
     progress(tools.session_id, answer_winner_config=tools.baseline())
+    if version == 7:
+        progress(tools.session_id, answer_screening_complete=True)
     result = tools.run_trial(
         TrialRequest(
-            session_id=tools.session_id, config=tools.baseline(), phase="prompt"
+            session_id=tools.session_id, config=tools.baseline(), phase="answer" if version == 7 else "prompt"
         ),
         lambda _: None,
     )

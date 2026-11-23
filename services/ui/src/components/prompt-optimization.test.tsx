@@ -30,6 +30,9 @@ it("enables the default preset and preserves selected compilation order", () => 
   render(<Harness />);
   fireEvent.click(screen.getByLabelText("Enable DSPy compilation"));
   expect(settings.configs[0].preset).toBe("mipro_zero_shot_v1");
+  fireEvent.change(screen.getByLabelText("Auto Optimize answer shortlist"), {
+    target: { value: "3" },
+  });
   fireEvent.click(screen.getByLabelText("gepa_light_v1"));
   expect(settings.configs.map((c) => c.preset)).toEqual([
     "mipro_zero_shot_v1",
@@ -37,6 +40,7 @@ it("enables the default preset and preserves selected compilation order", () => 
   ]);
   fireEvent.click(screen.getByRole("button", { name: "Move earlier" }));
   expect(settings.configs[0].preset).toBe("gepa_light_v1");
+  expect(settings.answer_shortlist_size).toBe(3);
 });
 
 it("marks invalid advanced configuration JSON before compilation", () => {

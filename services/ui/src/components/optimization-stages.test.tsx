@@ -233,6 +233,45 @@ beforeEach(() => {
   });
 });
 
+it("keeps DSPy refinement and recipe lineage in answering for version seven", async () => {
+  const data = dashboard();
+  data.workflow_version = 7;
+  data.stages.answer.refinement = {
+    status: "running",
+    shortlist: [{ trial_id: "answer-best", parent_hash: "parent" }],
+    reason: "Budget fits 1 of 2 requested answer pipelines",
+    budget_required: { tokens: 2000000, seconds: 900, cost: null },
+    plan: [
+      {
+        candidate_hash: "compiled",
+        variant: "dspy:mipro_zero_shot_v1",
+        source_trial_id: null,
+        parent_answer_trial_id: "answer-best",
+        scheduled: true,
+        trial_id: null,
+        status: "failed",
+        error: "Model timeout",
+      },
+    ],
+  };
+  fetchMock.mockImplementation(() => response(data));
+  mount("/auto-optimize/session?stage=prompt", "running");
+  expect(
+    await screen.findByRole("heading", { name: "DSPy prompt refinement" }),
+  ).toBeVisible();
+  expect(screen.getAllByRole("tab")).toHaveLength(3);
+  expect(screen.getByRole("tab", { name: /Answering/ })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  expect(screen.queryByRole("tab", { name: /DSPy/ })).not.toBeInTheDocument();
+  expect(
+    screen.getByText("Budget fits 1 of 2 requested answer pipelines"),
+  ).toBeVisible();
+  expect(screen.getByText("Model timeout")).toBeVisible();
+  expect(screen.getAllByText("answer-best").length).toBeGreaterThan(0);
+});
+
 it("shows ordered DSPy recipes, protected capacity, and failures in version six", async () => {
   const data = dashboard();
   data.workflow_version = 6;

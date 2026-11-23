@@ -1,4 +1,4 @@
-"""Workflow v6: protected, ordered prompt compilation after answer search."""
+"""Protected DSPy refinement: a v6 stage or part of v7 answering."""
 
 from copy import deepcopy
 
@@ -22,6 +22,22 @@ def enabled(tools):
 
 def credit(tools, index, kind):
     return f"{tools.session_id}:prompt:{index}:{kind}"
+
+
+def integrated(tools):
+    return tools.session["progress"].get("workflow_version", 1) >= 7
+
+
+def refinement_entry(tools, config):
+    return next(
+        (
+            e
+            for e in tools.session["progress"].get("prompt_plan", [])
+            if e.get("artifact_id")
+            and candidate_hash(e["config"]) == candidate_hash(config)
+        ),
+        None,
+    )
 
 
 def estimate(tools, config):
@@ -62,35 +78,56 @@ def prepare(tools):
     config["pipeline"]["query"]["context_assemblers"][0]["max_context_chars"] = 24000
     tokens, cost, _ = estimate(tools, config)
     seconds = min(300, tools.session["request"]["limits"]["active_seconds"] // 8)
-    requirements = []
-    for index, recipe in enumerate(
-        tools.session["request"]["prompt_optimization"]["configs"]
-    ):
-        limits = recipe["limits"]
-        requirements.extend(
-            [
-                (
-                    credit(tools, index, "compile"),
-                    limits["max_tokens"],
-                    limits["max_cost"],
-                    limits["max_seconds"],
-                ),
-                (credit(tools, index, "evaluate"), tokens, cost, seconds),
-            ]
+    settings = tools.session["request"]["prompt_optimization"]
+    recipes = settings["configs"]
+    requested = settings.get("answer_shortlist_size", 2) if integrated(tools) else 1
+    for slots in range(requested, 0, -1):
+        requirements = []
+        for parent in range(slots):
+            for index, recipe in enumerate(recipes):
+                index += parent * len(recipes)
+                limits = recipe["limits"]
+                requirements.extend(
+                    [
+                        (
+                            credit(tools, index, "compile"),
+                            limits["max_tokens"],
+                            limits["max_cost"],
+                            limits["max_seconds"],
+                        ),
+                        (credit(tools, index, "evaluate"), tokens, cost, seconds),
+                    ]
+                )
+        # Protect a control if discretionary answer screening cannot finish.
+        requirements.append(
+            (credit(tools, "control", "evaluate"), tokens, cost, seconds)
         )
-    # Also protect a control evaluation if answer search cannot complete one.
-    requirements.append((credit(tools, "control", "evaluate"), tokens, cost, seconds))
-    needed = {
-        "tokens": sum(r[1] for r in requirements),
-        "seconds": sum(r[3] for r in requirements),
-        "cost": sum(r[2] for r in requirements)
-        if all(r[2] is not None for r in requirements)
-        else None,
-    }
-    progress(tools.session_id, prompt_budget_required=needed)
-    # reserve_batch is atomic: infeasible preflight never leaves partial holds.
-    budget.reserve_batch(tools.session_id, requirements, "reserved_prompt")
-    progress(tools.session_id, prompt_budget_ready=True)
+        needed = {
+            "tokens": sum(r[1] for r in requirements),
+            "seconds": sum(r[3] for r in requirements),
+            "cost": sum(r[2] for r in requirements)
+            if all(r[2] is not None for r in requirements)
+            else None,
+        }
+        progress(tools.session_id, prompt_budget_required=needed)
+        try:
+            # Atomic: trying a smaller shortlist never leaves partial holds.
+            budget.reserve_batch(tools.session_id, requirements, "reserved_prompt")
+        except budget.BudgetExhausted:
+            if slots == 1:
+                raise
+            continue
+        progress(
+            tools.session_id,
+            prompt_budget_ready=True,
+            prompt_parent_slots=slots,
+            prompt_shortlist_reason=(
+                f"Budget fits {slots} of {requested} requested answer pipelines"
+                if slots < requested
+                else None
+            ),
+        )
+        break
 
 
 def release(tools, index):
@@ -120,13 +157,17 @@ def ranking(tools):
     trials = [
         t
         for t in store.rows(store.OptimizationTrial, tools.session_id)
-        if t["status"] == "completed" and (t["phase"] == "prompt" or t["id"] == control)
+        if t["status"] == "completed"
+        and (
+            t["phase"] == ("answer" if integrated(tools) else "prompt")
+            or t["id"] == control
+        )
     ]
     return compare_trials(
         trials,
         {t["id"]: store.db.list_results(t["id"]) for t in trials},
         state["prompt_splits"]["validation"],
-        "prompt",
+        "answer" if integrated(tools) else "prompt",
         tools.session["request"]["limits"],
     )
 
@@ -140,39 +181,89 @@ def search(tools, dispatch, wait_for_trial):
     state = tools.session["progress"]
     if "prompt_plan" not in state:
         parent = deepcopy(state.get("selected_config") or tools.baseline())
-        seed = seed_prompt(parent)
         parent_id = state.get("selected_trial_id")
+        parents = [{"trial_id": parent_id, "config": parent}]
+        if integrated(tools):
+            trials = {
+                t["id"]: t
+                for t in store.rows(store.OptimizationTrial, tools.session_id)
+            }
+            parents, seen = [], set()
+            for row in state.get("answer_ranking", []):
+                if not row["feasible"]:
+                    continue
+                trial = trials[row["trial_id"]]
+                identity = deepcopy(trial["config"])
+                identity["pipeline"]["query"]["prompt_builders"] = []
+                key = candidate_hash(identity)
+                if key in seen:
+                    continue
+                seen.add(key)
+                parents.append(
+                    {"trial_id": trial["id"], "config": deepcopy(trial["config"])}
+                )
+                if len(parents) >= state.get("prompt_parent_slots", 1):
+                    break
+            if not parents:
+                parents = [{"trial_id": parent_id, "config": parent}]
+        recipes = tools.session["request"]["prompt_optimization"]["configs"]
         queue = [
             {
                 "recipe_index": i,
+                "budget_index": slot * len(recipes) + i,
+                "parent_slot": slot,
                 "variant": "dspy:" + (recipe.get("preset") or recipe["optimizer"]),
                 "source_trial_id": None,
-                "parent_answer_trial_id": parent_id,
-                "parent_hash": candidate_hash(parent),
-                "candidate_hash": candidate_hash(parent),
-                "config": deepcopy(parent),
-                "seed_prompt": deepcopy(seed),
-                "compilation_credit": credit(tools, i, "compile"),
+                "parent_answer_trial_id": item["trial_id"],
+                "parent_hash": candidate_hash(item["config"]),
+                "candidate_hash": candidate_hash(item["config"]),
+                "config": deepcopy(item["config"]),
+                "seed_prompt": seed_prompt(item["config"]),
+                "compilation_credit": credit(tools, slot * len(recipes) + i, "compile"),
+                "evaluation_credit": credit(tools, slot * len(recipes) + i, "evaluate"),
                 "compilation_status": "planned",
                 "confirmation_reserved": True,
                 "scheduled": True,
                 "status": "planned",
             }
-            for i, recipe in enumerate(
-                tools.session["request"]["prompt_optimization"]["configs"]
-            )
+            for slot, item in enumerate(parents)
+            for i, recipe in enumerate(recipes)
         ]
+        for unused in range(
+            len(parents) * len(recipes),
+            state.get("prompt_parent_slots", 1) * len(recipes),
+        ):
+            release(tools, unused)
         progress(
             tools.session_id,
             answer_winner_config=parent,
             answer_winner_trial_id=parent_id,
             prompt_plan=queue,
             prompt_status="running",
+            **(
+                {
+                    "answer_shortlist": [
+                        {
+                            "trial_id": item["trial_id"],
+                            "parent_hash": candidate_hash(item["config"]),
+                        }
+                        for item in parents
+                    ],
+                    "answer_subphase": "prompt_refinement",
+                }
+                if integrated(tools)
+                else {}
+            ),
         )
     state = tools.session["progress"]
     control = state.get("answer_winner_trial_id")
     if control is None:
-        trial = wait_for_trial(tools, state["answer_winner_config"], "prompt", dispatch)
+        trial = wait_for_trial(
+            tools,
+            state["answer_winner_config"],
+            "answer" if integrated(tools) else "prompt",
+            dispatch,
+        )
         control = trial["id"]
     progress(tools.session_id, prompt_control_trial_id=control)
     release(tools, "control")
@@ -183,7 +274,7 @@ def search(tools, dispatch, wait_for_trial):
 
     for entry in queue:
         if entry["status"] in {"completed", "failed", "budget_exhausted", "cancelled"}:
-            release(tools, entry["recipe_index"])
+            release(tools, entry.get("budget_index", entry["recipe_index"]))
             continue
         entry["status"] = "evaluating" if entry.get("evaluation_ready") else "compiling"
         save()
@@ -210,7 +301,8 @@ def search(tools, dispatch, wait_for_trial):
                     tokens, cost, _ = estimate(tools, entry["config"])
                     budget.extend_reservation(
                         tools.session_id,
-                        credit(tools, entry["recipe_index"], "evaluate"),
+                        entry.get("evaluation_credit")
+                        or credit(tools, entry["recipe_index"], "evaluate"),
                         tokens,
                         cost,
                     )
@@ -218,7 +310,12 @@ def search(tools, dispatch, wait_for_trial):
                     entry["evaluation_ready"] = True
                 entry["status"] = "evaluating"
                 save()
-                trial = wait_for_trial(tools, entry["config"], "prompt", dispatch)
+                trial = wait_for_trial(
+                    tools,
+                    entry["config"],
+                    "answer" if integrated(tools) else "prompt",
+                    dispatch,
+                )
                 entry.update(
                     trial_id=trial["id"],
                     status="completed"
@@ -246,7 +343,7 @@ def search(tools, dispatch, wait_for_trial):
                 error=f"Prompt recipe failed ({type(exc).__name__}); inspect worker logs",
             )
         save()
-        release(tools, entry["recipe_index"])
+        release(tools, entry.get("budget_index", entry["recipe_index"]))
     ranked = ranking(tools)
     winner = next((r for r in ranked if r["feasible"]), None)
     unchanged = next(
@@ -277,5 +374,10 @@ def search(tools, dispatch, wait_for_trial):
         selected_phase=trials[selected_id]["phase"]
         if selected_id in trials
         else "answer",
+        **(
+            {"answer_ranking": ranked, "answer_subphase": "completed"}
+            if integrated(tools)
+            else {}
+        ),
     )
     return "confirm"

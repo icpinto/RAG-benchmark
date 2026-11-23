@@ -19,6 +19,7 @@ export interface PromptRecipe {
 }
 export interface PromptSettings {
   configs: PromptRecipe[];
+  answer_shortlist_size?: number;
 }
 const presetIds = [
   "bootstrap_small_v1",
@@ -60,7 +61,10 @@ export function PromptOptimizerSettings({
           type="checkbox"
           checked={enabled}
           onChange={(e) =>
-            change({ configs: e.target.checked ? [defaultRecipe()] : [] })
+            change({
+              ...value,
+              configs: e.target.checked ? [defaultRecipe()] : [],
+            })
           }
         />
         Enable DSPy compilation
@@ -68,10 +72,32 @@ export function PromptOptimizerSettings({
       {enabled && (
         <>
           <p>
-            Choose reusable presets. In new Auto Optimize runs, each recipe runs
-            after answer optimization, in the order below, starting from the
-            same answer winner. Compilation and evaluation reserve part of the
+            Choose reusable presets. Auto Optimize refines a shortlist within
+            answering, running each recipe independently from each pipeline's
+            original prompt. Compilation and evaluation reserve part of the
             session budget. Manual compilation uses the selected pipeline.
+          </p>
+          <label>
+            Auto Optimize answer shortlist
+            <select
+              value={value.answer_shortlist_size ?? 2}
+              onChange={(e) =>
+                change({
+                  ...value,
+                  answer_shortlist_size: Number(e.target.value),
+                })
+              }
+            >
+              <option value={1}>1 pipeline</option>
+              <option value={2}>2 pipelines</option>
+              <option value={3}>3 pipelines</option>
+            </select>
+          </label>
+          <p>
+            Select distinct feasible context and reranker configurations. The
+            shortlist shrinks if the protected session budget cannot fit it.
+            Answer trials limit screening; recipe evaluations use reserved
+            capacity.
           </p>
           {presetIds.map((id) => (
             <label className="check-row" key={id}>
@@ -80,6 +106,7 @@ export function PromptOptimizerSettings({
                 checked={value.configs.some((c) => c.preset === id)}
                 onChange={(e) =>
                   change({
+                    ...value,
                     configs: e.target.checked
                       ? [...value.configs, { ...defaultRecipe(), preset: id }]
                       : value.configs.filter((c) => c.preset !== id),
@@ -103,7 +130,7 @@ export function PromptOptimizerSettings({
                         configs[index],
                         configs[index - 1],
                       ];
-                      change({ configs });
+                      change({ ...value, configs });
                     }}
                   >
                     Move earlier

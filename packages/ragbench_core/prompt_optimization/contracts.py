@@ -163,6 +163,7 @@ class PromptOptimizationConfig(Contract):
 
 class PromptOptimizationSettings(Contract):
     configs: list[PromptOptimizationConfig] = Field(default_factory=list, max_length=12)
+    answer_shortlist_size: int = Field(default=2, ge=1, le=3)
 
     def validate_policy(self, allow_hosted, monetary_cap=None):
         for config in self.configs:

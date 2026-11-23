@@ -683,7 +683,7 @@ def test_api_queue_failure_records_failed_session(
     with db.SessionLocal() as conn:
         row = conn.execute(store.select(store.OptimizationSession)).scalar_one()
         assert row.status == "failed" and row.error == "Queue submission failed"
-        assert row.progress["workflow_version"] == 6
+        assert row.progress["workflow_version"] == 7
         assert row.progress["recommendation_policy_version"] == 2
 
 

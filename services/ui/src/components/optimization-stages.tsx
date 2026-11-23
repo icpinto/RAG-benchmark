@@ -87,6 +87,7 @@ interface Planned {
   error?: unknown;
   compilation_job_id?: string;
   artifact_id?: string;
+  parent_answer_trial_id?: string | null;
 }
 interface Stage {
   acceptance?: AcceptanceDecision;
@@ -111,6 +112,14 @@ interface Stage {
   selected_phase?: Phase;
   parent_answer_trial_id?: string | null;
   budget_required?: { tokens: number; seconds: number; cost: number | null };
+  refinement?: {
+    status: string;
+    plan: Planned[];
+    shortlist: { trial_id: string | null; parent_hash: string }[];
+    parent_slots?: number;
+    reason?: string | null;
+    budget_required?: { tokens: number; seconds: number; cost: number | null };
+  };
   baseline_retained?: boolean;
   configuration_differences?: Change[];
   comparison?: {
@@ -717,17 +726,19 @@ export function OptimizationStages({
   const [search, setSearch] = useSearchParams();
   const query = useOptimizationDashboard(sessionId, status);
   const phases: Phase[] =
-    (query.data?.workflow_version ?? 1) >= 6
+    query.data?.workflow_version === 6
       ? ["retrieval", "answer", "prompt", "confirm"]
       : legacyPhases;
   const requested = search.get("stage");
   const phase: Phase = phases.includes(requested as Phase)
     ? (requested as Phase)
-    : phases.includes(currentStage as Phase)
-      ? (currentStage as Phase)
-      : ["export", "done"].includes(currentStage)
-        ? "confirm"
-        : "retrieval";
+    : requested === "prompt" && (query.data?.workflow_version ?? 1) >= 7
+      ? "answer"
+      : phases.includes(currentStage as Phase)
+        ? (currentStage as Phase)
+        : ["export", "done"].includes(currentStage)
+          ? "confirm"
+          : "retrieval";
   const active = ![
     "completed",
     "failed",
@@ -925,6 +936,51 @@ export function OptimizationStages({
                   }))}
                 />
               </details>
+            )}
+            {phase === "answer" && stage.refinement && (
+              <>
+                <h3>DSPy prompt refinement</h3>
+                <p>
+                  DSPy refinement:{" "}
+                  <strong>
+                    {stage.refinement.status.replaceAll("_", " ")}
+                  </strong>
+                  . Screen answer configurations, then compile each selected
+                  recipe for the best distinct feasible pipelines. Original and
+                  compiled pipelines compete on the same validation questions.
+                </p>
+                <p>
+                  Shortlisted pipelines: {stage.refinement.shortlist.length}.{" "}
+                  Recipe evaluations use protected capacity beyond the screening
+                  trial cap.
+                </p>
+                {stage.refinement.reason && (
+                  <Notice>{stage.refinement.reason}</Notice>
+                )}
+                {stage.refinement.budget_required && (
+                  <p>
+                    Protected DSPy capacity:{" "}
+                    {stage.refinement.budget_required.tokens.toLocaleString()}{" "}
+                    tokens;{" "}
+                    {stage.refinement.budget_required.seconds.toLocaleString()}{" "}
+                    seconds. Confirmation is reserved separately.
+                  </p>
+                )}
+                {!!stage.refinement.plan.length && (
+                  <DataTable
+                    name="answer-dspy-refinement"
+                    rows={stage.refinement.plan.map((entry) => ({
+                      parent_answer_trial:
+                        entry.parent_answer_trial_id ?? "Baseline control",
+                      recipe: entry.variant,
+                      status: entry.status.replaceAll("_", " "),
+                      compilation: entry.compilation_job_id ?? "Not queued",
+                      trial: entry.trial_id ?? "Not evaluated",
+                      reason: entry.error ? describe(entry.error) : "",
+                    }))}
+                  />
+                )}
+              </>
             )}
             {phase === "prompt" && (
               <>

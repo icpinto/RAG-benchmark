@@ -202,7 +202,10 @@ def run_optimization_trial(run_id):
         with store.locked(session_id) as (conn, session):
             row = conn.get(store.OptimizationTrial, run_id)
             row.status, row.summary = "failed", {"error": str(exc), "budget_exhausted": True}
-            if not (session.progress.get("workflow_version", 1) >= 6 and row.phase == "prompt"):
+            protected_refinement = (
+                session.progress.get("workflow_version", 1) == 6 and row.phase == "prompt"
+            ) or bool(row.config.get("_optimization", {}).get("answer_refinement"))
+            if not protected_refinement:
                 session.progress = {**session.progress, "stop_reason": str(exc)}
     except Exception as exc:  # noqa: BLE001 -- isolate provider/plugin/queue failures at the service boundary.
         with store.locked(session_id) as (conn, _):

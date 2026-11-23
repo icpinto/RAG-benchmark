@@ -6,8 +6,8 @@ the same benchmark engine.
 
 ## Adaptive experiment loop
 
-New sessions and forks use workflow version 6. Existing sessions retain versions
-1–5, including their saved queues and ranking policies. Startup creates the additive
+New sessions and forks use workflow version 7. Existing sessions retain versions
+1–6, including their saved queues and ranking policies. Startup creates the additive
 `optimization_iterations` table; rebuild the API, worker, optimizer, scheduler,
 and UI to activate the new workflow. No existing runs are converted.
 
@@ -25,16 +25,21 @@ are suggestions, rather than an automatically executed batch.
 
 The answer planner chooses from approved prompt presets, context/compression variants,
 and rerankers. The trial cap limits execution, not the catalog, and the planner can
-stop search early. DSPy is a separate opt-in stage after answering: every selected
-recipe runs in order from the same frozen answer winner, including its prompt.
-Only instructions and demonstrations change. Recipe failures do not prevent later
-recipes from running. The unchanged winner and compiled candidates are compared on
-the same validation questions before the selected pipeline enters confirmation.
-Versions 4–5 retain planner-selected DSPy recipes in their answer stage.
+stop search early. Optional DSPy refinement is part of answering. After screening,
+the best two feasible pipelines with distinct context, compression, or reranker
+settings are shortlisted (configurable from one to three). Each selected recipe
+independently starts from each parent's original prompt and actual retrieved
+contexts. Only instructions and demonstrations change. All original answer trials
+and successful compiled candidates compete on the same validation questions before
+the exact selected pipeline enters confirmation. Recipe failures do not prevent
+later recipes or parents from running. Version 6 retains its separate DSPy stage;
+versions 4–5 retain planner-selected DSPy recipes in answering.
 
 Before retrieval, enabled DSPy runs split tuning questions into training and validation
 by independent evidence groups. Compilation allowances, candidate evaluations, and
-confirmation are protected from discretionary search. Infeasible reservations require
+confirmation are protected from discretionary search. Shortlist capacity is reduced
+before search if its reservations cannot fit, with the reason saved and displayed.
+Infeasible single-parent reservations require
 input before search starts; increase session limits or reduce recipe allowances in a
 new run. Search exhaustion hands off to protected stages. Compiled prompts must still
 fit enlarged evaluation and confirmation estimates. Monetary-capped sessions require
@@ -139,11 +144,12 @@ new session rather than reusing an old holdout for tuning.
 
 ### Stage dashboards
 
-New optimizations have four linked tabs. Share a view using
-`/auto-optimize/{id}?stage=retrieval`, `?stage=answer`, `?stage=prompt`, or `?stage=confirm`.
-Historical sessions retain three tabs. The DSPy tab explains disabled and waiting
-states and shows ordered recipe outcomes, protected capacity, parent lineage,
-compilation history, and validation comparisons.
+New optimizations have three linked tabs. Share a view using
+`/auto-optimize/{id}?stage=retrieval`, `?stage=answer`, or `?stage=confirm`.
+Answering includes DSPy refinement status, shortlist and recipe outcomes, protected
+capacity, parent lineage, compilation history, and validation comparisons. Old
+`?stage=prompt` links select answering for version 7. Historical version-6 sessions
+retain their separate DSPy tab; earlier sessions retain three tabs.
 The selected tab survives polling and reloads; active dashboards refresh every
 three seconds and fetch a final update when the session finishes.
 

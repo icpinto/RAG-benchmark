@@ -110,7 +110,9 @@ def build_graph(checkpointer, dispatch, tools_factory=OptimizationTools):
                     return {"stage": "export"}
                 next_stage = step(stage, tools, dispatch)
             except budget.BudgetExhausted as exc:
-                if session["progress"].get("workflow_version", 1) >= 6 and stage in {"retrieval", "answer"}:
+                if session["progress"].get("workflow_version", 1) >= 6 and stage in {"retrieval", "answer"} and not (
+                    stage == "answer" and tools.session["progress"].get("answer_screening_complete")
+                ):
                     from ragbench_core.optimization.adaptive import (
                         capture_pending_terminal,
                         finish_phase,
@@ -404,6 +406,15 @@ def search_retrieval(tools, dispatch):
 
 
 def search_answers(tools, dispatch):
+    if tools.session["progress"].get("workflow_version", 1) >= 7:
+        from ragbench_core.optimization.adaptive import search
+        from ragbench_core.optimization.prompt_stage import search as refine
+
+        if not tools.session["progress"].get("answer_screening_complete"):
+            next_stage = search(tools, "answer", dispatch, wait_for_trial)
+            if not tools.session["progress"].get("answer_screening_complete"):
+                return next_stage
+        return refine(tools, dispatch, wait_for_trial)
     if tools.session["progress"].get("workflow_version", 1) >= 4:
         from ragbench_core.optimization.adaptive import search
         return search(tools, "answer", dispatch, wait_for_trial)

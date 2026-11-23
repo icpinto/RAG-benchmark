@@ -680,9 +680,22 @@ class OptimizationTools:
     def run_trial(self, request: TrialRequest, dispatch):
         if request.session_id != self.session_id:
             raise ValueError("Trial belongs to another session")
+        state = self.session["progress"]
+        integrated_refinement = (
+            state.get("workflow_version", 1) >= 7
+            and request.phase == "answer" and state.get("answer_screening_complete", False)
+        )
+        refinement = None
+        if integrated_refinement:
+            from ragbench_core.optimization.prompt_stage import refinement_entry
+            refinement = refinement_entry(self, request.config)
+            if refinement is None and candidate_hash(request.config) != candidate_hash(
+                state.get("answer_winner_config") or self.baseline()
+            ):
+                raise ValueError("Answer refinement requires an approved compiled candidate or unchanged control")
         if request.phase == "prompt":
             parent = self.session["progress"].get("answer_winner_config")
-            if self.session["progress"].get("workflow_version", 1) < 6 or parent is None:
+            if self.session["progress"].get("workflow_version", 1) != 6 or parent is None:
                 raise ValueError("Prompt trials require a frozen version-six answer winner")
             pipeline = deepcopy(request.config["pipeline"])
             pipeline["query"]["prompt_builders"] = deepcopy(parent["pipeline"]["query"]["prompt_builders"])
@@ -767,6 +780,9 @@ class OptimizationTools:
             "session_id": self.session_id,
             "trial_id": run_id,
             "split": request.split,
+            **({"answer_refinement": True,
+                "parent_answer_trial_id": refinement.get("parent_answer_trial_id") if refinement else None}
+               if integrated_refinement else {}),
         }
         estimate, cost, _ = budget.trial_estimate(
             config,
@@ -776,6 +792,9 @@ class OptimizationTools:
         )
         initial_operation = self.session_id + ":trial:" + run_id + ":initial"
         trial_credit = self.session_id + ":holdout" if request.phase == "confirm" else None
+        if integrated_refinement:
+            from ragbench_core.optimization.prompt_stage import credit
+            trial_credit = refinement["evaluation_credit"] if refinement else credit(self, "control", "evaluate")
         if request.phase == "prompt":
             from ragbench_core.optimization.prompt_stage import credit
             entry = next((e for e in self.session["progress"].get("prompt_plan", [])
@@ -789,13 +808,13 @@ class OptimizationTools:
             estimate,
             cost,
             seconds=min(300, self.session["request"]["limits"]["active_seconds"] // 8)
-            if request.phase in {"confirm", "prompt"}
+            if request.phase in {"confirm", "prompt"} or integrated_refinement
             else 0,
             credit=trial_credit,
         )
         config["_optimization"]["budget_operation"] = initial_operation
         with store.locked(self.session_id) as (conn, session):
-            count = len(
+            phase_trials = (
                 conn.execute(
                     store.select(store.OptimizationTrial).where(
                         store.OptimizationTrial.session_id == self.session_id,
@@ -805,9 +824,15 @@ class OptimizationTools:
                 .scalars()
                 .all()
             )
+            count = sum(
+                bool(t.config.get("_optimization", {}).get("answer_refinement")) == bool(integrated_refinement)
+                for t in phase_trials
+            )
             maximum = (
                 2
                 if request.phase == "confirm"
+                else len(session.progress.get("prompt_plan", [])) + 1
+                if integrated_refinement
                 else len(session.request["prompt_optimization"]["configs"]) + 1
                 if request.phase == "prompt"
                 else session.request["limits"][
@@ -959,6 +984,9 @@ class OptimizationTools:
                     "prompt_ranking": session["progress"].get("prompt_ranking", []),
                     "prompt_budget_required": session["progress"].get("prompt_budget_required"),
                     "answer_winner_trial_id": session["progress"].get("answer_winner_trial_id"),
+                    "answer_shortlist": session["progress"].get("answer_shortlist", []),
+                    "prompt_parent_slots": session["progress"].get("prompt_parent_slots"),
+                    "prompt_shortlist_reason": session["progress"].get("prompt_shortlist_reason"),
                     "selected_phase": session["progress"].get("selected_phase", "answer")}
                    if version >= 6 else {}),
             }

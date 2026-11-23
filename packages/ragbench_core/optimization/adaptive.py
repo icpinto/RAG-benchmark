@@ -700,7 +700,11 @@ def finish_phase(tools, phase):
         selected_config=tools.validate_candidate(config),
         selected_trial_id=winner["trial_id"] if winner else None,
     )
-    return "prompt" if tools.session["progress"].get("workflow_version", 1) >= 6 else "confirm"
+    version = tools.session["progress"].get("workflow_version", 1)
+    if version >= 7:
+        progress(tools.session_id, answer_screening_complete=True)
+        return "answer"
+    return "prompt" if version >= 6 else "confirm"
 
 
 def stop_planning(tools, status, reason):

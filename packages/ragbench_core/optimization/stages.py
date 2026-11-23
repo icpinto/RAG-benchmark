@@ -263,7 +263,7 @@ def stage_dashboard(session, *, redact=lambda value: value):
         or session["stage"] in {"answer", "confirm", "export", "done"}
     )
     sections = {}
-    phases = ("retrieval", "answer", "prompt", "confirm") if state.get("workflow_version", 1) >= 6 else PHASES
+    phases = ("retrieval", "answer", "prompt", "confirm") if state.get("workflow_version", 1) == 6 else PHASES
     for phase in phases:
         split = "holdout" if phase == "confirm" else "tuning"
         phase_trials = [t for t in trials if t["phase"] == phase]
@@ -357,7 +357,15 @@ def stage_dashboard(session, *, redact=lambda value: value):
                     "Best feasible complete pipeline on matched tuning questions"
                 )
             if phase == "answer" and trial["id"] == state.get("answer_winner_trial_id"):
-                roles.append("answer stage winner")
+                roles.append("screening control" if state.get("workflow_version", 1) >= 7 else "answer stage winner")
+            refinement = next((e for e in state.get("prompt_plan", [])
+                               if e.get("trial_id") == trial["id"]), None)
+            if phase == "answer" and state.get("workflow_version", 1) >= 7:
+                if any(e["trial_id"] == trial["id"] for e in state.get("answer_shortlist", [])):
+                    roles.append("DSPy parent")
+                if refinement:
+                    roles.append("DSPy refined")
+                    reasons.append("Compiled prompt evaluated on the shared answer-validation partition")
             if (
                 phase == "confirm"
                 and selected_config
@@ -432,7 +440,7 @@ def stage_dashboard(session, *, redact=lambda value: value):
                     "roles": roles,
                     "selection_reasons": reasons,
                     "source_trial_id": sources[trial["id"]],
-                    "source_answer_trial_id": state.get("answer_winner_trial_id") if phase == "prompt" else selected_id
+                    "source_answer_trial_id": refinement.get("parent_answer_trial_id") if phase == "answer" and refinement else state.get("answer_winner_trial_id") if phase == "prompt" else selected_id
                     if phase == "confirm" and "holdout candidate" in roles
                     else None,
                     "source_answer_phase": state.get("selected_phase", "answer") if phase == "confirm" else "answer",
@@ -512,7 +520,7 @@ def stage_dashboard(session, *, redact=lambda value: value):
         for entry in plan
     ]
     sections["answer"].update(plan=plan, selected_trial_id=selected_id)
-    if state.get("workflow_version", 1) >= 6:
+    if state.get("workflow_version", 1) == 6:
         sections["answer"]["selected_trial_id"] = state.get("answer_winner_trial_id") or selected_id
         prompt_status = state.get("prompt_status", sections["prompt"]["status"])
         if not session["request"].get("prompt_optimization", {}).get("configs"):
@@ -528,19 +536,32 @@ def stage_dashboard(session, *, redact=lambda value: value):
             selected_trial_id=selected_id,
             budget_required=state.get("prompt_budget_required"),
         )
+    if state.get("workflow_version", 1) >= 7:
+        sections["answer"]["refinement"] = {
+            "status": state.get("prompt_status", "waiting for screening")
+            if session["request"].get("prompt_optimization", {}).get("configs") else "disabled",
+            "plan": [{k: v for k, v in e.items() if k not in {"config", "seed_prompt"}}
+                     for e in state.get("prompt_plan", [])],
+            "shortlist": state.get("answer_shortlist", []),
+            "parent_slots": state.get("prompt_parent_slots"),
+            "reason": state.get("prompt_shortlist_reason"),
+            "budget_required": state.get("prompt_budget_required"),
+        }
     if state.get("prompt_splits"):
         from ragbench_core.optimization.budget import totals
         from ragbench_core.prompt_optimization.history_store import history_status
         from ragbench_core.prompt_optimization.service import get_job
         entries = state.get("prompt_plan", []) if state.get("workflow_version", 1) >= 6 else adaptive_entries if state.get("workflow_version", 1) >= 4 else state.get("prompt_answer_plan", [])
         job_ids = {e["compilation_job_id"] for e in entries if e.get("compilation_job_id")}
-        compilation_section = sections["prompt"] if state.get("workflow_version", 1) >= 6 else sections["answer"]
+        compilation_section = sections["prompt"] if state.get("workflow_version", 1) == 6 else sections["answer"]
         compilation_section["compilations"] = []
         for jid in sorted(job_ids):
             job = get_job(jid)
+            entry = next(e for e in entries if e.get("compilation_job_id") == jid)
             compilation_section["compilations"].append({
                 "id": jid, "status": job["status"], "progress": job["progress"],
                 "usage": totals(jid), "history": history_status(job),
+                "parent_answer_trial_id": entry.get("parent_answer_trial_id"),
             })
     sections["retrieval"]["shortlist"] = shortlist
     comparison = deepcopy(state.get("comparison"))

@@ -190,7 +190,7 @@ def create_optimization(req: OptimizationRequest):
                     request=req.model_dump(),
                     template=template,
                     progress={
-                        "workflow_version": 6,
+                        "workflow_version": 7,
                         "recommendation_policy_version": POLICY_VERSION,
                         "recommendation_presentation_version": PRESENTATION_VERSION,
                     },

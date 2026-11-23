@@ -11,6 +11,7 @@ Both Benchmark Setup and Auto Optimize accept the same configuration block:
 
 ```yaml
 prompt_optimization:
+  answer_shortlist_size: 2  # Auto Optimize only; 1–3 distinct answer pipelines
   configs:
     - preset: mipro_zero_shot_v1
       seed: 42
@@ -81,14 +82,35 @@ Select recipes in the new optimization form, in execution order. API clients can
 send `prompt_optimization` on `POST /optimizations`; omitting it inherits the
 template settings, while an explicit empty list disables the feature.
 
-New sessions use workflow version 6, with an adaptive outer experiment loop described
+New sessions use workflow version 7, with an adaptive outer experiment loop described
 in [Auto Optimize](auto-optimize.md#adaptive-experiment-loop). Existing DSPy sessions
-retain their workflow version and saved state. Versions 5–6 disable reranking during
+retain their workflow version and saved state. Versions 5 and later disable reranking during
 retrieval screening and selects retrieval winners using raw NDCG@10. Answering and
 DSPy compilation restore the template reranker on the winning retrieval settings.
 The frozen tuning partition is split 75/25 into prompt training and validation,
 preserving evidence groups. The existing final holdout remains separate. Too few
 independent tuning groups requires a fresh dataset/version with additional evidence.
+
+Version 7 runs **Retrieval → Answering → Confirmation**. Optional DSPy refinement
+is part of answering, after its adaptive configuration screening. Screening selects
+up to `answer_shortlist_size` feasible parents, ranked by measured answer quality
+and deduplicated by their non-prompt pipeline settings. Every configured recipe
+independently starts from each parent's original prompt and actual retrieved
+contexts. Retrieval, reranking, compression, context settings, and the answer model
+stay fixed within each compilation. All original answer trials and successful
+compiled pipelines are compared on the same prompt-validation partition. The
+screening winner remains an unchanged control. The exact winning complete pipeline
+advances to holdout confirmation using the existing acceptance policy.
+
+Compilation and evaluation capacity for every parent–recipe pair is protected
+before search. If the requested shortlist cannot fit, fewer parent slots are
+reserved and the reason is displayed; single-parent infeasibility requires input.
+Unused slots are released when fewer distinct feasible parents are observed.
+`answer_trials` caps configuration screening; protected recipe evaluations are
+additional trials in the same answering stage. Recipe failures are isolated;
+completed work and each parent/recipe's reservations survive orchestration replay.
+The answering dashboard shows the shortlist, recipe progress, failures, compilation
+history, and the final joint ranking. Existing sessions retain their saved workflow.
 
 Version 6 runs **Retrieval → Answering → DSPy → Confirmation**. DSPy remains opt-in.
 The answer planner cannot select or skip recipes. After answering, every selected
@@ -123,7 +145,7 @@ compilation is saved as an observation. DSPy's internal optimization is unchange
 
 All answer candidates are ranked on the same prompt-validation questions. Final
 confirmation evaluates the exact selected pipeline against baseline on holdout.
-Only confirmed improvement replaces the baseline recommendation. Compiled prompts
+The existing versioned acceptance policy decides the recommendation. Compiled prompts
 must come from an approved job; arbitrary generated prompt templates are rejected.
 
 During compilation, the judge requests only the correctness score used by DSPy's
