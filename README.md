@@ -1,9 +1,5 @@
 # RAG Benchmark Platform
 
-DSPy answer-prompt compilation is available in Benchmark Setup and Auto Optimize.
-See [DSPy prompt optimization](docs/prompt-optimization.md) for reusable presets,
-training/evaluation splits, model settings, and API examples.
-
 A React and Python platform for benchmarking advanced RAG pipelines across ingestion and query stages.
 
 This project is intentionally modular. Every stage is implemented behind a small interface and registered through a plugin registry, so new chunkers, extractors, embedders, retrievers, rerankers, compressors, validators, and metrics can be added without rewriting the benchmark runner.
@@ -84,38 +80,35 @@ User question
 | Generation | Ollama, default model `qwen2.5:32b` |
 | Metrics | recall@k, precision@k, MRR, NDCG, latency, index size, simple citation validation, placeholder answer metrics |
 
+## Auto Optimize
+
+Auto Optimize searches for the best **observed** complete pipeline within your
+approved components, models, and budget. Select a benchmark template and source
+documents or URLs; the workflow generates synthetic evaluation questions with
+reference answers and exact source evidence, or reuses a compatible frozen dataset.
+You can pause to review the dataset before search.
+
+The three stages are **Retrieval → Answering → Confirmation**. Bounded retrieval
+experiments screen configurations without reranking. Answering explores approved
+rerankers, context settings, and prompt presets while keeping the answer model
+fixed. Optional DSPy refinement compiles instructions and examples for shortlisted
+pipelines. The exact selected pipeline is then compared with the original baseline
+on held-out questions that were excluded from planning and tuning.
+
+Inspect trial metrics, experiment history, and confirmation evidence, then export
+the recommended YAML, evaluation questions, and report, or open the recommendation
+in Benchmark Setup. Outcomes distinguish confirmed improvement, a promising
+candidate, and retaining the baseline; a budget-limited search need not establish
+an improvement.
+
+See the [Auto Optimize first-run guide](docs/auto-optimize.md#first-run-workflow)
+for model roles, dataset choices, budgets, recovery, and APIs. DSPy compilation is
+also available manually in Benchmark Setup; see [DSPy prompt optimization](docs/prompt-optimization.md).
+
 ## Architecture
 
-**Auto Optimize** generates evidence-backed synthetic evaluation questions, searches
-bounded pipeline configurations with a durable LangGraph workflow, and exports a
-recommendation with held-out benchmark evidence. See [Auto Optimize](docs/auto-optimize.md)
-for setup, model/provider configuration, budgets, recovery, and API details.
-
-For a detailed walkthrough of the operator journey, service interactions, case
-expansion, ingestion/query execution, persistence, artifacts, failure behavior,
-and extension points, see [Platform flow](docs/platform-flow.md).
-
-```text
-rag-benchmark-platform/
-  docker-compose.yml
-  .env.example
-  configs/
-  data/
-  services/
-    api/        FastAPI service
-    worker/     Celery benchmark worker
-    ui/         React UI
-  packages/
-    ragbench_core/
-      components/
-      engine/
-      models/
-      registry.py
-  scripts/
-  tests/
-```
-
-The core package keeps its own small interfaces while exposing LlamaIndex chunking as adapter components, rather than making LlamaIndex the foundation of the system.
+See [Platform flow](docs/platform-flow.md) for the service architecture, optimizer
+orchestration, benchmark execution, persistence, artifacts, and extension points.
 
 ## Run with Docker Compose
 
@@ -124,10 +117,10 @@ cp .env.example .env
 docker compose up --build
 ```
 
-The API and worker wait for Postgres to pass its TCP readiness check before
-starting. This prevents an API startup `connection refused` error while Postgres
-initializes. If Postgres does not become healthy, inspect it with
-`docker compose logs postgres`.
+Before running a benchmark, configure a reachable model endpoint and ensure the
+selected models are installed. The sample environment uses a remote Ollama address;
+see [model endpoint setup](docs/running.md#model-endpoints) to use bundled or host
+Ollama and configure Auto Optimize's separate model profiles.
 
 Host-accessible services:
 
@@ -136,87 +129,9 @@ Host-accessible services:
 | React UI | http://localhost:8499 |
 | FastAPI docs | http://localhost:7800/docs |
 
-Supporting services such as Postgres, Redis, Qdrant, OpenSearch, MinIO, and Ollama are available only on the Docker Compose network and are not published to the host by default.
-
-MinIO is reserved for future object storage and is excluded from normal startup
-by the `minio` Compose profile. The application currently writes artifacts to the
-shared `artifacts/` directory. The retained MinIO image may no longer be publicly
-pullable; normal startup does not require it.
-
-Ollama is included as a service. The supplied `.env` points to
-`http://100.110.250.66:11434`, where `qwen2.5:32b` is already installed. If you
-choose the bundled service, pull the model after containers start:
-
-```bash
-docker compose exec ollama ollama pull qwen2.5:32b
-```
-
-### Use Ollama on the host
-
-If your machine already runs Ollama locally, set
-`OLLAMA_BASE_URL=http://host.docker.internal:11434` in `.env`. The worker includes
-an `extra_hosts` mapping to Docker's `host-gateway`, so this hostname also resolves
-on Linux Docker Engine. The bundled Ollama service can remain unused.
-
-After changing `.env` or the Compose host mapping, recreate the worker:
-
-```bash
-docker compose up -d --no-deps --force-recreate worker
-```
-
-A plain `docker compose restart` does not apply these changes. Verify the host
-connection from inside the worker before starting a new benchmark:
-
-```bash
-docker compose exec worker python -c "import os, requests; r = requests.get(os.environ['OLLAMA_BASE_URL'].rstrip('/') + '/api/tags', timeout=10); r.raise_for_status(); print(r.json())"
-```
-
-If the hostname resolves but the connection is refused, ensure the host Ollama
-service listens on an address reachable from Docker. On Linux Engine, the default
-`127.0.0.1:11434` listener cannot accept connections through the bridge gateway;
-configure `OLLAMA_HOST` on the host service and restart Ollama as described in the
-[Ollama server configuration guide](https://docs.ollama.com/faq#how-do-i-configure-ollama-server).
-
-Keep `llm.base_url` in your benchmark YAML set to
-`${OLLAMA_BASE_URL:http://100.110.250.66:11434}` to use the environment setting. If you
-instead use the bundled Ollama container, set `OLLAMA_BASE_URL=http://ollama:11434`.
-For a benchmark running directly on the host, use `http://localhost:11434`.
-
-## Run a sample benchmark
-
-```bash
-cp .env.example .env
-docker compose up --build
-```
-
-Then use the React UI to upload documents and ground-truth JSON, manage evaluation questions, and configure benchmarks. **Benchmark Setup** includes detailed component forms and a synchronized **YAML source** editor. Load `/app/configs/default.yaml`, select inputs, and choose **Save and run**. **Results Explorer** provides live run statuses, scored answers, traces, retrieval heatmaps, and comparisons.
-
-For frontend development, use Node 22.12 or later: run `npm ci` and `npm run dev` in `services/ui`, then open <http://localhost:5173>. The development server proxies `/api` to port 7800. See [React workspace development and checks](services/ui/README.md) for configuration and testing details.
-
-You can also call the API directly:
-
-```bash
-curl -X POST http://localhost:7800/benchmarks/run \
-  -H 'Content-Type: application/json' \
-  -d '{"config_path":"/app/configs/default.yaml"}'
-```
-
-Config files can be listed, loaded, and saved through the API:
-
-```bash
-curl http://localhost:7800/configs
-curl 'http://localhost:7800/configs/content?config_path=/app/configs/default.yaml'
-curl -X PUT http://localhost:7800/configs/content \
-  -H 'Content-Type: application/json' \
-  -d '{"config_path":"/app/configs/default.yaml","content":"experiment:\n  name: edited_benchmark\n"}'
-```
-
-Check job status:
-
-```bash
-curl http://localhost:7800/benchmarks/<job_id>
-```
-
+Use the [running guide](docs/running.md) for complete setup, sample benchmarks,
+API commands, environment changes, and troubleshooting. For frontend development,
+see [React workspace development and checks](services/ui/README.md).
 
 ## Component configuration parameters
 
@@ -406,9 +321,8 @@ Deferred extensions:
 
 1. RAGAS and DeepEval adapters
 2. Additional framework components
-3. Synthetic QA generation
-4. Distributed worker scaling
-5. Team access controls
+3. Distributed worker scaling
+4. Team access controls
 
 
 ## Trustworthy runs

@@ -4,6 +4,42 @@ Auto Optimize discovers the best **observed** configuration within an approved
 component/model search space and budget. Manual Benchmark Setup continues to use
 the same benchmark engine.
 
+## First-run workflow
+
+1. Follow the [running guide](running.md) to start the stack and prepare model
+   endpoints. Auto Optimize needs the benchmark worker, optimizer, and scheduler.
+2. Upload your sources in **Knowledge Base**, then open **Auto Optimize** and choose
+   **New optimization**. Select a benchmark template and documents or URLs. Add
+   audience, task guidance, and example questions when useful. The template fixes
+   the answer model and defines the baseline pipeline.
+3. Configure the planner, synthesizer, verifier, and judge model profiles with
+   endpoints reachable from the containers and models installed on those servers.
+   These profiles are independent of the template's answer model and do not inherit
+   changes to `OLLAMA_BASE_URL`; see [model endpoints](running.md#model-endpoints).
+4. Choose **Reuse matching questions when available** (the default) or **Generate
+   fresh questions**. Fresh questions include reference answers and exact source
+   evidence checked by a verifier; they remain labeled synthetic. Optionally enable
+   **Pause for dataset review** to inspect and edit fresh questions before freezing.
+   Reused frozen questions are read-only. See [dataset reuse](#reuse-evaluation-questions).
+5. Set trial, token, time, and optional monetary limits and component restrictions.
+   Optionally select [DSPy recipes](prompt-optimization.md#auto-optimize) for prompt
+   refinement during answering. Defaults are 100 accepted questions, 20 retrieval
+   trials, five answer trials, 20 million reserved tokens, and two hours of active
+   time, with capacity protected for confirmation. Reservations can end search
+   before trial caps are reached.
+6. Start and inspect **Retrieval → Answering → Confirmation**. Retrieval screens
+   configurations without reranking; answering explores approved rerankers, context,
+   and prompt choices, including optional DSPy refinement. Confirmation compares the
+   exact selected pipeline with the original baseline on holdout questions excluded
+   from tuning. Resume if you requested review; address any needs-input message
+   before continuing. Experiment history and saved planner context explain each step.
+7. Inspect the recommendation and paired holdout evidence. The result may be a
+   confirmed improvement, a promising candidate, or baseline retained. Export the
+   recommended YAML, QA JSON, and report, or choose **Open in Benchmark Setup** to
+   load an unsaved draft. Exported YAML uses the frozen server-side snapshot; moving
+   it to another installation requires that snapshot or replacement inputs. See
+   [APIs and exports](#apis-and-exports).
+
 ## Adaptive experiment loop
 
 New sessions and forks use workflow version 7. Existing sessions retain versions
@@ -83,28 +119,20 @@ fixed stages, trial caps, and exact-pipeline holdout confirmation still apply.
 
 ## Run it
 
-Rebuild the API, worker, optimizer, scheduler, and UI with `docker compose up --build`.
-The optimizer and scheduler are new services. The scheduler reconciles abandoned
-sessions every minute; the optimizer consumes only the `optimization` queue, and
-the benchmark worker consumes `ragbench`. Run only one scheduler per deployment.
-Qdrant collection operations use a 30-second client timeout by default; set
-`QDRANT_TIMEOUT_SECONDS` if collection creation needs more time on your deployment.
-Existing databases gain optimizer tables through the additive startup migration;
-LangGraph creates its own versioned checkpoint tables on first use. To prepare
-both explicitly, run `python -m scripts.migrate_optimization` with database access.
+See the [running guide](running.md#start-the-stack) for Compose startup, worker
+queues, the single scheduler requirement, database/checkpoint migrations, model
+connectivity checks, and troubleshooting. Rebuild the application services together
+when upgrading; existing optimizer sessions keep their saved workflow version.
 
 Open **Auto Optimize** to browse the newest 100 runs. Search, sort, or page through
 the history table and choose **View details** to inspect a saved run's configuration,
 dataset, trials, recommendation, and activity. Older runs remain accessible through
 their direct URLs. Run summaries include their full ID and created/updated dates.
 
-Choose **New optimization**, select a benchmark template and documents/URLs, optionally
-describe the audience and expected questions, and start. Defaults are 100 accepted
-questions, 20 retrieval trials, five answer trials, two reserved confirmation
-executions, 20 million conservatively reserved tokens, and two hours of active time.
-The template's answer model stays fixed; its output is bounded to 1,024 tokens by
-default. Worker-reachable model endpoints can be configured separately for planning,
-synthesis, verification, and judging. Ollama models must already be installed.
+Use the [first-run workflow](#first-run-workflow) to launch a new session. The
+template's fixed answer model has output bounded to 1,024 tokens by default.
+Two confirmation executions are reserved for baseline/candidate comparison; only
+one is needed when their configurations are identical.
 
 ### Reuse evaluation questions
 

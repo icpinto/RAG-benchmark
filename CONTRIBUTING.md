@@ -31,29 +31,14 @@ Some optional components call external providers such as OpenAI, Voyage, Cohere,
 
 ## Run the app locally
 
-The easiest way to run the complete stack is Docker Compose:
+Follow the [running guide](docs/running.md) for Docker Compose startup, model
+installation, [host Ollama setup](docs/running.md#use-ollama-on-the-host),
+environment changes, sample benchmarks, API commands, and direct Python execution.
+It also explains the separate benchmark worker, optimizer, and scheduler needed
+for [Auto Optimize](docs/auto-optimize.md#first-run-workflow).
 
-```bash
-docker compose up --build
-```
-
-After the services start, the React UI is available at <http://localhost:8499> and FastAPI docs are available at <http://localhost:7800/docs>.
-
-For frontend work, install Node 22.12 or later, then run `npm ci` and `npm run dev` from `services/ui`. The development UI at <http://localhost:5173> proxies API requests to port 7800. Run `npm run typecheck`, `npm run lint`, `npm test`, and `npm run build`; use `npx playwright install chromium` followed by `npm run test:e2e` for browser journeys. See [the UI guide](services/ui/README.md) for the component catalog and YAML editor behavior.
-
-Ollama is included in the Compose stack. Pull the default model before running benchmarks that use local generation:
-
-```bash
-docker compose exec ollama ollama pull qwen2.5:32b
-```
-
-If you already run Ollama on your host, set `OLLAMA_BASE_URL=http://host.docker.internal:11434` in `.env` and use your host service instead of the bundled container. Recreate the worker with `docker compose up -d --no-deps --force-recreate worker` after changing its environment or host mapping. See [host Ollama setup and connectivity checks](README.md#use-ollama-on-the-host), including the Linux listener configuration.
-
-For a direct sample run from Python, use:
-
-```bash
-python scripts/run_local.py
-```
+For frontend development and checks, see [the UI guide](services/ui/README.md).
+For service interactions and extension points, see [Platform flow](docs/platform-flow.md).
 
 ## Test commands
 

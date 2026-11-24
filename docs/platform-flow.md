@@ -1,6 +1,9 @@
 # Platform flow
 
-This document explains how the RAG Benchmark Platform moves from source data and a YAML experiment definition to persisted, comparable benchmark results. It covers the operator workflow, service boundaries, benchmark runner, artifacts, failure behavior, and extension points.
+This document explains how the RAG Benchmark Platform moves from source data and a YAML experiment definition to persisted, comparable benchmark results. It covers manual benchmarks, Auto Optimize orchestration, service boundaries, the benchmark runner, artifacts, failure behavior, and extension points.
+
+For startup and commands, see [Running the platform](running.md). For optimizer
+operation, budgets, and evaluation policies, see [Auto Optimize](auto-optimize.md).
 
 ## 1. What the platform does
 
@@ -21,30 +24,86 @@ flowchart LR
     Operator[Operator] -->|browser :8499| UI[React UI]
     Operator -->|HTTP :7800| API[FastAPI API]
     UI -->|REST on Docker network| API
-    API -->|create queued run| PG[(Postgres)]
+    API -->|save run or session| PG[(Postgres)]
     API -->|enqueue task| Redis[(Redis)]
-    Redis --> Worker[Celery worker]
+    Redis -->|ragbench queue| Worker[Benchmark worker]
+    Redis -->|optimization queue| Optimizer[Optimizer worker]
+    Scheduler[Celery Beat scheduler] -->|reconcile every 60s| Redis
+    Optimizer -->|dispatch trial| Redis
+    Optimizer -->|session state and checkpoints| PG
+    Optimizer --> Models[Model endpoints]
+    Optimizer --> Shared[(configs / data / artifacts)]
     Worker --> PG
     Worker --> Qdrant[(Qdrant)]
     Worker --> OpenSearch[(OpenSearch)]
-    Worker --> Ollama[Ollama]
-    Worker --> Shared[(configs / data / artifacts)]
+    Worker --> Models
+    Worker --> Shared
     API --> Shared
 ```
 
 | Service | Responsibility | Durable/shared state |
 |---|---|---|
-| React UI | Guides data preparation, component forms/YAML editing, run launch, status inspection, result exploration, and run comparison. | Static assets served by Nginx; calls the API through `/api`. Configuration drafts stay in browser memory. Shared files are accessed only by the API and worker. |
-| FastAPI API | Validates paths and input selections, manages files/questions/configuration, creates run records, enqueues work, and returns runs/results. | Postgres plus the `configs/` and `data/` volumes. |
-| Celery worker | Loads the saved YAML and executes `BenchmarkRunner`. The default worker concurrency is one, so queued runs execute serially in that worker. | Postgres, vector/search indexes, embedding/retrieval caches, and `artifacts/`. |
+| React UI | Guides data preparation, component forms/YAML editing, manual benchmarks, optimization sessions, result inspection, and comparisons. | Static assets served by Nginx; calls the API through `/api`. Configuration drafts stay in browser memory. Shared files are accessed by the API, benchmark worker, and optimizer. |
+| FastAPI API | Validates paths and selections, manages files/questions/configuration, creates runs and optimization sessions, enqueues tasks, and returns saved results. | Postgres plus the shared `configs/`, `data/`, and `artifacts/` volumes. |
+| Benchmark worker (`worker`) | Consumes `ragbench` and executes `BenchmarkRunner` for manual runs and optimizer trials. Default concurrency is one. | Postgres, vector/search indexes, embedding/retrieval caches, and `artifacts/`. |
+| Optimizer worker (`optimizer`) | Consumes `optimization`: durable LangGraph orchestration, reconciliation, and DSPy prompt compilation. Dispatches trials to `ragbench` and yields while waiting. Default concurrency is one. | Session/dataset/trial/budget records, Postgres checkpoints, model-response artifacts, and the same shared volumes as the API and benchmark worker. |
+| Scheduler (`scheduler`) | One Celery Beat process per deployment enqueues optimizer reconciliation every 60 seconds. | Local Beat schedule file; authoritative session state remains in Postgres. |
 | Redis | Celery broker and result backend; it can also back configured caches. | Redis data for the lifetime of the service. |
-| Postgres | System of record for run metadata/status and per-question results. | `benchmark_runs` and `benchmark_results`. |
+| Postgres | System of record for benchmark results, optimizer sessions/datasets/trials/iterations, budget usage, prompt jobs, and durable workflow checkpoints. | Application tables and LangGraph's versioned checkpoint tables in `postgres_data`. |
 | Qdrant | Dense vectors, payload-filtered dense retrieval, and optionally neural sparse vectors. | `qdrant_data` volume. |
 | OpenSearch | BM25 indexes and optionally neural sparse rank-feature indexes. | `opensearch_data` volume. |
-| Ollama | Local answer generation and LLM-backed query rewriting. | Model data in `ollama_data`. |
-| MinIO | Provisioned by Compose for future/object-storage use, but the current runner does not write benchmark artifacts to it. | `minio_data` volume. |
+| Model endpoints | Ollama handles answer generation, LLM-backed rewriting, and local optimizer roles. Optimizer roles can also use configured hosted chat-completions endpoints. | Bundled Ollama stores models in `ollama_data`; host/remote model servers manage their own models. |
+| MinIO | Optional `minio` Compose profile for future object storage; current artifacts use the shared filesystem. | `minio_data` volume when enabled. |
 
 With the checked-in Compose file, the UI is exposed at `http://localhost:8499` and API/OpenAPI at `http://localhost:7800/docs`. Supporting services are internal to the Compose network.
+
+### Auto Optimize execution
+
+The API captures the request and template for an optimization session, then queues
+`optimization.advance`. The optimizer runs a LangGraph workflow with Postgres
+checkpoints keyed by session ID. It captures sources, generates evidence-backed
+evaluation questions or reuses a compatible frozen dataset, and establishes tuning
+and holdout partitions. Optional review pauses before search.
+
+New sessions use workflow version 7: retrieval screening, answering (including
+optional DSPy refinement), and holdout confirmation. Planner proposals are bounded
+by approved components, deterministic validation, and a budget ledger. Holdout
+questions remain outside planning and tuning. See the
+[adaptive experiment loop](auto-optimize.md#adaptive-experiment-loop) for selection
+and historical workflow behavior.
+
+Each trial is a concrete configuration evaluated by the existing `BenchmarkRunner`
+on the benchmark worker via `optimization.trial`; there is no separate scoring
+engine for optimizer trials. Compatible query variants can reuse session ingestion
+indexes. The optimizer checkpoints and yields while a trial runs. Trial completion
+queues orchestration again; periodic reconciliation recovers abandoned work using
+leases and saved operation state. DSPy compilation uses `prompt.compile` on the
+optimization queue and also yields orchestration while it runs.
+
+Confirmation evaluates the exact selected pipeline and original baseline on the
+holdout partition. Deterministic acceptance checks decide the recommendation.
+Exports include runnable recommendation YAML, QA JSON, and the evidence report;
+the YAML relies on the frozen snapshot on the shared artifact volume.
+
+### Source layout
+
+```text
+services/
+  api/                    FastAPI routes and request handling
+  worker/                 Celery benchmark, optimizer, and prompt tasks
+  ui/                     React workspaces
+packages/ragbench_core/
+  components/             Pipeline implementations
+  engine/                 Benchmark execution and persistence
+  optimization/           Search, datasets, budgets, and workflow
+  prompt_optimization/    DSPy compilation and prompt artifacts
+  models/                 Shared schemas
+  registry.py             Component registration
+```
+
+The core package keeps small component interfaces; LlamaIndex chunkers are adapters
+within that system. Configuration, sample inputs, operational scripts, and tests
+live in `configs/`, `data/`, `scripts/`, and `tests/` respectively.
 
 ## 3. Operator journey
 
@@ -208,6 +267,14 @@ Metrics are persisted with the answer and case configuration. At the end of the 
 
 `benchmark_runs` contains status, original/overridden configuration, summary, error, dataset/config hashes, version/model metadata, artifact directory, and exports. `benchmark_results` contains stable question IDs and one row per attempted case/question, including question failures with metrics, answer, case/evaluation configuration, artifact paths, and model identifiers.
 
+Optimizer tables additionally retain requests/templates, dataset versions and
+provenance, trials and their configuration lineage, experiment iterations, events,
+leases, and budget usage. Prompt optimization retains compilation jobs and reusable
+artifacts. LangGraph checkpoints persist orchestration state separately from these
+application records. Startup creates application tables additively; LangGraph sets
+up checkpoint tables on first use, or through the explicit
+[migration command](running.md#workers-and-scheduler).
+
 ### Artifact tree
 
 The default layout is:
@@ -230,6 +297,11 @@ artifacts/<run_id>/
 
 Optional runtime export settings can additionally write Parquet or log aggregate metrics/artifacts to MLflow and Weights & Biases. Artifact filenames sanitize path separators and `..` components.
 
+Optimizer sessions also store captured sources, dataset manifests, model-call
+inputs/responses, and report/export artifacts on the shared artifact volume. Keep
+that volume together with Postgres state: database checkpoints alone cannot restore
+missing source snapshots or make exported YAML runnable.
+
 ### Caches versus authoritative results
 
 Embedding and retrieval caches are performance optimizations, not the result store. Cache keys omit secrets and include the component/query inputs needed to separate experiments. Postgres and the artifact tree remain the inspectable benchmark outputs.
@@ -241,7 +313,8 @@ Embedding and retrieval caches are performance optimizations, not the result sto
 - A case exception is written to `case_error.json`, counted in `summary.errors`, and execution continues with the next case.
 - A failure outside case isolation (for example, loading missing ground truth) marks the entire run `failed` and records the error string.
 - Mixed outcomes are terminal `completed_with_errors`; an entirely unsuccessful run is `failed`. Queue submission errors also mark the persisted run failed.
-- A worker crash before the runner handles an exception can leave a run in `queued` or `running`; there is currently no watchdog/reconciliation process.
+- A worker crash during an ordinary manual benchmark can leave it in `queued` or `running`; the optimizer reconciler does not provide a watchdog for those runs.
+- Optimizer sessions, trials, and prompt jobs use leases and periodic reconciliation to recover abandoned work. Completed results and operation keys prevent duplicate persisted work; external model calls have at-least-once semantics, so an interrupted call can be charged again on retry. Pause/cancel checks occur at stage/question or model-call boundaries; an active call may finish within its timeout.
 - Vector/search collections are isolated by run and case and are not automatically deleted after a run.
 - Paired comparison requires explicitly selected cases, the same dataset snapshot, and stable question IDs. Experiment names do not affect pairing. Different datasets are descriptive only.
 - Metrics listed under `metrics.enabled` are honored. Extractor-specific configurations are forwarded through case expansion.
@@ -260,6 +333,10 @@ Embedding and retrieval caches are performance optimizations, not the result sto
 | `GET /benchmarks/{run_id}` | Fetch run metadata/status/summary. |
 | `GET /benchmarks/{run_id}/results` | Fetch per-question results. |
 | `GET /benchmarks/compare?run_ids=...` | Return descriptive results; select baseline/candidate cases for paired deltas and confidence intervals. |
+| `POST /optimizations` | Create an optimization session from a template, sources, model profiles, and limits. |
+| `GET /optimizations/{id}` | Read the saved session and progress. |
+| `GET /optimizations/{id}/stages` | Read retrieval, answering, and confirmation dashboard summaries. |
+| `GET /optimizations/{id}/recommendation` | Read the saved recommendation and evidence. |
 | `POST /data/upload` | Upload source files. |
 | `POST /data/ground-truth` | Replace ground truth from a validated JSON upload (maximum 10 MiB). |
 | `GET /data/files` | List source files. |
@@ -268,6 +345,10 @@ Embedding and retrieval caches are performance optimizations, not the result sto
 | `POST /data/questions` | Append a question. |
 | `PUT /data/questions/{index}` | Replace a question. |
 | `DELETE /data/questions/{index}` | Delete a question. |
+
+See [Auto Optimize APIs and exports](auto-optimize.md#apis-and-exports) for dataset
+review, trial/iteration inspection, lifecycle controls, and exports, and
+[DSPy APIs](prompt-optimization.md#apis-and-smoke-tests) for compilation and artifacts.
 
 ## 8. Extending the platform
 
@@ -282,17 +363,7 @@ The runner resolves components by configured name/provider. This keeps orchestra
 
 ## 9. Minimal end-to-end example
 
-```bash
-cp .env.example .env
-docker compose up --build
-docker compose exec ollama ollama pull qwen2.5:32b
-
-curl -X POST http://localhost:7800/benchmarks/run \
-  -H 'Content-Type: application/json' \
-  -d '{"config_path":"/app/configs/default.yaml"}'
-
-curl http://localhost:7800/benchmarks/<run_id>
-curl http://localhost:7800/benchmarks/<run_id>/results
-```
-
-For quick local, non-Celery execution, `python scripts/run_local.py` loads a configuration and invokes the same `BenchmarkRunner`; infrastructure required by the chosen indexers, generator, and database must still be reachable.
+Follow [Run a sample benchmark](running.md#run-a-sample-benchmark) for the UI and
+API journey from startup through results, or the [Auto Optimize first-run workflow](auto-optimize.md#first-run-workflow)
+for bounded configuration search. The running guide also covers direct Python
+execution and its infrastructure requirements.
