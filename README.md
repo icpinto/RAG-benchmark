@@ -40,13 +40,13 @@ Inspect side-by-side metric tables for selected runs, including ingestion, embed
 
 Choose **New optimization**, select a benchmark template and source documents or URLs, then configure model profiles, approved components, and search budgets. Reuse matching evaluation questions or generate fresh questions, with an option to pause for dataset review before search.
 
-<!-- Add screenshot here: ![Auto Optimize setup showing template, sources, model profiles, and search budgets](docs/images/auto_optimize_setup.png) -->
+![Auto Optimize setup showing template, sources, model profiles, and search budgets](docs/images/auto_opt_history.png)
 
 ### Optimization stages
 
 Follow **Retrieval**, **Answering**, and **Confirmation** to inspect trial metrics, experiment history, and planner decisions. Retrieval screens configurations without reranking; answering explores rerankers, context settings, and prompts, with optional DSPy refinement. Confirmation compares the selected pipeline with the original baseline on held-out questions.
 
-<!-- Add screenshot here: ![Auto Optimize stage dashboard showing trial metrics and experiment history](docs/images/auto_optimize_stages.png) -->
+![Auto Optimize stage dashboard showing trial metrics and experiment history](docs/images/auto_opt_stages.png)
 
 ### Optimization recommendation
 
