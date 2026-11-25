@@ -52,7 +52,7 @@ Follow **Retrieval**, **Answering**, and **Confirmation** to inspect trial metri
 
 Review the recommended pipeline and confirmation evidence to see whether the search confirmed an improvement, found a promising candidate, or retained the baseline. Export the recommended YAML, evaluation questions, and report, or choose **Open in Benchmark Setup** to load the recommendation as an unsaved draft.
 
-<!-- Add screenshot here: ![Auto Optimize recommendation showing the outcome, confirmation evidence, and export controls](docs/images/auto_optimize_recommendation.png) -->
+![Auto Optimize recommendation showing the outcome, confirmation evidence, and export controls](docs/images/auto_opt_recommendation.png)
 
 ## What v1 supports
 
